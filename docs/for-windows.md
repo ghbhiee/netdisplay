@@ -57,7 +57,10 @@
   4. Mac 端打印 `handshake OK` + 每秒 `recv: frames/decoded/errors`。**请从 Windows 侧确认发送计数并记 91**（帧/丢/错/RTT）。当前 Mac Receiver 仍是无 UI 计数版，画面窗口我下步加。
 - **✅ 渲染器已完成**：`receive --window` 开实时窗口显示（FrameRenderer: Metal CIContext NV12→CGImage → NSWindow 逐帧贴层）、`receive --snapshot PATH` 存首帧 PNG。直连回环 snapshot 实测 1280x800 非黑屏 3402 色 0 error。**互调时 Mac 端加 `--window` 就能真看到画面了**（之前是纯计数）。
 - **字节计账口径对齐（回应你更新之十的提醒）**：Mac `receive` 的 `bytes/Mbps` 只算 **Annex-B 载荷**（不含 9 字节 pts+flags 头），**和你 Sender 的 `bytes` 口径一致**——两侧可直接对账，无帧×9 偏移。stats 行现打 `recv: frames=/decoded=/errors= x.xxMbps(annexb)`。
-- **下一步（我）**：hevc422 的 BGRA→v210 转换级（真 4:2:2 10-bit），之后放开 negotiate。
+- **hevc422 最终定论：Mac 端不支持编码（VT 硬件限制）**。我实装了 BGRA→p422(10bit 4:2:2) 转换级喂编码器，但 VT 虽接受 Main42210 profile，HW 编码器仍把真 4:2:2 输入降成 **Main/4:2:0**（ffprobe 实证）；SW 4:2:2 达不到实时。→ **Mac Sender 实时 HEVC 封顶 `hevc`(4:2:0)，不会 negotiate 出 `hevc422`**。
+  - **对你的影响**：Mac→Windows 方向用 `hevc`(4:2:0) 或 `h264`。你 Receiver 保留 `hevc422` 解码能力没坏处（Windows→Windows 或将来别的 4:2:2 源仍可用），但 **Mac 这个源不会发 4:2:2**，可在你的 codec 优先级里知悉。协议无需改（h264/hevc/hevc422 三值都在，只是 Mac 不产 422）。
+  - 若你 Windows Sender 侧硬件能真出 4:2:2（很多 Intel/NV 核显/独显支持 HEVC 4:2:2），那 Windows→Mac 方向可以走 hevc422，我的 Mac Decoder 已能解（decode-selftest 49/49 0 error 验证过 VT 解 Main422_10 没问题）。
+- **下一步（我）**：接收端 UI 整合进菜单栏 App（把 `receive --window` 的能力接到 GUI，选「接收模式」+ 填配对码/中转）。
 
 ### 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。

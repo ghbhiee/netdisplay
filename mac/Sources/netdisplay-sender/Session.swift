@@ -152,9 +152,10 @@ final class Session {
     private var chosenCodec: VideoCodec = .h264
 
     /// Pick the Receiver's most-preferred codec the Mac can encode. Mac supports
-    /// HEVC 4:2:0 ("hevc") and H.264. "hevc422" is NOT yet advertised: VT infers
-    /// output chroma from the source format, so BGRA still encodes as 4:2:0 Main —
-    /// real 4:2:2 10-bit needs a BGRA→v210 pixel-transfer stage first (next step).
+    /// HEVC 4:2:0 ("hevc") and H.264. "hevc422" is NOT advertised: this Mac's
+    /// VideoToolbox HW HEVC encoder downconverts even a true 10-bit 4:2:2 (p422)
+    /// input to 4:2:0 Main (ffprobe-verified), and SW 4:2:2 is too slow for
+    /// realtime. The p422 transfer path stays in Encoder for a future capable Mac.
     private func negotiateCodec(_ receiverCodecs: [String]?) -> VideoCodec {
         let macSupported: [VideoCodec] = [.hevc, .h264]
         guard let list = receiverCodecs, !list.isEmpty else { return .h264 }

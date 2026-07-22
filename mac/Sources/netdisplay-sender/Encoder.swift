@@ -39,6 +39,12 @@ final class Encoder {
     private let codec: VideoCodec
     private let startCode: [UInt8] = [0, 0, 0, 1]
 
+    // hevc422 only: convert the full-chroma BGRA capture into a 10-bit 4:2:2
+    // buffer (p422) so VideoToolbox actually emits Main 4:2:2 10-bit. Without
+    // this, feeding BGRA makes VT default to 4:2:0.
+    private var transferSession: VTPixelTransferSession?
+    private var chromaPool: CVPixelBufferPool?
+
     /// Called on VideoToolbox's callback thread for each encoded frame.
     var onEncoded: ((_ ptsUs: UInt64, _ isKeyframe: Bool, _ annexB: Data) -> Void)?
 
@@ -57,6 +63,7 @@ final class Encoder {
     }
 
     deinit {
+        if let transferSession { VTPixelTransferSessionInvalidate(transferSession) }
         if let session {
             VTCompressionSessionInvalidate(session)
         }
@@ -101,8 +108,43 @@ final class Encoder {
         set(kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
             prioritizeQuality ? kCFBooleanFalse : kCFBooleanTrue)
         VTCompressionSessionPrepareToEncodeFrames(session)
+        if codec == .hevc422 && !setupChromaTransfer() {
+            Log.error("hevc422: chroma transfer setup failed"); return false
+        }
         Log.info("encoder ready: \(width)x\(height) \(codec.wire) \(bitrate / 1_000_000)Mbps @\(fps) quality=\(prioritizeQuality)")
         return true
+    }
+
+    /// Build the BGRA→p422 (10-bit 4:2:2) transfer session + destination pool.
+    private func setupChromaTransfer() -> Bool {
+        var ts: VTPixelTransferSession?
+        guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &ts) == noErr,
+              let ts else { return false }
+        VTSessionSetProperty(ts, key: kVTPixelTransferPropertyKey_RealTime, value: kCFBooleanTrue)
+        transferSession = ts
+
+        let poolAttrs = [kCVPixelBufferPoolMinimumBufferCountKey: 3] as CFDictionary
+        let bufAttrs: [CFString: Any] = [
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange, // 'p422'
+            kCVPixelBufferWidthKey: width,
+            kCVPixelBufferHeightKey: height,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
+        ]
+        var pool: CVPixelBufferPool?
+        guard CVPixelBufferPoolCreate(nil, poolAttrs, bufAttrs as CFDictionary, &pool) == kCVReturnSuccess,
+              let pool else { return false }
+        chromaPool = pool
+        return true
+    }
+
+    /// For hevc422: transfer the BGRA source into a 10-bit 4:2:2 buffer VT will
+    /// keep as 4:2:2. Returns the incoming buffer unchanged for other codecs.
+    private func chromaConverted(_ src: CVPixelBuffer) -> CVPixelBuffer? {
+        guard codec == .hevc422, let ts = transferSession, let pool = chromaPool else { return src }
+        var dst: CVPixelBuffer?
+        guard CVPixelBufferPoolCreatePixelBuffer(nil, pool, &dst) == kCVReturnSuccess, let dst else { return nil }
+        guard VTPixelTransferSessionTransferImage(ts, from: src, to: dst) == noErr else { return nil }
+        return dst
     }
 
     func requestKeyframe() {
@@ -111,6 +153,7 @@ final class Encoder {
 
     func encode(pixelBuffer: CVPixelBuffer, pts: CMTime) {
         guard let session else { return }
+        guard let pixelBuffer = chromaConverted(pixelBuffer) else { return } // hevc422: BGRA→p422
         lock.lock()
         let force = forceKeyframe
         forceKeyframe = false

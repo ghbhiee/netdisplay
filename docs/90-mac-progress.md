@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🔬 **hevc422 编码·最终定论：Mac 端不可行（VT 硬编限制）**。实装了 BGRA→p422(10bit 4:2:2) 的 VTPixelTransferSession 转换级喂给编码器，但：VT 接受 Main42210 profile（setProperty status=0、readback 确认），喂真 10bit 4:2:2 输入，**HW 编码器仍输出 Main/yuv420p**（ffprobe 实证，116KB 干净抓包）；强制 SW 路径即便能出 4:2:2 也远达不到 60fps 实时。→ **negotiateCodec 不再上报 hevc422，Mac 实时 HEVC 封顶 4:2:0（hevc）**。p422 转换级代码保留在 Encoder 里（被 codec 门控、当前不选中），未来支持 4:2:2 HW 编码的 Mac 可直接放开。h264/hevc 回归自测 PASS（44/44、53/53、0 error）。
+
 - ✅ **Mac 接收端·渲染器**：`FrameRenderer`（Metal 后端 CIContext，NV12 CVPixelBuffer→CGImage，YUV→RGB 用 buffer 附带的色彩属性）+ `ReceiverWindow`（NSWindow，按 stream 尺寸等比适配屏幕，逐帧 `layer.contents=CGImage` GPU 合成）。`receive --window` 开实时窗口、`--snapshot PATH` 存首帧 PNG（无 UI 验证）。
 - ✅ **验证**：直连回环 `--snapshot` → PNG **1280x800、3402 distinct 采样色、mean 129.6、0 error**（真实虚拟桌面内容，非黑屏），解码→转换链路确证。`--window` 是标准 AppKit 把同一 CGImage 贴层，待真机肉眼确认。
 - ✅ **接收端字节计账**（回应 Windows）：`recv` 统计的 `bytes` 只算 **Annex-B 载荷本身**（不含 VIDEO_FRAME 的 9 字节 pts+flags 头），**与 Windows Sender 的 `bytes` 口径一致**——两侧数字可直接对账，差值不再有帧×9 偏移。stats 行加 `x.xxMbps(annexb)`。
