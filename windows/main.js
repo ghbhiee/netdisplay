@@ -23,6 +23,8 @@ const testArgs = {
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
   sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
   sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
+  sendStatsAfter: arg("send-stats-after"), // 互调：N 秒后打印 SEND_STATS（需 --enable-logging）
+  sendStatsRepeat: argv.includes("--send-stats-repeat") ? "1" : null,
 };
 const isTest = !!testArgs.exitAfter;
 

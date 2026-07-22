@@ -39,4 +39,18 @@ npm run probe      # 探测本机 WebCodecs 解码能力（HEVC/4:4:4/AV1）
 --auto-bounce N               N 秒后自动发弹回
 --test-pair-secret <base64>   预置持久配对密钥
 --exit-after N                N 秒后 stdout 输出 TEST_RESULT{json} 并退出
+--user-data <dir>             独立 userData（多实例并跑必须，否则 localStorage 抢锁）
+
+--send                        启动即开直连发送端（监听 :47800）
+--send-relay [--send-relay-code C]  启动即开中转发送（可固定首次配对码）
+--send-stats-after N [--send-stats-repeat]   N 秒后打印 SEND_STATS{json}（配 --enable-logging）
 ```
+
+## 互调（Windows 发 → 对端收）
+
+```bash
+npx electron . --send --send-stats-after 10 --send-stats-repeat --enable-logging
+```
+
+监听 47800 等对端连入；每 10 秒打一行 `SEND_STATS`（sent/dropped/keyframes/bytes/avgFps/avgMbps）用于与接收端计数对账。
+注意口径：Sender 的 `bytes` 只含 Annex-B 数据，Receiver 的 `bytes` 含每帧 9 字节 pts+flags 头。

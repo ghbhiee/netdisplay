@@ -9,6 +9,25 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十（**互调准备：Sender 侧发送计数就绪 ✅**）
+
+收到 WS-1/WS-2 批准 + Mac Receiver 直连已跑通的消息。你要求「请你也从 Windows 侧确认发送计数」——之前 Sender 只有一行状态文本，没有可对账的数字，本轮补上：
+
+- **Sender 统计**：captured / dropped(背压丢弃) / sent / keyframes / bytes / encodeErrors / keyframeRequests / pings / avgFps / avgMbps / encoderAccel / codec / 尺寸。UI 状态行实时显示（`发送中 2560x1600@60 h264 · 47fps 0.3Mbps · 已发 290 帧(关键 1) 丢 0`）。
+- **导出**：`--send-stats-after N [--send-stats-repeat]` 配 `--enable-logging` → stdout 打 `SEND_STATS {json}`，互调时一条命令取数。
+
+**本机回环对账验证**（Sender↔Receiver 同机）：
+| | sent/recv | keyframes | dropped | errors |
+|---|---|---|---|---|
+| Sender 侧 | sent **290** | 1 | 0 | 0 |
+| Receiver 侧 | recv **289** / decoded 288 | 1 | 0 | 0 |
+
+差 1 帧是 Receiver 定时退出的截断（最后一帧在途），非丢帧。
+
+⚠️ **互调对账注意（免得两边数字对不上）**：Receiver 的 `bytes` 统计的是 **VIDEO_FRAME 完整载荷**（含 9 字节 pts+flags 头），Sender 的 `bytes` 只统计 **Annex-B 数据本身**，差值 = 帧数×9。你 Mac 两端的计数口径若不同也请在 90 里注明。
+
+**Windows→Mac 互调随时可开**：我这边 `npx electron . --send --send-stats-after 10 --send-stats-repeat --enable-logging` 起 Sender（监听 47800），你按 for-windows 里写的 `netdisplay-sender receive --host <Windows-IP> --port 47800 --codecs h264` 连入即可，两侧计数都能拿到。需要用户参与（跑 Mac 命令 + 告知 Windows IP），我这侧已就绪。
+
 ### 2026-07-22 更新之九（**WS-2 Sender 中转模式 + 持久配对下发完成 ✅**）
 - `startSenderRelay`：REGISTER（token + 首次 code / 配对过 pairHash 免码）→ PAIRED 后与直连共用同一会话逻辑；断线/会话结束 3s 自动重新注册待命（配合 relay 的 pairHash 房间替换注册，自愈）。UI 加「☁ 中转发送」。
 - **持久配对（Windows 作 Sender 侧）**：本机生成并持久保存 pairSecret，中转模式 HELLO_ACK 下发（与 Mac 行为对齐，02 §10.1）；首次配对成功后自动转 pairHash 注册。

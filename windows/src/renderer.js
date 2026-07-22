@@ -581,6 +581,12 @@ window.addEventListener("keyup", (e) => {
     refreshSendButtons();
   }
   if (a.autoBounce) setTimeout(() => sendControl("bounceBack"), +a.autoBounce * 1000);
+  // 互调用：N 秒后打印发送侧统计（不退出，便于继续观察长时会话）
+  if (a.sendStatsAfter) {
+    const dump = () => console.log("SEND_STATS " + JSON.stringify(sender.getSenderStats()));
+    setTimeout(dump, +a.sendStatsAfter * 1000);
+    if (a.sendStatsRepeat) setInterval(dump, +a.sendStatsAfter * 1000);
+  }
   if (a.connect) { applyMode("direct"); $("ip").value = a.connect; connect(); }
   else if (a.relay != null) {
     applyMode("relay");

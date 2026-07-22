@@ -19,6 +19,7 @@ const deviceId = () => {
 let server = null;
 let active = null; // 当前会话 {sock, stop()}
 let onStatus = () => {};
+let stats = null; // 最近一次会话的发送统计（会话结束后保留，供互调对账）
 const dbg = (...a) => console.log("[sender]", ...a); // --enable-logging 时可见
 
 // ---------- Annex-B 工具 ----------
@@ -102,8 +103,24 @@ async function startSession(sock, receiverHello, relayMode) {
   let forceKey = true; // 首帧必须关键帧（02 §3.1）
   let basePts = null;
   let spsCache = null; // 从 decoderConfig.description 提取，关键帧缺 SPS 时前置
-  let sentFrames = 0;
   let stopped = false;
+
+  // 发送侧统计（互调时与对端计数对账用，for-windows「请你也从 Windows 侧确认发送计数」）
+  stats = {
+    startedAt: Date.now(),
+    width, height, fps, codec: ack.codec, relayMode: !!relayMode,
+    encoderAccel: null,
+    captured: 0, // 采集到的帧
+    dropped: 0, // 背压丢弃（未送编码器）
+    sent: 0, // 已发出的 VIDEO_FRAME
+    keyframes: 0,
+    bytes: 0, // VIDEO_FRAME 载荷累计
+    encodeErrors: 0,
+    keyframeRequests: 0,
+    pings: 0,
+    lastSecond: { at: Date.now(), sent: 0, bytes: 0, fps: 0, mbps: 0 },
+  };
+  const st = stats;
 
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
@@ -120,13 +137,15 @@ async function startSession(sock, receiverHello, relayMode) {
         merged.set(data, spsCache.length);
         data = merged; // annexb 模式一般自带 SPS/PPS；这里兜底（for-windows review 注意点①）
       }
-      if (sentFrames === 0) dbg("first chunk:", chunk.type, chunk.byteLength, "bytes, nals", nalTypesAnnexB(data));
+      if (st.sent === 0) dbg("first chunk:", chunk.type, chunk.byteLength, "bytes, nals", nalTypesAnnexB(data));
       if (basePts == null) basePts = chunk.timestamp;
       const ptsUs = Math.max(0, chunk.timestamp - basePts); // 起点归 0，对齐 Mac 实测行为
       sock.write(buildFrame(T.VIDEO_FRAME, buildVideoPayload(ptsUs, key, Buffer.from(data.buffer, data.byteOffset, data.byteLength))));
-      sentFrames++;
+      st.sent++;
+      st.bytes += data.length;
+      if (key) st.keyframes++;
     },
-    error: (e) => { dbg("encoder error:", e.message); onStatus("编码错误: " + e.message); },
+    error: (e) => { st.encodeErrors++; dbg("encoder error:", e.message); onStatus("编码错误: " + e.message); },
   });
   // 硬编优先，不可用则退 no-preference（Chromium/Electron 的 MF 硬编开关随版本环境而异）
   const base = {
@@ -146,12 +165,14 @@ async function startSession(sock, receiverHello, relayMode) {
     } catch {}
   }
   if (!cfg) throw new Error("no supported H.264 encoder config");
+  st.encoderAccel = cfg.hardwareAcceleration;
   dbg("configure encoder", width, "x", height, "fps", fps, "bitrate", bitrate, "hw", cfg.hardwareAcceleration);
   encoder.configure(cfg);
 
   // 首帧（用于测尺寸的那帧）直接作为第一个关键帧编码
   if (encoder.state === "configured") {
     encoder.encode(first.value, { keyFrame: true });
+    st.captured++;
     forceKey = false;
   }
   first.value.close();
@@ -161,16 +182,32 @@ async function startSession(sock, receiverHello, relayMode) {
     while (!stopped) {
       const { value: frame, done } = await reader.read();
       if (done || stopped) { frame && frame.close(); break; }
+      st.captured++;
       if (encoder.state === "configured" && encoder.encodeQueueSize <= 2) {
         encoder.encode(frame, { keyFrame: forceKey });
         forceKey = false;
+      } else {
+        st.dropped++;
       }
       frame.close();
     }
   })().catch((e) => onStatus("采集中断: " + e.message));
 
   const statTimer = setInterval(() => {
-    if (!stopped) onStatus(`发送中 ${width}x${height}@${fps} · 已发 ${sentFrames} 帧`);
+    if (stopped) return;
+    const now = Date.now();
+    const dt = (now - st.lastSecond.at) / 1000;
+    if (dt > 0) {
+      st.lastSecond.fps = +((st.sent - st.lastSecond.sent) / dt).toFixed(1);
+      st.lastSecond.mbps = +(((st.bytes - st.lastSecond.bytes) * 8) / dt / 1e6).toFixed(2);
+    }
+    st.lastSecond.at = now;
+    st.lastSecond.sent = st.sent;
+    st.lastSecond.bytes = st.bytes;
+    onStatus(
+      `发送中 ${width}x${height}@${fps} ${st.codec} · ${st.lastSecond.fps}fps ${st.lastSecond.mbps}Mbps · ` +
+      `已发 ${st.sent} 帧(关键 ${st.keyframes}) 丢 ${st.dropped}`
+    );
   }, 1000);
 
   return {
@@ -220,9 +257,11 @@ function attachReceiverHandler(sock, relayMode) {
           break;
         }
         case T.REQUEST_KEYFRAME:
+          if (stats) stats.keyframeRequests++;
           active && active.requestKeyframe();
           break;
         case T.PING:
+          if (stats) stats.pings++;
           sock.write(buildFrame(T.PONG, Buffer.from(payload)));
           break;
         case T.CONTROL: {
@@ -338,4 +377,20 @@ function stopSender() {
   onStatus("发送端已停止");
 }
 
-module.exports = { startSender, startSenderRelay, stopSender, isSending: () => !!server || relayActive };
+// 互调对账用：返回本次/最近一次发送会话的统计快照
+function getSenderStats() {
+  if (!stats) return null;
+  const s = { ...stats, lastSecond: undefined };
+  s.elapsedSec = +((Date.now() - stats.startedAt) / 1000).toFixed(1);
+  s.avgFps = +(stats.sent / Math.max(1, s.elapsedSec)).toFixed(1);
+  s.avgMbps = +((stats.bytes * 8) / Math.max(1, s.elapsedSec) / 1e6).toFixed(2);
+  return s;
+}
+
+module.exports = {
+  startSender,
+  startSenderRelay,
+  stopSender,
+  getSenderStats,
+  isSending: () => !!server || relayActive,
+};
