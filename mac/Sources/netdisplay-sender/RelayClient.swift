@@ -134,6 +134,13 @@ final class RelayClient {
         case .relayError:
             let reason = (try? JSONDecoder().decode(RelayError.self, from: frame.payload))?.reason ?? "?"
             Log.error("relay: RELAY_ERROR \(reason)")
+            if reason == "room_occupied" {
+                // Another Sender is already standing by on this pairHash. Reconnecting
+                // would just flap (each register kicks the other). Stop and tell the user.
+                print("\n  ⚠️ 该房间已有另一个发送端在待命（room_occupied）——停止重连，避免互踢。\n     换一个 pairHash，或先停掉那个发送端。\n")
+                stopped = true
+                onState?(.error("room_occupied：该房间已有发送端待命"))
+            }
             conn?.close()
         default:
             break

@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 客户端处理 `RELAY_ERROR room_occupied`（配合 Windows 的 relay 防抖修复）**：RelayClient 收到 room_occupied 即 `stopped=true` 停止重连(否则会和对方发送端互踢)、打印中文提示、上报 `.error`。实测(对已上线的 relay 修复版)：同房间起第二个发送端，register 3 次后收到 room_occupied 并停住(不再 flap)，在位发送端存活、我另一房间的持久待命发送端不受影响。两端合力根治 flapping。
+
 - ✅ **win-coordinator 上线并跑通 recv-from-mac 复测**：Windows spawn 了持久 win-coordinator 子 agent，实时复测 Mac→Win(HEVC) 背压修复→**62/62 dropped=0 errors=0 稳态零丢**(373ms 真机)，免码重连也隐式再验。
 - ✅ **双房间模型消除房间占用冲突**(#35 撞了)：新增 `secret-mac-sends`(Mac 发送端常驻→Win 收)/`secret-win-sends`(Win 发送端常驻→Mac 收) 两个专用房间，两方向同时常驻可测、零 kill/让房间。standby-sender.sh 用 mac-sends、interop-test recv 用 win-sends/send 用 mac-sends。已重起 Mac 待命发送端于 mac-sends 房。已请 Windows 切 win-sends。
 
