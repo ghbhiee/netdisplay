@@ -18,7 +18,10 @@ CHAT="$HERE/agent-chat.sh"
 [ -x "$BIN" ] || { echo "build first: (cd mac && swift build)"; exit 1; }
 
 relay_token() { ssh 15 "grep -oE 'NETDISPLAY_RELAY_TOKEN=[^ ]+' /etc/systemd/system/netdisplay-relay.service.d/token.conf" | cut -d= -f2; }
-shared_secret() { ssh 15 'cat /root/cc/agent-chat/test-pair-secret'; }
+# Two-room model: recv reads FROM the room where Windows is the standby sender;
+# send stands by on the room where Mac is the sender. No cross-direction collision.
+secret_file() { [ "$MODE" = "send" ] && echo secret-mac-sends || echo secret-win-sends; }
+shared_secret() { ssh 15 "cat /root/cc/agent-chat/$(secret_file)"; }
 
 TOKEN="$(relay_token)"; SECRET="$(shared_secret)"
 [ -n "$TOKEN" ] && [ -n "$SECRET" ] || { echo "could not read token/secret from 15"; exit 1; }

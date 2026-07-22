@@ -16,7 +16,9 @@ LOG="/tmp/nd_standby_sender.log"
 mkdir -p "$HOME/.netdisplay"
 
 relay_token() { ssh 15 "grep -oE 'NETDISPLAY_RELAY_TOKEN=[^ ]+' /etc/systemd/system/netdisplay-relay.service.d/token.conf" | cut -d= -f2; }
-shared_secret() { ssh 15 'cat /root/cc/agent-chat/test-pair-secret'; }
+# Mac is the SENDER here → its own room, so it never collides with Windows'
+# standby sender (two-room model; see docs/coordinator-agent.md).
+shared_secret() { ssh 15 'cat /root/cc/agent-chat/secret-mac-sends'; }
 alive() { [ -f "$PIDF" ] && kill -0 "$(cat "$PIDF" 2>/dev/null)" 2>/dev/null; }
 
 case "${1:-status}" in

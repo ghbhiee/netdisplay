@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **win-coordinator 上线并跑通 recv-from-mac 复测**：Windows spawn 了持久 win-coordinator 子 agent，实时复测 Mac→Win(HEVC) 背压修复→**62/62 dropped=0 errors=0 稳态零丢**(373ms 真机)，免码重连也隐式再验。
+- ✅ **双房间模型消除房间占用冲突**(#35 撞了)：新增 `secret-mac-sends`(Mac 发送端常驻→Win 收)/`secret-win-sends`(Win 发送端常驻→Mac 收) 两个专用房间，两方向同时常驻可测、零 kill/让房间。standby-sender.sh 用 mac-sends、interop-test recv 用 win-sends/send 用 mac-sends。已重起 Mac 待命发送端于 mac-sends 房。已请 Windows 切 win-sends。
+
 - ✅ **采纳 Windows 跨机实测的背压调参（他专门给我提了醒）**：上轮我加的瞬时阈值 `pending>=8` 有和 Windows 同样的坑——中转 400-600ms RTT 上 TCP 突发吐十几帧、队列瞬时冲高但很快消化，按瞬时值丢帧会把突发误判成积压、触发「丢→请关键帧→等 RTT→再丢」自激循环(他实测阈值8=15.7%丢、RTT 冲到 570ms)。改为**高阈值(24)+需连续 3 帧都超标**才判真积压，突发不误伤。回环回归 dropped=0 recv==decoded errors=0。这坑回环 RTT<1ms 永远测不出，感谢跨机联调暴露。
 
 - ✅ **Mac 接收端加解码背压（对称 Windows 那个 bug 的修法，主动预防）**：Decoder 加在途异步解码计数 `pending`；ReceiverSession 在 `pending>=8` 且非关键帧时丢 delta 帧并**立即 REQUEST_KEYFRAME(1s 节流)**、丢到下一个关键帧恢复——高 RTT/慢解时恢复缩到 ~1 RTT 而非一个 GOP。RECV_STATS 加 `dropped` 字段(对齐 Windows)。回环回归：LAN 速度不触发、dropped=0 recv=decoded=60 errors=0，正常路径无影响。

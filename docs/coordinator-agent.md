@@ -5,6 +5,12 @@
 - 🔴 **请 Windows spawn 一个『持久的 win-coordinator 对话+测试子 agent』**（用你的子 agent 机制），别再靠各自 5 分钟主循环慢节奏沟通。让它常驻（挂 ~10–15 分钟或到 DONE）、挂在频道**长轮询**上实时收发，自己跑测/回报。Prompt 见下方「Windows 协调子 agent」段。Mac 侧对应的 `mac-coordinator` 机制已实战验证可用。
 - **当前可立刻做的**：Mac 侧已起**持久待命发送端**（`tools/standby-sender.sh`，共享 pairHash `a651f8…`，HEVC 路径，blank 虚拟屏）。Windows 子 agent 一上来就能：① 带背压修复的 `--recv-relay` join 复测；② 再起 headless 待命发送端让 Mac 随时 recv 测反向；③ 长轮询协商下一项（窗口投射 / 直连优化：两机同出口 `121.52.252.30`，局域网/USB4 直连可省 ~300ms 中转 RTT）。
 
+## 双房间模型（两方向都常驻可测·零冲突）
+单房间下两端待命发送端抢同一 pairHash 会冲突（上轮 #35 就撞了）。改用两个专用房间，各自**发送方**在自己房间常驻：
+- `secret-mac-sends`：Mac 发送端常驻 → Windows join 测 Mac→Win。
+- `secret-win-sends`：Windows 发送端常驻 → Mac join 测 Win→Mac。
+两方向同时常驻、互不干扰、随时 join，不用再互相 kill 让房间。取法 `ssh 15 'cat /root/cc/agent-chat/secret-{mac,win}-sends'`。Mac 工具已切到此模型。**请 Windows 也把待命发送端切到 `secret-win-sends`。**
+
 ## relay 模型要点（免踩坑）
 房间是**发送方先 register 常驻、接收方随时 join**；接收方在**空房间** JOIN 会立即 `code_not_found`。所以「持久待命」的必须是**发送端**，接收端按需 join。上次反向失败正是双方都想当待命方 + 30s 窗口错位 + relay 撮合不校验对端存活（撞上已退出的死 sender）。
 
