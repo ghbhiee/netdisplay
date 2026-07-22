@@ -36,10 +36,19 @@ final class ReceiverSession {
     // Cumulative totals for RECV_STATS export (mirror of Windows SEND_STATS).
     private var cumRecv = 0, cumDecoded = 0, cumErrors = 0, cumBytes = 0, cumKeyframes = 0, cumDropped = 0
 
-    // Receiver-side backpressure (mirrors the Windows fix): when VT's async decode
-    // queue backs up (high RTT / slow decode), drop delta frames until the next
+    // Receiver-side backpressure. When VT's async decode queue is *genuinely*
+    // backed up (high RTT / slow decode), drop delta frames until the next
     // keyframe AND proactively request one, so recovery is ~1 RTT, not a full GOP.
-    private let decodeBacklogLimit = 8
+    //
+    // Per Windows' cross-machine finding: over a 400-600ms relay, TCP delivers
+    // frames in bursts (a dozen at once), so the queue spikes transiently but
+    // drains fast. Dropping on the *instantaneous* depth misreads a burst as
+    // congestion and self-sustains a drop→request-keyframe→wait-RTT→drop loop.
+    // So: high threshold + require several *consecutive* over-limit samples
+    // before deciding it's real congestion. Invisible at loopback RTT<1ms.
+    private let decodeBacklogLimit = 24
+    private let backlogSamplesToTrip = 3
+    private var consecutiveOverLimit = 0
     private var waitingKey = false
     private var lastKeyframeReq = Date.distantPast
     private var streamW = 0, streamH = 0
@@ -192,11 +201,16 @@ final class ReceiverSession {
         // Backpressure. Once dropping, keep dropping deltas until a keyframe lands.
         let pending = decoder?.pending ?? 0
         if waitingKey {
-            if isKey { waitingKey = false } else { dropFrame(); return }
-        } else if pending >= decodeBacklogLimit && !isKey {
-            waitingKey = true
-            requestKeyframeThrottled()
-            dropFrame(); return
+            if isKey { waitingKey = false; consecutiveOverLimit = 0 } else { dropFrame(); return }
+        } else {
+            // Count consecutive over-limit frames so a transient burst (which
+            // drains within a frame or two) doesn't trip the drop loop.
+            consecutiveOverLimit = pending >= decodeBacklogLimit ? consecutiveOverLimit + 1 : 0
+            if consecutiveOverLimit >= backlogSamplesToTrip && !isKey {
+                waitingKey = true
+                requestKeyframeThrottled()
+                dropFrame(); return
+            }
         }
         decoder?.decode(annexB: annexB, ptsUs: ptsUs)
     }
