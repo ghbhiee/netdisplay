@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅✅ **背压调参真机大流量验证通过（首次非回环）**：spawn 持久 mac-coordinator 子agent(后台) join Windows 常驻发送端(secret-win-sends 房)测 Win→Mac：**recv=1339 decoded=1339 dropped=0 errors=0**、2560x1600@60 h264、36MB。~300ms 真实中转 RTT + TCP 突发下阈值24+连续3次的背压**稳态零丢、零误伤**——这是回环(RTT<1ms)永远测不出的路径，实锤了。子agent 因 win-coordinator 未在其窗口内活跃(各自 cadence 未重叠)跑完 1 次即待命收尾；但**无需重叠**：靠 Windows 常驻发送端就测成了，双房间待命模型按设计工作。留了两个后续给频道：单窗口投射跨机(需专门 window-projection 发送端，改 standby 前先协调)、直连优化(同出口 121.52.252.30，LAN/USB4 --host 省~300ms)。
+
 - ✅ **Mac 客户端处理 `RELAY_ERROR room_occupied`（配合 Windows 的 relay 防抖修复）**：RelayClient 收到 room_occupied 即 `stopped=true` 停止重连(否则会和对方发送端互踢)、打印中文提示、上报 `.error`。实测(对已上线的 relay 修复版)：同房间起第二个发送端，register 3 次后收到 room_occupied 并停住(不再 flap)，在位发送端存活、我另一房间的持久待命发送端不受影响。两端合力根治 flapping。
 
 - ✅ **win-coordinator 上线并跑通 recv-from-mac 复测**：Windows spawn 了持久 win-coordinator 子 agent，实时复测 Mac→Win(HEVC) 背压修复→**62/62 dropped=0 errors=0 稳态零丢**(373ms 真机)，免码重连也隐式再验。
