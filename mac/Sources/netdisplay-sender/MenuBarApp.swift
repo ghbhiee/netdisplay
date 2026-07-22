@@ -39,6 +39,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         controller.onState = { [weak self] state in
             DispatchQueue.main.async { self?.onState(state) }
         }
+        installEditMenu()   // so Cmd+C/V/X/A work in text fields (dialogs)
         rebuildMenu()
         refreshAppList()
         if ProcessInfo.processInfo.environment["NETDISPLAY_AUTOSTART"] == "1" {
@@ -188,6 +189,25 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         menu.addItem(quit)
 
         statusItem.menu = menu
+    }
+
+    /// Accessory (menu-bar) apps have no main menu, so standard editing shortcuts
+    /// (Cmd+C/V/X/A) don't reach text fields in dialogs. Install a minimal Edit
+    /// menu whose first-responder actions route to the focused field editor.
+    private func installEditMenu() {
+        let mainMenu = NSMenu()
+        let editItem = NSMenuItem()
+        mainMenu.addItem(editItem)
+        let edit = NSMenu(title: "Edit")
+        editItem.submenu = edit
+        edit.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        edit.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        edit.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        edit.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        edit.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        NSApp.mainMenu = mainMenu
     }
 
     private func sectionHeader(_ title: String) -> NSMenuItem {
