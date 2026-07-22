@@ -1,0 +1,153 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>NetDisplay Receiver</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; background: #0b0f14; color: #cdd6e0;
+      font: 14px/1.5 "Segoe UI", system-ui, sans-serif; overflow: hidden; }
+    #stage { position: fixed; inset: 0; display: none; background: #000;
+      align-items: center; justify-content: center; }
+    #video { display: block; background: #000; }
+    #panel { position: fixed; inset: 0; display: flex; align-items: center;
+      justify-content: center; z-index: 20; }
+    #panel.over-stream { background: rgba(4, 7, 10, .78); }
+    .card { width: 400px; background: #121a24; border: 1px solid #22303f;
+      border-radius: 10px; padding: 24px 28px; max-height: 92vh; overflow-y: auto; }
+    h1 { font-size: 17px; margin-bottom: 2px; color: #e8eef4; }
+    .sub { font-size: 12px; color: #6b7c8d; margin-bottom: 16px; }
+    label { display: block; font-size: 12px; color: #8fa1b3; margin: 12px 0 5px; }
+    input[type="text"], input[type="number"], select { width: 100%; padding: 8px 11px;
+      background: #0b1118; color: #e8eef4; border: 1px solid #2a3948; border-radius: 6px;
+      font-size: 14px; outline: none; }
+    input:focus, select:focus { border-color: #3d7dbf; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .seg { display: flex; border: 1px solid #2a3948; border-radius: 6px; overflow: hidden; }
+    .seg button { flex: 1; padding: 8px; border: 0; background: #0b1118; color: #8fa1b3;
+      font-size: 13px; cursor: pointer; }
+    .seg button.on { background: #2467a8; color: #fff; }
+    .chk { display: flex; align-items: center; gap: 7px; margin-top: 10px;
+      font-size: 12px; color: #8fa1b3; cursor: pointer; }
+    .actions { display: flex; gap: 8px; margin-top: 18px; }
+    .actions button { flex: 1; padding: 10px; border: 0; border-radius: 6px;
+      font-size: 14px; cursor: pointer; }
+    #btnConnect { background: #2467a8; color: #fff; }
+    #btnConnect:hover { background: #2d7ac4; }
+    #btnDisconnect { background: #3a2430; color: #d9a0a0; display: none; }
+    #btnClose { background: #1b2836; color: #a9bccd; display: none; }
+    #status { margin-top: 14px; font-size: 12px; min-height: 18px; color: #6b7c8d;
+      white-space: pre-wrap; }
+    #status.err { color: #e07a6a; }
+    #overlay { position: fixed; top: 10px; right: 12px; background: rgba(10, 15, 20, .72);
+      border: 1px solid #22303f; border-radius: 6px; padding: 6px 10px;
+      font: 11px/1.6 Consolas, monospace; color: #9fdc7f; z-index: 10; display: none;
+      pointer-events: none; }
+    #hint { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+      font-size: 11px; color: rgba(255,255,255,.35); z-index: 10; display: none; }
+    #idle { position: fixed; inset: 0; display: none; z-index: 5; align-items: center;
+      justify-content: center; flex-direction: column; gap: 10px; background: rgba(4,7,10,.55); }
+    #idle .big { font-size: 20px; color: #8fa1b3; letter-spacing: 2px; }
+    #idle .small { font-size: 12px; color: #4d5f70; }
+    #video.dimmed { filter: brightness(.22) saturate(.4); }
+    #toolbar { position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      display: none; gap: 8px; z-index: 15; opacity: 0; transition: opacity .2s; }
+    #toolbar.show { opacity: 1; }
+    #toolbar button { padding: 7px 16px; border: 1px solid #2a3948; border-radius: 6px;
+      background: rgba(12, 18, 26, .88); color: #cdd6e0; font-size: 13px; cursor: pointer; }
+    #toolbar button:hover { background: #1c2a3a; }
+    #srcLabel { position: fixed; top: 10px; left: 12px; z-index: 10; display: none;
+      font-size: 11px; color: rgba(255,255,255,.4); pointer-events: none; }
+    #pairInfo { font-size: 11px; color: #5d9e63; margin-top: 6px; }
+    #pairInfo a { color: #6b7c8d; cursor: pointer; margin-left: 8px; text-decoration: underline; }
+    .hidden { display: none !important; }
+  </style>
+</head>
+<body>
+  <div id="panel">
+    <div class="card">
+      <h1>NetDisplay Receiver</h1>
+      <div class="sub">把这台电脑变成 Mac 的第二块屏幕</div>
+
+      <label>连接模式</label>
+      <div class="seg" id="modeSeg">
+        <button data-mode="direct">直连（USB4 / 局域网）</button>
+        <button data-mode="relay">服务器中转（配对码）</button>
+      </div>
+
+      <div id="grpDirect">
+        <label>Mac 地址（USB4 网桥默认 10.77.0.1）</label>
+        <input type="text" id="ip" value="10.77.0.1" spellcheck="false" />
+      </div>
+
+      <div id="grpRelay" class="hidden">
+        <label>Mac 端显示的 6 位配对码</label>
+        <input type="text" id="code" maxlength="6" placeholder="000000" inputmode="numeric" />
+        <label>中转服务器（示例占位，可改成自己的）</label>
+        <input type="text" id="relayServer" value="15.tokencv.com:47700" spellcheck="false" />
+        <label>访问令牌 token（服务器启用鉴权时必填）</label>
+        <input type="text" id="token" placeholder="留空 = 不发送 token" spellcheck="false" />
+        <div id="pairInfo" class="hidden">已持久配对 ✓ 免输码<a id="clearPair">清除配对</a></div>
+      </div>
+
+      <label>分辨率 / 缩放（macOS 端 UI 大小）</label>
+      <div class="row">
+        <select id="res">
+          <option value="auto">自动（本机屏幕）</option>
+          <option value="3840x2400">3840 × 2400</option>
+          <option value="2560x1600">2560 × 1600</option>
+          <option value="2560x1440">2560 × 1440</option>
+          <option value="1920x1200">1920 × 1200</option>
+          <option value="1920x1080">1920 × 1080</option>
+          <option value="1280x800">1280 × 800</option>
+          <option value="custom">自定义…</option>
+        </select>
+        <select id="scale">
+          <option value="1">1x（UI 小、区域大）</option>
+          <option value="2">2x HiDPI（UI 正常）</option>
+        </select>
+      </div>
+      <div class="row hidden" id="grpCustom" style="margin-top:8px">
+        <input type="number" id="customW" placeholder="宽 (像素)" min="640" step="2" />
+        <input type="number" id="customH" placeholder="高 (像素)" min="400" step="2" />
+      </div>
+
+      <label>帧率 / 码率</label>
+      <div class="row">
+        <select id="fps">
+          <option value="60">60 fps</option>
+          <option value="30">30 fps</option>
+        </select>
+        <input type="number" id="bitrate" value="40" min="2" max="120" title="Mbps" />
+      </div>
+
+      <label class="chk"><input type="checkbox" id="windowed" />窗口模式（不全屏，1:1 像素显示）</label>
+      <label class="chk"><input type="checkbox" id="overlayOn" checked />显示统计浮层（RTT / fps / 丢帧）</label>
+
+      <div class="actions">
+        <button id="btnConnect">连接</button>
+        <button id="btnDisconnect">断开</button>
+        <button id="btnClose">返回画面</button>
+      </div>
+      <div id="status"></div>
+    </div>
+  </div>
+
+  <div id="stage"><canvas id="video"></canvas></div>
+  <div id="idle">
+    <div class="big">等待投射…</div>
+    <div class="small">连接保持中 · 在 Mac 上开始投射即自动显示</div>
+  </div>
+  <div id="toolbar">
+    <button id="btnBounce">⏏ 弹回 Mac</button>
+    <button id="btnStop">■ 停止投射</button>
+    <button id="btnSettings">⚙ 设置</button>
+  </div>
+  <div id="srcLabel"></div>
+  <div id="overlay"></div>
+  <div id="hint">长按 Esc 断开 · F1 统计 · F2 设置</div>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

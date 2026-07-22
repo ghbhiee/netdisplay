@@ -1,0 +1,13 @@
+[Unit]
+Description=NetDisplay pairing relay
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/netdisplay-relay
+Restart=always
+RestartSec=3
+User=nobody
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

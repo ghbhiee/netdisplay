@@ -1,0 +1,108 @@
+// NetDisplay Receiver — Electron 主进程（v1.4：托盘常驻、投射自动显示）
+"use strict";
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require("electron");
+const path = require("path");
+
+const argv = process.argv.slice(1);
+const arg = (name) => {
+  const i = argv.indexOf("--" + name);
+  return i >= 0 ? argv[i + 1] : null;
+};
+const testArgs = {
+  connect: arg("connect"),
+  port: arg("port"),
+  relay: arg("relay"),
+  server: arg("server"),
+  exitAfter: arg("exit-after"),
+  res: arg("res"),
+  scale: arg("scale"),
+  windowed: arg("windowed"),
+  autoBounce: arg("auto-bounce"), // 测试：N 秒后自动发 CONTROL bounceBack
+  token: arg("token"), // 测试：relay 访问令牌
+  testPairSecret: arg("test-pair-secret"), // 测试：预置 pairSecret（base64）
+};
+const isTest = !!testArgs.exitAfter;
+
+let win = null;
+let tray = null;
+let quitting = false;
+
+if (!app.requestSingleInstanceLock() && !isTest) {
+  app.quit();
+} else {
+  app.on("second-instance", () => {
+    if (win) { win.show(); win.focus(); }
+  });
+}
+
+app.whenReady().then(() => {
+  win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    backgroundColor: "#0b0f14",
+    autoHideMenuBar: true,
+    webPreferences: {
+      nodeIntegration: true,
+      contextIsolation: false,
+      backgroundThrottling: false, // 隐藏到托盘时保持心跳/解码不被节流
+    },
+  });
+  win.loadFile("src/index.html");
+
+  // 关窗 = 隐藏到托盘（连接常驻）；托盘菜单退出才真正退出
+  win.on("close", (e) => {
+    if (!quitting && !isTest) {
+      e.preventDefault();
+      win.hide();
+    }
+  });
+
+  if (!isTest) {
+    const icon = nativeImage.createFromPath(path.join(__dirname, "assets", "tray.png"));
+    tray = new Tray(icon);
+    tray.setToolTip("NetDisplay Receiver");
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: "显示窗口", click: () => { win.show(); win.focus(); } },
+        { type: "separator" },
+        { label: "退出", click: () => { quitting = true; app.quit(); } },
+      ])
+    );
+    tray.on("double-click", () => { win.show(); win.focus(); });
+  }
+});
+
+ipcMain.handle("config", () => {
+  const d = screen.getPrimaryDisplay();
+  return {
+    screen: {
+      width: Math.round(d.size.width * d.scaleFactor),
+      height: Math.round(d.size.height * d.scaleFactor),
+      scale: 1,
+      fps: 60,
+    },
+    args: testArgs,
+  };
+});
+
+ipcMain.on("set-fullscreen", (_e, v) => {
+  if (win && !win.isDestroyed()) win.setFullScreen(!!v);
+});
+
+ipcMain.on("set-content-size", (_e, w, h) => {
+  if (win && !win.isDestroyed()) win.setContentSize(Math.max(320, w), Math.max(200, h));
+});
+
+// v1.4：有投射时把窗口带到前台
+ipcMain.on("win-show", () => {
+  if (win && !win.isDestroyed() && !win.isVisible()) { win.show(); win.focus(); }
+});
+
+ipcMain.on("test-result", (_e, json) => {
+  console.log("TEST_RESULT " + json);
+  quitting = true;
+  app.exit(0);
+});
+
+app.on("window-all-closed", () => { if (quitting || isTest) app.quit(); });
+app.on("before-quit", () => { quitting = true; });

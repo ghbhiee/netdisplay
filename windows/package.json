@@ -1,0 +1,27 @@
+{
+  "name": "netdisplay-receiver",
+  "version": "0.1.0",
+  "description": "NetDisplay Windows receiver: turns this PC into a wireless extra display for a Mac",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "mock": "node tools/mock-sender.js",
+    "cli": "node tools/cli-client.js",
+    "probe": "electron tools/probe-codecs.js",
+    "dist": "electron-builder --win portable"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "com.netdisplay.receiver",
+    "productName": "NetDisplay",
+    "directories": { "output": "dist" },
+    "files": ["main.js", "src/**", "assets/**", "package.json"],
+    "win": {
+      "target": ["portable"],
+      "artifactName": "NetDisplay-${version}-portable.exe"
+    }
+  }
+}

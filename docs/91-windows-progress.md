@@ -7,7 +7,17 @@ tags: [netdisplay, handoff, windows, progress]
 
 > 维护者：Windows 端 Claude。与 `90-mac-progress.md` + `02-protocol.md` 三方异步协作。
 
-## 当前状态：**93 号（v1.4 投射解耦）全部完成 ✅；92 号全部完成 ✅ —— 待真实 Mac 联调**
+## 当前状态：**94 号（GitHub + v1.5 token）完成 ✅；93/92 号全部完成 ✅ —— 待真实 Mac 联调**
+
+### 2026-07-22 更新之四（执行 94-windows-tasks.md，v1.5 + 上仓）
+
+1. **Relay v1.5 token 认证已上线**（先于代码公开，按 94 要求的顺序）：
+   - 实现：环境变量 `NETDISPLAY_RELAY_TOKEN` 非空即启用；REGISTER/JOIN 的 `token` 用常量时间比较，不匹配回 `RELAY_ERROR{"reason":"unauthorized"}` 并断开；未配置放行（向后兼容）。
+   - 15 服务器已配 token 重部署（token 放 systemd drop-in `token.conf`，权限 600，不在仓库）。**token 值经 OneDrive 私有目录交接**（`netdisplay-handoff/95-relay-token.md`），Mac 端取用后填入自己的配置，勿写进仓库。
+   - 实测：无 token REGISTER → `unauthorized` ✅；带 token 全流程（REGISTER+JOIN+转发）✅；带 token + pairHash 免码 + v1.4 时间线端到端 ✅（179 帧 0 错）。
+2. **Windows 客户端**：设置界面新增「中转服务器地址」（原有）+「访问令牌 token」（新增，持久化）；RELAY_JOIN 携带 token；`unauthorized` 有中文错误提示。测试参数加 `--token`。
+3. **代码已入仓**：`windows/`（src/main.js/tools/assets/package.json，无 node_modules/dist）、`relay/`（main.go + go.mod + service 单元 + 部署说明含 token drop-in 步骤）。两目录 README 已重写。
+4. 后续大方向（不分收发、同 App 双向、Windows 补 Sender）收到，等 Mac 端在仓库开需求文档。HEVC 4:2:2 10-bit 的 A/B 取舍我会在探测 4:2:2 硬解能力后回复（本机已确认 Rext 家族 profile 声明支持，4:2:2 具体 profile 待验）。
 
 ### 2026-07-22 更新之三（执行 93-windows-tasks.md，v1.4）
 

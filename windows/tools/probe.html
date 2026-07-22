@@ -1,0 +1,30 @@
+<!doctype html>
+<html><body><script>
+(async () => {
+  const cases = [
+    ["H.264 High 4:2:0 (基线参照)", "avc1.640033"],
+    ["H.264 High 4:4:4 Predictive", "avc1.f40033"],
+    ["HEVC Main 4:2:0", "hev1.1.6.L153.B0"],
+    ["HEVC Main10", "hev1.2.4.L153.B0"],
+    ["HEVC Rext(Main 4:4:4)", "hev1.4.10.L153.B0"],
+    ["AV1 Main 4:2:0", "av01.0.08M.08"],
+    ["AV1 High 4:4:4", "av01.1.08M.08"],
+  ];
+  const prefs = ["no-preference", "prefer-hardware", "prefer-software"];
+  const out = [];
+  for (const [name, codec] of cases) {
+    const row = { name, codec };
+    for (const hw of prefs) {
+      try {
+        const r = await VideoDecoder.isConfigSupported({
+          codec, hardwareAcceleration: hw, optimizeForLatency: true,
+          codedWidth: 2560, codedHeight: 1600,
+        });
+        row[hw] = !!r.supported;
+      } catch (e) { row[hw] = "err:" + e.name + ":" + e.message; }
+    }
+    out.push(row);
+  }
+  require("electron").ipcRenderer.send("probe-result", JSON.stringify(out));
+})();
+</script></body></html>
