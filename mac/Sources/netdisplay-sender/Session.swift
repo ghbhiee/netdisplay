@@ -149,9 +149,22 @@ final class Session {
         return bitrateBps
     }
 
+    private var chosenCodec: VideoCodec = .h264
+
+    /// Pick the Receiver's most-preferred codec the Mac can encode. Mac supports
+    /// HEVC 4:2:0 ("hevc") and H.264; "hevc422" (4:2:2) is excluded until the
+    /// 4:2:2 input path is done.
+    private func negotiateCodec(_ receiverCodecs: [String]?) -> VideoCodec {
+        let macSupported: [VideoCodec] = [.hevc, .h264]
+        guard let list = receiverCodecs, !list.isEmpty else { return .h264 }
+        for c in list { if let vc = VideoCodec(rawValue: c), macSupported.contains(vc) { return vc } }
+        return .h264
+    }
+
     private func startProjection() async {
         guard !ended, helloReceived, pipeline == nil else { return }
         guard let hello = currentHello else { return }
+        chosenCodec = negotiateCodec(hello.codecs)
         let fps = min(60, max(15, source.override.fps ?? hello.screen.fps))
         let effBitrate = effectiveBitrate()
 
@@ -179,7 +192,7 @@ final class Session {
 
         if let app = source.windowApp {
             pipe = await StreamPipeline.window(appName: app, fps: fps, bitrateBps: effBitrate,
-                                               prioritizeQuality: source.prioritizeQuality)
+                                               prioritizeQuality: source.prioritizeQuality, codec: chosenCodec)
             guard let p = pipe else { rejectOrIdle("无法投射窗口 '\(app)'（未找到可见窗口）"); return }
             outW = p.pixelWidth; outH = p.pixelHeight; outScale = 1
             label = "\(app) 窗口 \(outW)×\(outH)"; kind = "window"
@@ -191,7 +204,7 @@ final class Session {
             let scale = max(1, source.override.scale ?? hello.screen.scale)
             pipe = StreamPipeline(name: "NetDisplay", pixelWidth: w, pixelHeight: h, scale: scale,
                                   fps: fps, bitrateBps: effBitrate, deviceSeed: deviceId,
-                                  prioritizeQuality: source.prioritizeQuality)
+                                  prioritizeQuality: source.prioritizeQuality, codec: chosenCodec)
             guard let p = pipe else { rejectOrIdle("failed to create virtual display"); return }
             outW = w; outH = h; outScale = scale
             label = "整个桌面 \(w)×\(h)"; kind = "desktop"
@@ -205,7 +218,7 @@ final class Session {
         if !helloAckSent {
             let ack = HelloAck(version: Proto.version, accepted: true,
                                display: .init(width: outW, height: outH, fps: fps, scale: outScale),
-                               codec: "h264", reason: nil, pairSecret: PairStore.ensureSecret())
+                               codec: chosenCodec.wire, reason: nil, pairSecret: PairStore.ensureSecret())
             conn.send(Wire.encodeJSON(.helloAck, ack))
             helloAckSent = true
         } else {
@@ -234,7 +247,7 @@ final class Session {
 
         let fps = min(60, max(15, source.override.fps ?? hello.screen.fps))
         guard let p = StreamPipeline.window(scWindow: r.window, pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight,
-                                            fps: fps, bitrateBps: effectiveBitrate(), prioritizeQuality: source.prioritizeQuality) else { return }
+                                            fps: fps, bitrateBps: effectiveBitrate(), prioritizeQuality: source.prioritizeQuality, codec: chosenCodec) else { return }
         // Bounce the previously-projected window back to the main screen.
         if currentStagePid != 0 && currentStagePid != r.pid {
             WindowMover.moveFrontWindow(pid: currentStagePid, to: CGPoint(x: 120, y: 120))
@@ -247,7 +260,7 @@ final class Session {
         let name = r.window.owningApplication?.applicationName ?? "窗口"
         if !helloAckSent {
             conn.send(Wire.encodeJSON(.helloAck, HelloAck(version: Proto.version, accepted: true,
-                display: .init(width: r.pixelWidth, height: r.pixelHeight, fps: fps, scale: 1), codec: "h264", reason: nil, pairSecret: PairStore.ensureSecret())))
+                display: .init(width: r.pixelWidth, height: r.pixelHeight, fps: fps, scale: 1), codec: chosenCodec.wire, reason: nil, pairSecret: PairStore.ensureSecret())))
             helloAckSent = true
         } else {
             sendVideoConfig(width: r.pixelWidth, height: r.pixelHeight, fps: fps)
@@ -306,7 +319,7 @@ final class Session {
     }
 
     private func sendVideoConfig(width: Int, height: Int, fps: Int) {
-        let cfg = VideoConfig(codec: "h264", width: width, height: height, fps: fps, bitrateMbps: effectiveBitrate() / 1_000_000)
+        let cfg = VideoConfig(codec: chosenCodec.wire, width: width, height: height, fps: fps, bitrateMbps: effectiveBitrate() / 1_000_000)
         conn.send(Wire.encodeJSON(.videoConfig, cfg))
         Log.info("session: sent VIDEO_CONFIG \(width)x\(height)")
     }

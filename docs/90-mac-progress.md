@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **codec 协商**：Session 读 HELLO.codecs → negotiateCodec 挑 Mac 能编的（hevc→h264，hevc422 暂排除）→ 回 HELLO_ACK.codec + 用于编码器/VIDEO_CONFIG。实测 [hevc422,hevc,h264]→hevc、[h264]→h264。真实会话自动用 HEVC 4:2:0。
+
 - ✅ **HEVC 编码器（codec 化）**：Encoder 支持 h264/hevc/hevc422 参数化；`--codec hevc` 实测出 HEVC Main 4:2:0，VPS+SPS+PPS 正确内联、ffmpeg 解 91 帧。下一步 codec 协商 + hevc422（4:2:2 输入）。
 
 - ✅ **v1.4 增量3 持久配对（Mac 端）**：HELLO_ACK 下发 pairSecret（存 ~/.netdisplay-sender/pairSecret）；relay 有 secret 则 pairHash 免码注册。pairHash=hex(sha256(base64decode(secret)))，与 Windows 实测一致。

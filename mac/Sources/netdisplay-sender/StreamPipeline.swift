@@ -75,9 +75,10 @@ final class StreamPipeline {
 
     /// Window-projection mode: capture a specific already-resolved window.
     static func window(scWindow: SCWindow, pixelWidth: Int, pixelHeight: Int,
-                       fps: Int, bitrateBps: Int, prioritizeQuality: Bool = false) -> StreamPipeline? {
+                       fps: Int, bitrateBps: Int, prioritizeQuality: Bool = false,
+                       codec: VideoCodec = .h264) -> StreamPipeline? {
         guard let enc = Encoder(width: pixelWidth, height: pixelHeight, bitrateBps: bitrateBps,
-                                fps: fps, prioritizeQuality: prioritizeQuality) else {
+                                fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
             Log.error("failed to create encoder"); return nil
         }
         let cap = Capture(window: scWindow, pixelWidth: pixelWidth, pixelHeight: pixelHeight)

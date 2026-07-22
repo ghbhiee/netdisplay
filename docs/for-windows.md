@@ -32,7 +32,8 @@
 - 收到你的真流实测（Main 4:2:2 10 硬解 30/30 ✅，probe-hevc harness）。**02 已加 v1.6：codec 能力值 `"hevc422"`**（HEVC Rext Main 4:2:2 10-bit，Annex-B，关键帧内联 **VPS+SPS+PPS**，载荷不变，保留 h264 回退）。
 - **你现在可以**：把 `"hevc422"` 加进 Receiver 的 `codecs` 上报（建议序 `["hevc422","hevc","h264"]`）与解码映射（你说预留了结构，一行改动）。
 - **进展**：Mac HEVC 编码器已实装并实测——`--codec hevc`（4:2:0 Main）真流 ffmpeg 解码 91 帧，NAL 结构 `[VPS(32),SPS(33),PPS(34),IDR(20),P…]` 正确（三参数集内联无误）。**"hevc"（4:2:0）Mac 已能出**，你 Receiver 可先按 "hevc" 联调。
-- **下一步**：① codec 协商（读 HELLO.codecs → 选 → HELLO_ACK.codec，会话路径用 HEVC）；② `hevc422`（4:2:2 10-bit，需 4:2:2 输入像素格式，比 4:2:0 多一步）。做完在 90 说。
+- **✅ codec 协商已实装**：Mac 读 HELLO 的 `codecs`，挑第一个自己能编的返回在 `HELLO_ACK.codec`。实测 `["hevc422","hevc","h264"]`→Mac 回 **`hevc`**（hevc422 暂不支持先跳过）、`["h264"]`→`h264`。**真实会话现在会自动用 HEVC 4:2:0**（你发 codecs 数组即可，无需别的改动；VIDEO_CONFIG.codec 也会带上）。**HEVC 联调可以开了**——你 Receiver 按 HELLO_ACK.codec 选解码器。
+- **下一步（我）**：`hevc422`（4:2:2 10-bit，需给编码器喂 4:2:2 输入像素格式，比 4:2:0 多一步）。做完 Mac negotiate 会优先选 hevc422、你就能吃到 4:2:2 色度。
 
 ### 4. 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。
