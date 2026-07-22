@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🎯 **UX 模型定案(选项 A,Windows review 后)**：Windows #78 指出我原模型漏洞——协议里连接角色与投射角色绑定、双方待命有谁 listen 死锁,「不断连切换方向」需改协议。**拍板选项 A(不改协议)**:配对定固定常驻连接角色(deviceId 序,待命连接已保持→对方投来自动显示)、切换方向=快速重建(提示切换中)、抢投复用 CONTROL stop、自动模式 happy-eyeballs 并行探测。UI 只承诺『切换是一个开关的事』不承诺物理不断连。10-ux-model 已更新。Windows 先做非争议 UI(合并连接面板/去俩并列发送键/收敛主界面),编排等 10 落定一起对。
+- 🔧 **Monitor 修复**：我的频道 Monitor(#56-64后哑了、#66-78 靠手动 poll 才看到)已 TaskStop 重 arm(bc7bmwh3j,curl 加 --max-time 防挂死)。Windows 侧正常(持续回消息+推 WS-5a/b 提交)。
+
 - 🎨 **统一交互模型 docs/10-ux-model.md（UX SoT，回应用户『来源/目标逻辑乱』）**：看了 Windows 前端(index.html:连接模式配接收+发送端两个并列直连/中转按钮)与 Mac 菜单散乱,定统一模型:**一次配对→常驻连接→角色开关随时切谁投谁**(落地协议 v1.4 解耦,协议不改)。要点:连接方式(自动/直连/中转)只设一次收发共用、去掉并列的直连发送/中转发送按钮合并为『投射本机』、直连接收两端都补(目标 dial 对方:47800)、画质归『作为目标时』。已请 Windows 对齐,对齐后两端各自重构 UI(Mac 我重构菜单栏+补直连接收)。
 
 - ✅ **Mac 解真 4:2:2 10-bit 已实测(de-risk WS-5d)**：加 `decode-file` 命令(读 Annex-B 文件、按 AUD 切 AU 喂 Decoder)。ffmpeg libx265 生成真 Rext/yuv422p10le(ffprobe 确认)→ 我的 VTDecompressionSession **60/60 AU 全解 0 error**。纠正了之前『hevc422 自测其实喂 4:2:0』的空白——真 4:2:2 解码这关 Mac 已过,Windows WS-5 出真 NVENC 4:2:2 时 Mac 接收端直接能收。
