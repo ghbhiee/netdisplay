@@ -251,7 +251,10 @@ case "receive":
     let h = args.int("height", Int(CGDisplayPixelsHigh(CGMainDisplayID())))
     let fps = args.int("fps", 60)
     let bitrate = args.flags["bitrate"].flatMap { Int($0) }
-    let codecs = args.str("codecs", "hevc,h264").split(separator: ",").map(String.init)
+    // Mac decodes all three (VT decode of Rext Main422_10 verified). Advertise
+    // hevc422 first so a capable Sender (e.g. Windows ffmpeg NVENC/QSV) can send
+    // real 4:2:2 10-bit; falls back to hevc/h264 otherwise.
+    let codecs = args.str("codecs", "hevc422,hevc,h264").split(separator: ",").map(String.init)
     let screen = HelloReceiver.Screen(width: w, height: h, scale: 1, fps: fps, bitrateMbps: bitrate)
     let showWindow = args.bool("window")
     let snapshotPath = args.flags["snapshot"]

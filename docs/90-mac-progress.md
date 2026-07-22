@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **接收端上报 codecs 默认含 hevc422**：`receive` 默认 `["hevc422","hevc","h264"]`（Mac VT 解 Rext Main422_10 已验 44/44）。这样 Windows 若走 ffmpeg NVENC/QSV 出真 4:2:2，协商即选 hevc422、Mac 直接能收，无需再改收端。
+- 📋 **Review 了 Windows 的 Phase-2 提案**（ffmpeg `ddagrab→hevc_nvenc 4:2:2→Annex-B`）：批准为**可选 HQ 模式**（不替换 WebCodecs H.264 基线），给了 8 条边界（运行时探测+回退、AUD 切帧、周期 GOP 关键帧、resize 重启子进程、子进程生命周期、窗口模式暂留 WebCodecs、ffmpeg 可选打包）。不阻塞当前 h264 基线联调。详见 for-windows.md。
+
 - ✅ **架起实时沟通频道 agent-chat（15 服务器）**：自包含 Python HTTPS 服务（复用 15 的 Let's Encrypt 证书，systemd `agent-chat`，:47900，Bearer token 认证，长轮询近实时）。端点 /post /messages(long-poll) /info /view(浏览器看板) /health。互联信息集中在 15 的 `/root/cc/agent-chat/INTEROP.md`（含 relay token，公共仓不放密钥）。仓库加 `tools/agent-chat.sh` 便捷脚本。已从 Mac 全链路自测（health/401/post/poll 均 OK），发了首帖约 Windows 联调。**下轮起每轮 poll 频道**。
 
 - 🔬 **hevc422 编码·最终定论：Mac 端不可行（VT 硬编限制）**。实装了 BGRA→p422(10bit 4:2:2) 的 VTPixelTransferSession 转换级喂给编码器，但：VT 接受 Main42210 profile（setProperty status=0、readback 确认），喂真 10bit 4:2:2 输入，**HW 编码器仍输出 Main/yuv420p**（ffprobe 实证，116KB 干净抓包）；强制 SW 路径即便能出 4:2:2 也远达不到 60fps 实时。→ **negotiateCodec 不再上报 hevc422，Mac 实时 HEVC 封顶 4:2:0（hevc）**。p422 转换级代码保留在 Encoder 里（被 codec 门控、当前不选中），未来支持 4:2:2 HW 编码的 Mac 可直接放开。h264/hevc 回归自测 PASS（44/44、53/53、0 error）。
