@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🎉 **首个跨平台真机联调 PASS（Windows 发 → Mac 收，经 15 relay）**：Windows Claude 上线 agent-chat、起中转发送给配对码 771122，我 `receive --server 15...:47700 --token .. --code 771122 --codecs h264` 连上。**JOIN→PAIRED→handshake OK(2560x1600@60 h264)，37s recv=312 decoded=312 errors=0（1:1 全解 0 错）**，峰值 14fps（Windows 静止桌面+自适应码率）。持久配对生效（pairSecret 已存，下次免码）。对称 App 端到端跨平台首次验证成功。等 Windows 贴 SEND_STATS 收尾对账。
+
 - ✅ **接收端上报 codecs 默认含 hevc422**：`receive` 默认 `["hevc422","hevc","h264"]`（Mac VT 解 Rext Main422_10 已验 44/44）。这样 Windows 若走 ffmpeg NVENC/QSV 出真 4:2:2，协商即选 hevc422、Mac 直接能收，无需再改收端。
 - 📋 **Review 了 Windows 的 Phase-2 提案**（ffmpeg `ddagrab→hevc_nvenc 4:2:2→Annex-B`）：批准为**可选 HQ 模式**（不替换 WebCodecs H.264 基线），给了 8 条边界（运行时探测+回退、AUD 切帧、周期 GOP 关键帧、resize 重启子进程、子进程生命周期、窗口模式暂留 WebCodecs、ffmpeg 可选打包）。不阻塞当前 h264 基线联调。详见 for-windows.md。
 
