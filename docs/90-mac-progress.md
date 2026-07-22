@@ -9,6 +9,11 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 接收端·渲染器**：`FrameRenderer`（Metal 后端 CIContext，NV12 CVPixelBuffer→CGImage，YUV→RGB 用 buffer 附带的色彩属性）+ `ReceiverWindow`（NSWindow，按 stream 尺寸等比适配屏幕，逐帧 `layer.contents=CGImage` GPU 合成）。`receive --window` 开实时窗口、`--snapshot PATH` 存首帧 PNG（无 UI 验证）。
+- ✅ **验证**：直连回环 `--snapshot` → PNG **1280x800、3402 distinct 采样色、mean 129.6、0 error**（真实虚拟桌面内容，非黑屏），解码→转换链路确证。`--window` 是标准 AppKit 把同一 CGImage 贴层，待真机肉眼确认。
+- ✅ **接收端字节计账**（回应 Windows）：`recv` 统计的 `bytes` 只算 **Annex-B 载荷本身**（不含 VIDEO_FRAME 的 9 字节 pts+flags 头），**与 Windows Sender 的 `bytes` 口径一致**——两侧数字可直接对账，差值不再有帧×9 偏移。stats 行加 `x.xxMbps(annexb)`。
+- Mac 接收端（对称 App 的一半）核心已齐：解码/直连/中转/持久配对/渲染。剩 hevc422（v210 转换级）与 UI 整合。
+
 - ✅ **Mac 接收端·中转模式 `ReceiverRelayClient.swift`**：拨 relay → RELAY_JOIN{role:receiver, code 或 pairHash, token} → RELAY_PAIRED 后把透明管交给 ReceiverSession 跑正常握手/解码；断线按 pairHash 免码重连待命。PairStore 加**按角色分槽**（sender=本机自签、receiver=对端下发），HELLO_ACK.pairSecret 存进 receiver 槽 → 下次 JOIN 免码。`receive --server` 走中转、否则直连。
 - ✅ **实测（真实 15 relay，带 token）**：Mac Sender relay ↔ Mac Receiver relay，pairHash JOIN → PAIRED → **handshake OK 1280x800@60 h264 → 解码 42fps 0 error**、receiver 存下 pairSecret。跨网络中转收流链路打通。（静止虚拟桌面帧率低同前，非接收端问题。）
 - **下一步（我）**：CVImageBuffer → NSWindow/Metal 渲染器（把画面显示出来，当前仍是计数版）。

@@ -55,7 +55,9 @@
   2. Mac 端跑：`netdisplay-sender receive --server 15.tokencv.com:47700 --token <TOKEN> --code <配对码> --codecs h264`（token 我从 95-relay-token.md 取）。
   3. 首次输码配对成功后，Mac 会存下你下发的 pairSecret → **之后 `receive --server ... ` 免码**（自动 pairHash JOIN）。你 Sender 侧同理免码待命。
   4. Mac 端打印 `handshake OK` + 每秒 `recv: frames/decoded/errors`。**请从 Windows 侧确认发送计数并记 91**（帧/丢/错/RTT）。当前 Mac Receiver 仍是无 UI 计数版，画面窗口我下步加。
-- **下一步（我）**：CVImageBuffer → NSWindow/Metal 渲染器（把画面显示出来）。
+- **✅ 渲染器已完成**：`receive --window` 开实时窗口显示（FrameRenderer: Metal CIContext NV12→CGImage → NSWindow 逐帧贴层）、`receive --snapshot PATH` 存首帧 PNG。直连回环 snapshot 实测 1280x800 非黑屏 3402 色 0 error。**互调时 Mac 端加 `--window` 就能真看到画面了**（之前是纯计数）。
+- **字节计账口径对齐（回应你更新之十的提醒）**：Mac `receive` 的 `bytes/Mbps` 只算 **Annex-B 载荷**（不含 9 字节 pts+flags 头），**和你 Sender 的 `bytes` 口径一致**——两侧可直接对账，无帧×9 偏移。stats 行现打 `recv: frames=/decoded=/errors= x.xxMbps(annexb)`。
+- **下一步（我）**：hevc422 的 BGRA→v210 转换级（真 4:2:2 10-bit），之后放开 negotiate。
 
 ### 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。

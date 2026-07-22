@@ -1,6 +1,8 @@
 import Foundation
 import CoreMedia
 import CoreGraphics
+import CoreVideo
+import AppKit
 
 /// Thread-safe tally for `decode-selftest`.
 final class STCounter {
@@ -72,7 +74,7 @@ func parseArgs() -> Args {
     guard !argv.isEmpty else { usage() }
     let command = argv.removeFirst()
     var a = Args(command: command)
-    let boolFlags: Set<String> = ["debug-raw", "quality", "stage"]
+    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "window"]
     var i = 0
     while i < argv.count {
         let tok = argv[i]
@@ -251,26 +253,53 @@ case "receive":
     let bitrate = args.flags["bitrate"].flatMap { Int($0) }
     let codecs = args.str("codecs", "hevc,h264").split(separator: ",").map(String.init)
     let screen = HelloReceiver.Screen(width: w, height: h, scale: 1, fps: fps, bitrateMbps: bitrate)
+    let showWindow = args.bool("window")
+    let snapshotPath = args.flags["snapshot"]
+    let window: ReceiverWindow? = showWindow ? ReceiverWindow() : nil
+    let snapshotRenderer = snapshotPath != nil ? FrameRenderer() : nil
+    var snapped = false
+
+    // Frame sink shared by direct + relay paths: live window and/or one-shot PNG.
+    let onFrame: (CVImageBuffer, CMTime) -> Void = { image, _ in
+        if let window { window.present(image) }
+        if let path = snapshotPath, let r = snapshotRenderer, !snapped {
+            snapped = true
+            let ok = r.savePNG(image, to: URL(fileURLWithPath: path))
+            Log.info("snapshot \(ok ? "saved" : "FAILED"): \(path) (\(CVPixelBufferGetWidth(image))x\(CVPixelBufferGetHeight(image)))")
+        }
+    }
+    let onReady: (HelloAck.Display?, VideoCodec) -> Void = { display, codec in
+        if let window, let d = display {
+            window.configure(width: d.width, height: d.height, title: "NetDisplay — \(d.width)x\(d.height) \(codec.wire)")
+        }
+    }
+
+    func runLoop() { if showWindow { NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.run() } else { dispatchMain() } }
+
     if let server = args.flags["server"] {
         // Relay mode: JOIN the Sender's room via the relay (code or stored pairHash).
         let parts = server.split(separator: ":")
         let rhost = String(parts.first ?? "15.tokencv.com")
         let rport = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
-        Log.info("receive(relay): \(rhost):\(rport) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs)")
+        Log.info("receive(relay): \(rhost):\(rport) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs) window=\(showWindow)")
         let client = ReceiverRelayClient(host: rhost, port: rport, token: args.flags["token"],
                                          code: args.flags["code"], name: name, deviceId: devId,
                                          screen: screen, codecs: codecs)
+        client.onFrame = onFrame
+        client.onReady = onReady
         installSignalHandler { client.stop(); exit(0) }
         client.start()
-        dispatchMain()
+        runLoop()
     } else {
-        Log.info("receive(direct): \(host):\(port) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs)")
+        Log.info("receive(direct): \(host):\(port) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs) window=\(showWindow)")
         let session = ReceiverSession(host: host, port: port, name: name, deviceId: devId,
                                       screen: screen, codecs: codecs)
-        session.onClosed = { Log.info("receiver session closed"); exit(0) }
+        session.onFrame = onFrame
+        session.onReady = onReady
+        session.onClosed = { Log.info("receiver session closed"); if !showWindow { exit(0) } }
         installSignalHandler { session.close() }
         session.start()
-        dispatchMain()
+        runLoop()
     }
 
 case "decode-selftest":

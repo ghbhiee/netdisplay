@@ -26,9 +26,12 @@ final class ReceiverSession {
     private var lastRx = Date()
     private var ended = false
 
-    // Stats
+    // Stats. `bytesAnnexB` counts the Annex-B payload only (excludes the 9-byte
+    // pts+flags VIDEO_FRAME header) — same convention as the Windows Sender's
+    // `bytes`, so cross-platform accounting lines up.
     private let statLock = NSLock()
     private var framesDecoded = 0, framesTotal = 0, decodeErrors = 0
+    private var bytesAnnexB = 0
     private var statsTimer: DispatchSourceTimer?
 
     /// Decoded frame sink for a future renderer.
@@ -164,7 +167,7 @@ final class ReceiverSession {
         guard payload.count >= 9 else { return }
         let ptsUs = payload.prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
         let annexB = payload.subdata(in: payload.index(payload.startIndex, offsetBy: 9)..<payload.endIndex)
-        statLock.lock(); framesTotal += 1; statLock.unlock()
+        statLock.lock(); framesTotal += 1; bytesAnnexB += annexB.count; statLock.unlock()
         decoder?.decode(annexB: annexB, ptsUs: ptsUs)
     }
 
@@ -214,10 +217,11 @@ final class ReceiverSession {
         st.setEventHandler { [weak self] in
             guard let self else { return }
             self.statLock.lock()
-            let d = self.framesDecoded, t = self.framesTotal, e = self.decodeErrors
-            self.framesDecoded = 0; self.framesTotal = 0
+            let d = self.framesDecoded, t = self.framesTotal, e = self.decodeErrors, b = self.bytesAnnexB
+            self.framesDecoded = 0; self.framesTotal = 0; self.bytesAnnexB = 0
             self.statLock.unlock()
-            Log.info("recv: frames=\(t)/s decoded=\(d)/s errors=\(e)")
+            let mbps = Double(b) * 8 / 1_000_000
+            Log.info(String(format: "recv: frames=%d/s decoded=%d/s errors=%d %.2fMbps(annexb)", t, d, e, mbps))
         }
         statsTimer = st; st.resume()
     }

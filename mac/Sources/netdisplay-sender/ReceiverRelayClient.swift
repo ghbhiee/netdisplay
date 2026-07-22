@@ -27,6 +27,8 @@ final class ReceiverRelayClient {
 
     /// Frames sink forwarded to the active ReceiverSession (renderer hook later).
     var onFrame: ((_ image: CVImageBuffer, _ pts: CMTime) -> Void)?
+    /// Forwarded once the inner session's handshake is accepted.
+    var onReady: ((_ display: HelloAck.Display?, _ codec: VideoCodec) -> Void)?
 
     init(host: String, port: UInt16, token: String?, code: String?,
          name: String, deviceId: String, screen: HelloReceiver.Screen, codecs: [String]) {
@@ -98,6 +100,7 @@ final class ReceiverRelayClient {
             let rs = ReceiverSession(host: host, port: port, name: name, deviceId: deviceId,
                                      screen: screen, codecs: codecs)
             rs.onFrame = { [weak self] img, pts in self?.onFrame?(img, pts) }
+            rs.onReady = { [weak self] display, codec in self?.onReady?(display, codec) }
             rs.onClosed = { [weak self] in self?.onSessionClosed() }
             session = rs
             rs.attach(conn: conn, leftover: leftover)
