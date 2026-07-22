@@ -368,6 +368,11 @@ function resetDecoder() {
   waitingKey = true;
 }
 
+// 背压参数：队列长度阈值 + 需连续超标次数（区分突发到达与真积压）
+const QUEUE_HIGH = 24;
+const QUEUE_HIGH_STREAK = 3;
+let queueHighStreak = 0;
+
 let lastKeyframeReq = 0;
 function requestKeyframe(throttleMs = 0) {
   // 背压恢复用节流，避免每帧都请求；解码错误等场景不节流（throttleMs=0）
@@ -385,16 +390,26 @@ function handleVideo(payload) {
 
   if (!decoder || decoder.state === "closed") return;
   if (waitingKey && !v.keyframe) { stats.dropped++; stats.total.dropped++; return; }
+  if (waitingKey) queueHighStreak = 0; // 关键帧到达，重新计数
   waitingKey = false;
 
-  // 背压：解码队列积压则丢到下一个关键帧（低延迟优先，协议 §4）
-  if (decoder.decodeQueueSize > 8 && !v.keyframe) {
-    stats.dropped++; stats.total.dropped++;
-    waitingKey = true;
-    // 必须主动要关键帧：否则要等对端周期 GOP（Mac 是 2s）才恢复，期间整段丢弃。
-    // 跨机联调实测（Mac→Win HEVC）：不请求时 50 帧里只解出 14 帧。
-    requestKeyframe(1000);
-    return;
+  // 背压：解码队列真积压时丢到下一个关键帧（低延迟优先，协议 §4）
+  //
+  // 阈值不能太小：中转链路（实测 RTT 400–600ms）上帧是**突发到达**的——TCP 缓冲一次吐出
+  // 十几帧，队列瞬时冲高但会被硬解迅速消化。按瞬时值丢帧会把正常突发误判成积压，
+  // 触发「丢帧→请关键帧→等一个 RTT→再丢」的循环。实测阈值 8 时解码率仅 84%。
+  // 改为：更高阈值 + 需连续多次采样都超标（真积压才会持续），突发不误伤。
+  if (!v.keyframe && decoder.decodeQueueSize > QUEUE_HIGH) {
+    if (++queueHighStreak >= QUEUE_HIGH_STREAK) {
+      stats.dropped++; stats.total.dropped++;
+      waitingKey = true;
+      // 必须主动要关键帧：否则要等对端周期 GOP（Mac 2s）才恢复，期间整段丢弃。
+      // 跨机联调实测：不请求时 50 帧只解出 14 帧。
+      requestKeyframe(1000);
+      return;
+    }
+  } else {
+    queueHighStreak = 0;
   }
   try {
     decoder.decode(
