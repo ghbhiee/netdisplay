@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 解真 4:2:2 10-bit 已实测(de-risk WS-5d)**：加 `decode-file` 命令(读 Annex-B 文件、按 AUD 切 AU 喂 Decoder)。ffmpeg libx265 生成真 Rext/yuv422p10le(ffprobe 确认)→ 我的 VTDecompressionSession **60/60 AU 全解 0 error**。纠正了之前『hevc422 自测其实喂 4:2:0』的空白——真 4:2:2 解码这关 Mac 已过,Windows WS-5 出真 NVENC 4:2:2 时 Mac 接收端直接能收。
+
 - ✅ **Review Windows WS-5/Phase-2 计划 → 批准开工**：实测撑腰、诚实自纠(GPU 零拷贝不可行→hwdownload 过内存但开销≈0)。**批准 + 放开边界⑦**:单窗口也走 HQ(整屏 ddagrab/单窗口 gdigrab,都真 4:2:2)——因用户定调单窗口一等特性。HQ 默认 30fps 可调、优雅回退、codec 反映实际路径、子进程失败留日志,均认可。写进 for-windows.md + 频道。
 - ⚠️ **发现一个待验点(我)**：之前 hevc422 自测喂的是 VT 降成 4:2:0 的流,『Mac VTDecompressionSession 解**真** Rext Main422_10』尚未实测。下轮本地用 ffmpeg 生成真 4:2:2 10bit 流喂 Decoder 预验,de-risk WS-5d。
 

@@ -368,6 +368,40 @@ case "decode-selftest":
     }
     dispatchMain()
 
+case "decode-file":
+    // Feed a raw Annex-B file's access units to the Decoder — verifies decoding
+    // of genuine streams (e.g. real Rext 4:2:2 10-bit from ffmpeg). Splits AUs on
+    // AUD boundaries (needs the stream to be AUD-delimited, e.g. hevc_metadata=aud=insert).
+    let path = args.str("file", "")
+    let dcodec = VideoCodec(rawValue: args.str("codec", "hevc422")) ?? .hevc422
+    guard let data = FileManager.default.contents(atPath: path) else {
+        Log.error("decode-file: cannot read \(path)"); exit(1)
+    }
+    let dnals = Decoder.splitAnnexB(data)
+    let audType: UInt8 = dcodec.isHEVC ? 35 : 9
+    func nalType(_ n: Data) -> UInt8 { let b = n.first ?? 0; return dcodec.isHEVC ? ((b >> 1) & 0x3F) : (b & 0x1F) }
+    var aus: [[Data]] = []; var cur: [Data] = []
+    for nal in dnals {
+        if nalType(nal) == audType && !cur.isEmpty { aus.append(cur); cur = [] }
+        cur.append(nal)
+    }
+    if !cur.isEmpty { aus.append(cur) }
+    let dcounter = STCounter()
+    let dfileDec = Decoder(codec: dcodec)
+    dfileDec.onDecoded = { _, pts in dcounter.decoded(CMTimeGetSeconds(pts)) }
+    dfileDec.onDecodeError = { st in Log.error("decode-file error: \(st)"); dcounter.error() }
+    let startCode: [UInt8] = [0, 0, 0, 1]
+    var dpts: UInt64 = 0
+    for au in aus {
+        var b = Data()
+        for nal in au { b.append(contentsOf: startCode); b.append(nal) }
+        dfileDec.decode(annexB: b, ptsUs: dpts); dpts += 33_333
+    }
+    Thread.sleep(forTimeInterval: 1.5)  // let async decodes drain
+    Log.info("decode-file: \(path) codec=\(dcodec.wire) AUs=\(aus.count)")
+    dcounter.report()
+    exit(dcounter.pass ? 0 : 1)
+
 case "vd-demo":
     Demos.vdDemo(pixelWidth: args.int("width", 2560), pixelHeight: args.int("height", 1600),
                  scale: args.int("scale", 1), seconds: args.int("seconds", 20), seed: devId)
