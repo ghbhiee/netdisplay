@@ -9,6 +9,10 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 接收端·中转模式 `ReceiverRelayClient.swift`**：拨 relay → RELAY_JOIN{role:receiver, code 或 pairHash, token} → RELAY_PAIRED 后把透明管交给 ReceiverSession 跑正常握手/解码；断线按 pairHash 免码重连待命。PairStore 加**按角色分槽**（sender=本机自签、receiver=对端下发），HELLO_ACK.pairSecret 存进 receiver 槽 → 下次 JOIN 免码。`receive --server` 走中转、否则直连。
+- ✅ **实测（真实 15 relay，带 token）**：Mac Sender relay ↔ Mac Receiver relay，pairHash JOIN → PAIRED → **handshake OK 1280x800@60 h264 → 解码 42fps 0 error**、receiver 存下 pairSecret。跨网络中转收流链路打通。（静止虚拟桌面帧率低同前，非接收端问题。）
+- **下一步（我）**：CVImageBuffer → NSWindow/Metal 渲染器（把画面显示出来，当前仍是计数版）。
+
 - ✅ **Mac 接收端·网络会话 `ReceiverSession.swift`**（直连模式）：拨号 Sender:47800 → 发 HELLO{role:receiver,screen,codecs} → 收 HELLO_ACK 起 Decoder（按协商 codec）→ VIDEO_FRAME 解析([pts u64|flags u8|annexB]) 喂解码 → PROJECTION_STATE 日志 → PING(3s)/PONG 回显 → 看门狗(10s无数据断) → 解码错误自动发 REQUEST_KEYFRAME；VIDEO_CONFIG 重建解码器等关键帧。新增 `receive` 命令。
 - ✅ **回环实测**（Mac `listen` ↔ Mac `receive`）：**handshake OK**（stream 1280x800@60 h264）、解码帧数==收到帧数、0 error、连接稳定无看门狗触发。（静止虚拟桌面 SCK 按变化投帧、稳态帧率低是采集侧特性，非接收端问题；真实内容会连续。）**Windows WS-1/WS-2 Sender → Mac receive 可真机互调了。**
 - **下一步（我）**：① NSWindow/Metal 渲染器把 CVImageBuffer 显示出来（当前 onFrame 是计数）；② Receiver 中转模式（relay JOIN + pairHash 免码）。

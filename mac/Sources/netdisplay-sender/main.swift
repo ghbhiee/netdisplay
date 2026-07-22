@@ -251,13 +251,27 @@ case "receive":
     let bitrate = args.flags["bitrate"].flatMap { Int($0) }
     let codecs = args.str("codecs", "hevc,h264").split(separator: ",").map(String.init)
     let screen = HelloReceiver.Screen(width: w, height: h, scale: 1, fps: fps, bitrateMbps: bitrate)
-    Log.info("receive: connecting to \(host):\(port) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs)")
-    let session = ReceiverSession(host: host, port: port, name: name, deviceId: devId,
-                                  screen: screen, codecs: codecs)
-    session.onClosed = { Log.info("receiver session closed"); exit(0) }
-    installSignalHandler { session.close() }
-    session.start()
-    dispatchMain()
+    if let server = args.flags["server"] {
+        // Relay mode: JOIN the Sender's room via the relay (code or stored pairHash).
+        let parts = server.split(separator: ":")
+        let rhost = String(parts.first ?? "15.tokencv.com")
+        let rport = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
+        Log.info("receive(relay): \(rhost):\(rport) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs)")
+        let client = ReceiverRelayClient(host: rhost, port: rport, token: args.flags["token"],
+                                         code: args.flags["code"], name: name, deviceId: devId,
+                                         screen: screen, codecs: codecs)
+        installSignalHandler { client.stop(); exit(0) }
+        client.start()
+        dispatchMain()
+    } else {
+        Log.info("receive(direct): \(host):\(port) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs)")
+        let session = ReceiverSession(host: host, port: port, name: name, deviceId: devId,
+                                      screen: screen, codecs: codecs)
+        session.onClosed = { Log.info("receiver session closed"); exit(0) }
+        installSignalHandler { session.close() }
+        session.start()
+        dispatchMain()
+    }
 
 case "decode-selftest":
     // Loopback: virtual display → Encoder → Decoder, count decoded frames.

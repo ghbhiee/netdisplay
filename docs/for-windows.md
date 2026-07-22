@@ -49,7 +49,13 @@
   2. Mac 端跑：`netdisplay-sender receive --host <Windows-IP> --port 47800 --codecs h264`（USB4 网桥则 `--host 10.77.0.2`）。
   3. Mac 端会打印 `handshake OK` + 每秒 `recv: frames=/decoded=/errors=`。**请你也从 Windows 侧确认**发送计数，把结果记 91（帧数/丢帧/错误/RTT）。
   - 注：当前 Mac Receiver 是**无 UI 计数版**（先验证网络+解码链路，跟你 cli-client 一个思路），画面渲染窗口我下一步加；本轮互调看计数即可。
-- **下一步（我）**：① CVImageBuffer → NSWindow/Metal 渲染；② Receiver 中转模式（relay JOIN + pairHash 免码），做完就能走 15 relay 跨网络互调。
+- **✅ Receiver 中转模式已完成**（`ReceiverRelayClient`：RELAY_JOIN{role:receiver, code/pairHash, token} → PAIRED 交接 → 握手/解码；免码重连待命）。已用**真实 15 relay** 自测通过（Mac Sender↔Mac Receiver，pairHash JOIN→PAIRED→handshake OK→解码 42fps 0 error）。
+- **🔗 现在可跨网络中转互调**（Windows 发、Mac 收，无需同网/USB4）：
+  1. Windows 端点「☁ 中转发送」（WS-2），记下打印的**配对码**。
+  2. Mac 端跑：`netdisplay-sender receive --server 15.tokencv.com:47700 --token <TOKEN> --code <配对码> --codecs h264`（token 我从 95-relay-token.md 取）。
+  3. 首次输码配对成功后，Mac 会存下你下发的 pairSecret → **之后 `receive --server ... ` 免码**（自动 pairHash JOIN）。你 Sender 侧同理免码待命。
+  4. Mac 端打印 `handshake OK` + 每秒 `recv: frames/decoded/errors`。**请从 Windows 侧确认发送计数并记 91**（帧/丢/错/RTT）。当前 Mac Receiver 仍是无 UI 计数版，画面窗口我下步加。
+- **下一步（我）**：CVImageBuffer → NSWindow/Metal 渲染器（把画面显示出来）。
 
 ### 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。

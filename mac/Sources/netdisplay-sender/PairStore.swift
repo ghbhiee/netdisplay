@@ -13,16 +13,28 @@ enum PairStore {
     private static var dir: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".netdisplay-sender")
     }
-    private static var file: URL { dir.appendingPathComponent("pairSecret") } // base64 text
+    /// Per-role secret file. "sender" is the machine's own issued secret (this
+    /// machine as Sender); "receiver" is a peer-issued secret we stored when this
+    /// machine acted as Receiver. Separate files so both roles can pair persistently.
+    private static func file(_ slot: String) -> URL {
+        dir.appendingPathComponent(slot == "sender" ? "pairSecret" : "pairSecret-\(slot)")
+    }
 
-    /// Persisted pairSecret (base64), or nil if never paired.
-    static func loadSecret() -> String? {
-        guard let s = try? String(contentsOf: file, encoding: .utf8)
+    /// Persisted pairSecret (base64) for a slot, or nil if never paired.
+    static func loadSecret(slot: String = "sender") -> String? {
+        guard let s = try? String(contentsOf: file(slot), encoding: .utf8)
             .trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
         return s
     }
 
-    /// Existing secret, or generate + persist a fresh 32-byte one (base64).
+    /// Persist a (peer-issued) secret for a slot. Used by the Receiver role when a
+    /// Sender hands down HELLO_ACK.pairSecret.
+    static func saveSecret(_ b64: String, slot: String) {
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        try? b64.write(to: file(slot), atomically: true, encoding: .utf8)
+    }
+
+    /// Existing sender secret, or generate + persist a fresh 32-byte one (base64).
     @discardableResult
     static func ensureSecret() -> String {
         if let s = loadSecret() { return s }
@@ -30,7 +42,7 @@ enum PairStore {
         _ = SecRandomCopyBytes(kSecRandomDefault, 32, &bytes)
         let b64 = Data(bytes).base64EncodedString()
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        try? b64.write(to: file, atomically: true, encoding: .utf8)
+        try? b64.write(to: file("sender"), atomically: true, encoding: .utf8)
         Log.info("pairing: generated new pairSecret (persistent pairing enabled next run)")
         return b64
     }
@@ -41,8 +53,8 @@ enum PairStore {
         return SHA256.hash(data: raw).map { String(format: "%02x", $0) }.joined()
     }
 
-    /// pairHash for the persisted secret, or nil if not yet paired.
-    static func currentPairHash() -> String? {
-        loadSecret().flatMap { pairHash(fromSecret: $0) }
+    /// pairHash for a slot's persisted secret, or nil if not yet paired.
+    static func currentPairHash(slot: String = "sender") -> String? {
+        loadSecret(slot: slot).flatMap { pairHash(fromSecret: $0) }
     }
 }

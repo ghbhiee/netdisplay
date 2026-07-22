@@ -47,6 +47,7 @@ final class ReceiverSession {
         self.codecs = codecs
     }
 
+    /// Direct mode: create the connection to the Sender, then run the protocol.
     func start() {
         let ep = NWEndpoint.hostPort(host: NWEndpoint.Host(host),
                                      port: NWEndpoint.Port(rawValue: port)!)
@@ -59,9 +60,8 @@ final class ReceiverSession {
             guard let self else { return }
             switch state {
             case .ready:
-                Log.info("receiver connected to \(self.host):\(self.port) — sending HELLO")
-                self.sendHello()
-                self.startTimers()
+                Log.info("receiver connected to \(self.host):\(self.port)")
+                self.beginProtocol(leftover: nil)
             case .failed(let e):
                 Log.error("receiver connection failed: \(e)")
                 self.handleClose()
@@ -69,6 +69,23 @@ final class ReceiverSession {
                 break
             }
         }
+    }
+
+    /// Relay mode: the pipe is already connected + transparent (post RELAY_PAIRED).
+    /// Take over the Conn and run the same protocol. `leftover` = any post-pairing
+    /// bytes already read by the relay parser.
+    func attach(conn: Conn, leftover: Data) {
+        self.conn = conn
+        conn.onData = { [weak self] in self?.onData($0) }
+        conn.onClose = { [weak self] in self?.handleClose() }
+        beginProtocol(leftover: leftover)
+    }
+
+    private func beginProtocol(leftover: Data?) {
+        Log.info("receiver: sending HELLO")
+        sendHello()
+        startTimers()
+        if let leftover, !leftover.isEmpty { onData(leftover) }
     }
 
     private func sendHello() {
@@ -120,6 +137,11 @@ final class ReceiverSession {
             Log.error("handshake rejected: \(ack.reason ?? "?")"); close(); return
         }
         chosenCodec = VideoCodec(rawValue: ack.codec ?? "h264") ?? .h264
+        // Persist the peer-issued pairSecret so future relay JOINs can go code-free.
+        if let secret = ack.pairSecret, !secret.isEmpty {
+            PairStore.saveSecret(secret, slot: "receiver")
+            Log.info("pairing: stored peer pairSecret (relay JOIN will be code-free next time)")
+        }
         makeDecoder(codec: chosenCodec)
         if let d = ack.display {
             Log.info("handshake OK — stream \(d.width)x\(d.height)@\(d.fps) scale=\(d.scale ?? 1) codec=\(chosenCodec.wire)")
