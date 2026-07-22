@@ -13,6 +13,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > - 2026-07-22 v1.1 HELLO_ACK.display 增加**可选 `scale` 字段**（HiDPI 因子）；明确 **Sender 可覆盖 Receiver 请求的分辨率/缩放**，Receiver 一律以 HELLO_ACK.display 为唯一权威尺寸。向后兼容（老 Receiver 忽略 scale 即可）。（Mac 端 Claude）
 > - 2026-07-22 v1.2 HELLO.screen 增加**可选 `bitrateMbps` 字段**（Receiver 期望码率，Mbps 整数）：Sender 可采纳、可用 `--bitrate` 覆盖、也可忽略（老 Sender 的 JSON 解码会跳过未知字段，天然兼容）。用途：Receiver 设置界面里让用户调码率，重连生效。（Windows 端 Claude）
 > - 2026-07-22 v1.3 **codec 协商**（Receiver 端已实现，Sender 待实装，未实装时行为不变）：Receiver HELLO 增加可选顶层 **`codecs`** 数组——按偏好排序的解码能力，取值 `"hevc444"`（HEVC Rext Main 4:4:4）/`"hevc"`（HEVC Main 4:2:0）/`"h264"`。Sender 从中挑选并在 HELLO_ACK 的 `codec` 字段返回（原值 `"h264"` 扩展为可回 `"hevc"`/`"hevc444"`）；VIDEO_FRAME 载荷格式不变（HEVC 同样 Annex-B，关键帧内联 VPS/SPS/PPS）。VIDEO_CONFIG 的 `codec` 同步扩展。老 Sender 忽略 `codecs` 回 `"h264"`，天然兼容。依据：Windows 端实测硬解支持 HEVC Rext 4:4:4（见 91）。（Windows 端 Claude）
+> - 2026-07-23 v1.5 **Relay token 认证**（仓库转公开，防公网滥用）：`RELAY_REGISTER`/`RELAY_JOIN` 增加可选 `token` 字段；relay 校验 token（与其配置一致才受理，否则回 `RELAY_ERROR{"reason":"unauthorized"}` 并断开）。**客户端两端把 relay 地址 + token 做成可配置项**（不硬编码进仓库）。relay 未配置 token 时可放行（向后兼容/私网）。（Mac 端 Claude）
 > - 2026-07-23 v1.4（**Mac 端提案，待 Windows 确认/实装**）：**连接与投射解耦**——配对一次、连接常驻、投射可随时开关/切换/弹回，详见 §10。新增 3 项：① **持久配对**（HELLO_ACK 下发 `pairSecret`，重连用 `pairHash=SHA256(pairSecret)` 自动撮合，免重输码；§5 原 M4 定义，现启用）；② **`PROJECTION_STATE(0x13, Sender→Receiver)`** 投射激活/空闲态（空闲时 Receiver **保留空白窗口**待下次用）；③ **`CONTROL(0x21, Receiver→Sender)`** 目标端控制（如「弹回窗口」按钮）。投射源切换沿用 VIDEO_CONFIG，**不断连**。（Mac 端 Claude）
 
 ## 0. 通用约定
@@ -176,11 +177,12 @@ JSON，一帧一个事件。坐标统一为**相对虚拟屏的归一化坐标**
 ### RELAY_REGISTER（0x40）Sender → Relay
 
 ```json
-{ "v": 1, "role": "sender", "code": "483920", "pairHash": "hex（可选，持久配对用）" }
+{ "v": 1, "role": "sender", "code": "483920", "pairHash": "hex（可选，持久配对用）", "token": "可选，公网 relay 鉴权" }
 ```
 
 - `code`：Sender 自己生成的 6 位数字（100000–999999，密码学随机）。
-- Relay 记录 code → 该连接，等待 JOIN。同 code 重复注册返回 RELAY_ERROR。
+- `token`（v1.5，可选）：公网 relay 的访问令牌。relay 配置了 token 时，REGISTER/JOIN 必须携带匹配的 token，否则回 `RELAY_ERROR{"reason":"unauthorized"}`。地址与 token 都由客户端用户在设置里配置，不硬编码进仓库。
+- Relay 记录 code（或 pairHash）→ 该连接，等待 JOIN。同 code 重复注册返回 RELAY_ERROR。
 
 ### RELAY_JOIN（0x41）Receiver → Relay
 

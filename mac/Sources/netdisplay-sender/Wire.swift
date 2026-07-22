@@ -177,6 +177,7 @@ struct RelayRegister: Codable {
     let role: String
     let code: String
     let pairHash: String?
+    let token: String?   // v1.5: public-relay auth
 }
 
 struct RelayJoin: Codable {
@@ -184,6 +185,7 @@ struct RelayJoin: Codable {
     let role: String
     let code: String
     let pairHash: String?
+    let token: String?
 }
 
 struct RelayError: Codable {

@@ -11,6 +11,7 @@ final class RelayClient {
     private let bitrateBps: Int
     private let senderName: String
     private let deviceId: String
+    private let token: String?
     private let override: DisplayOverride
     private let prioritizeQuality: Bool
     private let windowApp: String?
@@ -29,13 +30,14 @@ final class RelayClient {
     var currentSession: Session? { session }
 
     init(host: String, port: UInt16, bitrateBps: Int, senderName: String, deviceId: String,
-         override: DisplayOverride = DisplayOverride(), prioritizeQuality: Bool = false,
+         token: String? = nil, override: DisplayOverride = DisplayOverride(), prioritizeQuality: Bool = false,
          windowApp: String? = nil, bitrateExplicit: Bool = true, stage: Bool = false) {
         self.host = host
         self.port = port
         self.bitrateBps = bitrateBps
         self.senderName = senderName
         self.deviceId = deviceId
+        self.token = token
         self.override = override
         self.prioritizeQuality = prioritizeQuality
         self.windowApp = windowApp
@@ -65,7 +67,7 @@ final class RelayClient {
             guard let self else { return }
             if case .ready = state {
                 Log.info("relay: connected to \(self.host):\(self.port)")
-                let reg = RelayRegister(v: 1, role: "sender", code: code, pairHash: nil)
+                let reg = RelayRegister(v: 1, role: "sender", code: code, pairHash: nil, token: self.token)
                 conn.send(Wire.encodeJSON(.relayRegister, reg))
                 self.backoff = 1
                 print("")

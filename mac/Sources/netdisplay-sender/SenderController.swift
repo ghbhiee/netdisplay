@@ -27,7 +27,8 @@ struct AppConfig: Codable, Equatable {
     enum Mode: String, Codable { case relay, direct }
 
     var mode: Mode = .relay
-    var relayServer = "15.tokencv.com:47700"
+    var relayServer = "15.tokencv.com:47700"  // user-configurable in settings
+    var relayToken = ""                        // public-relay auth token (set in settings)
     var listenPort = 47800
     // nil width/height = adopt the receiver's reported resolution.
     var width: Int? = nil
@@ -90,6 +91,7 @@ final class SenderController {
             let port = UInt16(parts.count > 1 ? Int(parts[1]) ?? 47700 : 47700)
             let r = RelayClient(host: host, port: port, bitrateBps: bitrate,
                                 senderName: senderName, deviceId: deviceId,
+                                token: config.relayToken.isEmpty ? nil : config.relayToken,
                                 override: config.override, prioritizeQuality: config.quality,
                                 windowApp: config.windowApp, bitrateExplicit: !config.bitrateAuto,
                                 stage: config.stage)

@@ -205,7 +205,7 @@ case "relay":
     let port = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
     let bitrate = args.int("bitrate", 10) * 1_000_000
     let client = RelayClient(host: host, port: port, bitrateBps: bitrate, senderName: name,
-                             deviceId: devId, override: overrideFromArgs(args),
+                             deviceId: devId, token: args.flags["token"], override: overrideFromArgs(args),
                              prioritizeQuality: args.bool("quality"), windowApp: args.flags["window"],
                              bitrateExplicit: args.flags["bitrate"] != nil, stage: args.bool("stage"))
     installSignalHandler { Log.info("bye"); exit(0) }

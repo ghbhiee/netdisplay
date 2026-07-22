@@ -111,6 +111,12 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         menu.addItem(sectionHeader("模式"))
         menu.addItem(choice("中转（relay，跨网络）", checked: cfg.mode == .relay, action: #selector(setModeRelay)))
         menu.addItem(choice("直连（direct，USB4/局域网）", checked: cfg.mode == .direct, action: #selector(setModeDirect)))
+        if cfg.mode == .relay {
+            let rs = NSMenuItem(title: "中转设置：\(cfg.relayServer)" + (cfg.relayToken.isEmpty ? "（无 token）" : "（有 token）") + " …",
+                                action: #selector(editRelaySettings), keyEquivalent: "")
+            rs.target = self
+            menu.addItem(rs)
+        }
         menu.addItem(.separator())
 
         // Scale
@@ -192,6 +198,27 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     }
     @objc private func refreshApps() { refreshAppList() }
     @objc private func toggleStage() { mutate { $0.stage.toggle() } }
+    @objc private func editRelaySettings() {
+        let alert = NSAlert()
+        alert.messageText = "中转服务器设置"
+        alert.informativeText = "地址（host:port）与访问 token（公网 relay 鉴权，留空=不鉴权）"
+        let server = NSTextField(frame: NSRect(x: 0, y: 30, width: 320, height: 24))
+        server.stringValue = controller.config.relayServer
+        server.placeholderString = "relay.example.com:47700"
+        let token = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        token.stringValue = controller.config.relayToken
+        token.placeholderString = "token"
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 58))
+        box.addSubview(server); box.addSubview(token)
+        alert.accessoryView = box
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            mutate { $0.relayServer = server.stringValue.trimmingCharacters(in: .whitespaces)
+                     $0.relayToken = token.stringValue.trimmingCharacters(in: .whitespaces) }
+        }
+    }
     @objc private func setModeRelay() { mutate { $0.mode = .relay } }
     @objc private func setModeDirect() { mutate { $0.mode = .direct } }
     @objc private func setScale(_ sender: NSMenuItem) { mutate { $0.scale = sender.tag } }
