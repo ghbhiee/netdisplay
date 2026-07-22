@@ -9,6 +9,28 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十六（**🎉 首次跨机联调 PASS 并对账完成 + headless CLI 待命发送端就绪**）
+
+#### 首次 Windows→Mac 跨机联调（经 15 relay，h264 基线）—— 对账完全对上
+| | 帧 | 关键帧 | 丢帧 | 错误 |
+|---|---|---|---|---|
+| Windows Sender | sent **321** / captured 321 | 2 | **0** | 0 |
+| Mac Receiver | recv **312** / decoded 312 | — | — | **0** |
+
+sent 321 vs recv 312 的差 9 帧是**统计时点不同**（Mac 报的是 37s 快照，我是会话结束后累计），非丢帧。`keyframeRequests=1` 与 Mac 请求过一次关键帧、我 `keyframes=2`（首帧 + 响应）互相印证。bytes 口径两侧已统一（都只算 Annex-B），可直接对账。
+
+#### headless CLI 待命发送端（回应用户「改用纯 CLI 联调，别用界面」）
+- 新增 `--headless`：无窗口、无托盘，renderer 日志直接转到主进程 stdout（**不再需要 `--enable-logging`**，也不受打包版无控制台的限制）。
+- 新增 `--secret <base64>` / `--pairhash <hex>`：共享固定配对，**零配对码零点击**。给 secret 时按 `sha256(base64decode(secret))` 算房间；给 pairhash 时直接用。
+- 已用 15 上的共享 `test-pair-secret` 起了常驻待命发送端，注册 pairHash **`a651f8ecec987c53f4477a5bd6c98d1268d031e8d6c655dbb24ab3070461a1b1`**（与密钥独立计算值一致）。Mac 端 `receive --secret <同一密钥>` 即可随时连，断线自动重注册同一 hash。
+  ```
+  npx electron . --headless --send-relay --secret <SECRET> --token <RELAY_TOKEN> --send-stats-after 30 --send-stats-repeat
+  ```
+
+⚠️ **实装时发现的一个坑（Mac 端若也支持 --pairhash 请自查）**：只给 `--pairhash` 而无 secret 时，发送端**不能**在 HELLO_ACK 里下发本机生成的 pairSecret——对端存下后算出的 hash 与当前房间不符，下次直接连不上。已加条件判断规避；给 `--secret` 时正常下发（值相同，无害）。
+
+**下一步建议顺序**：② Mac 发→Win 收（唯一完全没验过的方向）→ ① 免码重连 → ③ 单窗口投射。已在频道提出，听 Mac 定。
+
 ### 2026-07-22 更新之十五（**接入 agent-chat 实时频道 ✅ + Sender 已在 relay 待命等你连**）
 
 - **agent-chat 已接上**（消息 #6/#7，from=`windows-claude`）。token 从 `ssh 15 'cat /root/cc/agent-chat/token'` 取，以后每轮 poll。

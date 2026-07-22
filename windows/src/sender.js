@@ -154,7 +154,9 @@ async function startSession(sock, receiverHello, relayMode) {
     display: { width, height, fps },
     codec: codecName, // v1.3/v1.6 协商结果
   };
-  if (relayMode) ack.pairSecret = getPairSecret(); // v1.4 持久配对下发（中转模式）
+  // v1.4 持久配对下发。注意：只指定了 --pairhash（无 secret）时不能下发本机 secret——
+  // 对端存下它后算出的 hash 与当前房间不符，下次就连不上了。
+  if (relayMode && !(overrideHash && !overrideSecret)) ack.pairSecret = getPairSecret();
   sock.write(buildFrame(T.HELLO_ACK, ack));
   sock.write(
     buildFrame(T.PROJECTION_STATE, {
@@ -399,7 +401,11 @@ async function startSender(statusCb) {
 // ---------- 中转模式（WS-2）：REGISTER → PAIRED → 同一会话逻辑 ----------
 // 持久配对（02 §10.1）：Windows 作为 Sender 时生成并持久保存 pairSecret，
 // 中转会话的 HELLO_ACK 下发给 Receiver；首次配对成功后改用 pairHash 免码注册。
+let overrideSecret = null; // --secret：联调用的共享固定密钥（优先于本机生成的）
+let overrideHash = null; // --pairhash：直接指定房间 hash（不下发 secret）
+
 function getPairSecret() {
+  if (overrideSecret) return overrideSecret;
   let s = localStorage.getItem("sender.pairSecret");
   if (!s) {
     s = nodeCrypto.randomBytes(32).toString("base64");
@@ -407,8 +413,9 @@ function getPairSecret() {
   }
   return s;
 }
-const pairHashOfSecret = () =>
-  nodeCrypto.createHash("sha256").update(Buffer.from(getPairSecret(), "base64")).digest("hex");
+const hashOf = (b64) =>
+  nodeCrypto.createHash("sha256").update(Buffer.from(b64, "base64")).digest("hex");
+const pairHashOfSecret = () => overrideHash || hashOf(getPairSecret());
 
 let relayActive = false; // 中转模式开着（含等待配对/会话中/重连间隙）
 let relayCurSock = null;
@@ -418,12 +425,16 @@ async function startSenderRelay(statusCb, opts = {}) {
   if (relayActive || server) return;
   onStatus = statusCb || (() => {});
   relayActive = true;
+  // 共享固定配对（联调用）：给了 secret/pairhash 就直接按 pairHash 待命，零配对码、零点击
+  overrideSecret = opts.secret || null;
+  overrideHash = opts.pairHash || null;
+  const sharedPairing = !!(overrideSecret || overrideHash);
   const [host, portStr] = (opts.server || "15.tokencv.com:47700").split(":");
   const port = +portStr || 47700;
 
   const registerOnce = () => {
     if (!relayActive) return;
-    const paired = localStorage.getItem("sender.everPaired") === "1" && !opts.forceCode;
+    const paired = sharedPairing || (localStorage.getItem("sender.everPaired") === "1" && !opts.forceCode);
     const code = opts.fixedCode || String(100000 + (nodeCrypto.randomBytes(4).readUInt32BE(0) % 900000));
     const sock = net.createConnection(port, host, () => {
       sock.setNoDelay(true);
@@ -432,7 +443,11 @@ async function startSenderRelay(statusCb, opts = {}) {
       if (opts.token) reg.token = opts.token;
       sock.write(buildFrame(T.RELAY_REGISTER, reg));
       onStatus(paired ? "已持久配对 · 待命中（免码）" : `等待配对 · 配对码 ${code}`);
-      dbg("relay registered", paired ? "pairHash" : "code " + code);
+      dbg(
+        "relay registered",
+        paired ? "pairHash " + pairHashOfSecret().slice(0, 16) + "…" : "code " + code,
+        sharedPairing ? "(shared)" : ""
+      );
     });
     relayCurSock = sock;
     const preParser = new FrameParser((type, payload) => {

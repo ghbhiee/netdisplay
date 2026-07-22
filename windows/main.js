@@ -26,8 +26,12 @@ const testArgs = {
   sendWindow: arg("send-window"), // 测试：按标题子串选窗口作为投射源（WS-3）
   sendStatsAfter: arg("send-stats-after"), // 互调：N 秒后打印 SEND_STATS（需 --enable-logging）
   sendStatsRepeat: argv.includes("--send-stats-repeat") ? "1" : null,
+  secret: arg("secret"), // 联调：共享固定 pairSecret（base64），零配对码待命
+  pairhash: arg("pairhash"), // 联调：直接指定房间 pairHash（hex），不下发 secret
+  headless: argv.includes("--headless") ? "1" : null, // 无窗口 CLI 模式
 };
 const isTest = !!testArgs.exitAfter;
+const isHeadless = !!testArgs.headless; // CLI 待命模式：无窗口、无托盘、日志走 stdout
 
 // 测试隔离：多实例并跑时各用独立 userData（否则 localStorage 抢锁、写入不落盘）
 const userDataDir = arg("user-data");
@@ -49,6 +53,7 @@ app.whenReady().then(() => {
   win = new BrowserWindow({
     width: 1440,
     height: 900,
+    show: !isHeadless, // headless：窗口存在（renderer 需要 WebCodecs）但不显示
     backgroundColor: "#0b0f14",
     autoHideMenuBar: true,
     webPreferences: {
@@ -61,13 +66,20 @@ app.whenReady().then(() => {
 
   // 关窗 = 隐藏到托盘（连接常驻）；托盘菜单退出才真正退出
   win.on("close", (e) => {
-    if (!quitting && !isTest) {
+    if (!quitting && !isTest && !isHeadless) {
       e.preventDefault();
       win.hide();
     }
   });
 
-  if (!isTest) {
+  // headless：把 renderer 的日志转到主进程 stdout，无需 --enable-logging
+  if (isHeadless) {
+    win.webContents.on("console-message", (_e, _lvl, message) => {
+      if (/^\[sender\]|^SEND_STATS|^SEND_SOURCE/.test(message)) console.log(message);
+    });
+  }
+
+  if (!isTest && !isHeadless) {
     const icon = nativeImage.createFromPath(path.join(__dirname, "assets", "tray.png"));
     tray = new Tray(icon);
     tray.setToolTip("NetDisplay Receiver");

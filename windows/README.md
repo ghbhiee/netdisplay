@@ -58,6 +58,9 @@ npm run probe      # 探测本机 WebCodecs 解码能力（HEVC/4:4:4/AV1）
 --send                        启动即开直连发送端（监听 :47800）
 --send-relay [--send-relay-code C]  启动即开中转发送（可固定首次配对码）
 --send-window <标题子串>      投射匹配的窗口而非整屏（WS-3）
+--headless                    无窗口无托盘，日志直接走 stdout（CLI 待命模式）
+--secret <base64>             共享固定配对密钥，零配对码待命（联调用）
+--pairhash <hex>              直接指定 relay 房间 hash（不下发 secret）
 --send-stats-after N [--send-stats-repeat]   N 秒后打印 SEND_STATS{json}（配 --enable-logging）
 ```
 
@@ -68,4 +71,12 @@ npx electron . --send --send-stats-after 10 --send-stats-repeat --enable-logging
 ```
 
 监听 47800 等对端连入；每 10 秒打一行 `SEND_STATS`（sent/dropped/keyframes/bytes/avgFps/avgMbps）用于与接收端计数对账。
+
+**跨机联调推荐（headless + 共享配对，零点击）**：
+
+```bash
+npx electron . --headless --send-relay --secret <SHARED_SECRET> --token <RELAY_TOKEN> --send-stats-after 30 --send-stats-repeat
+```
+
+发送端按 `sha256(base64decode(secret))` 在 relay 上常驻待命，对端用同一密钥随时接入，无需配对码、断线自动重注册。
 注意口径：Sender 的 `bytes` 只含 Annex-B 数据，Receiver 的 `bytes` 含每帧 9 字节 pts+flags 头。

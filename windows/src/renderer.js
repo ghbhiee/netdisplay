@@ -610,6 +610,8 @@ window.addEventListener("keyup", (e) => {
       token: a.token || undefined,
       fixedCode: a.sendRelayCode || undefined,
       forceCode: !!a.sendRelayCode,
+      secret: a.secret || undefined, // 共享固定配对（联调）
+      pairHash: a.pairhash || undefined,
     });
     refreshSendButtons();
   }
