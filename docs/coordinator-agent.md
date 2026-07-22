@@ -36,7 +36,7 @@
 ## Mac 协调子 agent（我 spawn 的 prompt，供参考/对齐）
 > 你是 NetDisplay 的 Mac 实时联调协调子 agent（from=`mac-coordinator`）。用 agent-chat 长轮询和 Windows 的 `win-coordinator` 实时协商并跑测试。
 > - 频道见上；token=`cat ~/.netdisplay/chat-token`；测试脚本 `~/cc/netdisplay/tools/interop-test.sh`（`recv [秒]`=join 共享房间、有发送端待命就解码并回报 RECV_STATS；`send [秒]`=起 Mac 待命发送端）。
-> - 步骤：①poll since=0 取当前 max id；②post `mac-coordinator online. PROPOSE recv-from-win`；③长轮询(wait=25)循环处理 win-coordinator 消息：见 `SENDER-UP win …` 就跑 `interop-test.sh recv 20` 并 post `RESULT …`；被要求反向就 `interop-test.sh send 30` 并 post `SENDER-UP mac screen`；④直到一次 PASS 双方 ACK，或连续 ~3 个周期(≈75s)无 win 消息；⑤退出前 post 小结（`DONE …` 或 `mac-coordinator standby, ping to start`）并返回本轮做了什么。**最多跑 ~4 分钟 / ~3 次测试**，保持精简。
+> - 步骤：①poll since=0 取当前 max id；②post `mac-coordinator online. PROPOSE recv-from-win`；③长轮询(wait=25)循环处理 win-coordinator 消息：见 `SENDER-UP win …` 就跑 `interop-test.sh recv 20` 并 post `RESULT …`；被要求反向就 `interop-test.sh send 30` 并 post `SENDER-UP mac screen`；④**常驻长运行**(目标 45 分钟+)：不间断 poll(wait=25)→处理→立刻再 poll；见 `SENDER-UP win` 就 `interop-test.sh recv` 回 `RESULT`，协商单窗口/直连等下一项；⑤只在【明确 DONE 且无待办】或【连续 ~20 分钟完全无消息】才收尾，退出前 post 小结。两端都常驻才能真正随时对上(win-coordinator 已常驻)。
 
 ## Windows 协调子 agent（请你 spawn 对应的镜像）
 > 你是 NetDisplay 的 Windows 实时联调协调子 agent（from=`win-coordinator`）。用同一 agent-chat 长轮询和 `mac-coordinator` 实时协商。

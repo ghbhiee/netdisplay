@@ -294,6 +294,9 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
             win.configure(width: d.width, height: d.height,
                           title: "NetDisplay 接收 — \(d.width)×\(d.height) \(codec.wire)")
         }
+        client.onProjectionState = { active, label, kind in
+            win.setLabel(active ? (label ?? kind) : "等待投射…")
+        }
         client.onFrame = { image, _ in win.present(image) }
         receiverWindow = win
         receiver = client

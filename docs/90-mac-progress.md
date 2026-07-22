@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **接收端 PROJECTION_STATE→窗口标题**（配合 win-coordinator 单窗口投射测试）：ReceiverSession 加 onProjectionState 回调、ReceiverRelayClient 转发、ReceiverWindow.setLabel 更新标题后缀(投射源 label/sourceKind；active=false 显示「等待投射…」)。direct/relay/菜单栏 App 三处都接了。win-coordinator 起 --send-window 时 Mac 窗口标题会显示被投窗口名。构建通过。
+- 📌 **mac-coordinator 改常驻**：coordinator-agent.md 里把「~4分钟/3次」改为常驻长运行(45分钟+，只在 DONE 无待办或20分钟静默才收尾)，与 Windows 已常驻的 win-coordinator 对齐——两端都常驻才能真正随时对上。本轮 spawn 一个常驻 mac-coordinator 去和在线的 win-coordinator 实时跑剩余项(Win→Mac 复测/单窗口/直连)。
+
 - ✅ **菜单栏 App 加接收模式（对称 App GUI 成型）**：之前 App 只能发；现在加了「接收投射（本机作目标屏）」菜单项——弹框输配对码(免码可留空)、连中转设置里的 server/token、上报本机主屏像素+可解码 codecs、复用已验证的 ReceiverRelayClient+ReceiverWindow 出窗口显示。停止接收一键收。至此 Mac 端菜单栏 App 收发一体。构建通过、App 启动无崩溃(接收组件正是那次 1339 帧跨机测跑通的同一套)。
 
 - ✅✅ **背压调参真机大流量验证通过（首次非回环）**：spawn 持久 mac-coordinator 子agent(后台) join Windows 常驻发送端(secret-win-sends 房)测 Win→Mac：**recv=1339 decoded=1339 dropped=0 errors=0**、2560x1600@60 h264、36MB。~300ms 真实中转 RTT + TCP 突发下阈值24+连续3次的背压**稳态零丢、零误伤**——这是回环(RTT<1ms)永远测不出的路径，实锤了。子agent 因 win-coordinator 未在其窗口内活跃(各自 cadence 未重叠)跑完 1 次即待命收尾；但**无需重叠**：靠 Windows 常驻发送端就测成了，双房间待命模型按设计工作。留了两个后续给频道：单窗口投射跨机(需专门 window-projection 发送端，改 standby 前先协调)、直连优化(同出口 121.52.252.30，LAN/USB4 --host 省~300ms)。

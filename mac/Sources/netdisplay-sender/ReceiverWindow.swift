@@ -10,11 +10,21 @@ final class ReceiverWindow {
     private var imageLayer: CALayer?
     private let renderer = FrameRenderer()
     private var configured = false
+    private var baseTitle = "NetDisplay"
+
+    /// Update the window title suffix from PROJECTION_STATE (which source / paused).
+    func setLabel(_ text: String?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let w = self.window else { return }
+            w.title = (text?.isEmpty == false) ? "\(self.baseTitle) · \(text!)" : self.baseTitle
+        }
+    }
 
     /// Create/size the window for the stream. Call on any thread; hops to main.
     func configure(width: Int, height: Int, title: String) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.baseTitle = title
             // Fit within the visible screen while preserving aspect ratio.
             let screen = NSScreen.main?.visibleFrame ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
             let maxW = screen.width * 0.9, maxH = screen.height * 0.9

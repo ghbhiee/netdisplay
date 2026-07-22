@@ -286,6 +286,9 @@ case "receive":
             window.configure(width: d.width, height: d.height, title: "NetDisplay — \(d.width)x\(d.height) \(codec.wire)")
         }
     }
+    let onProjState: (Bool, String?, String?) -> Void = { active, label, kind in
+        window?.setLabel(active ? (label ?? kind) : "等待投射…")
+    }
 
     func runLoop() { if showWindow { NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.run() } else { dispatchMain() } }
 
@@ -303,6 +306,7 @@ case "receive":
                                          name: name, deviceId: devId, screen: screen, codecs: codecs)
         client.onFrame = onFrame
         client.onReady = onReady
+        client.onProjectionState = onProjState
         client.statsEmitSec = statsEmitSec
         client.statsRepeat = statsRepeat
         installSignalHandler { client.stop(); exit(0) }
@@ -314,6 +318,7 @@ case "receive":
                                       screen: screen, codecs: codecs)
         session.onFrame = onFrame
         session.onReady = onReady
+        session.onProjectionState = onProjState
         session.statsEmitSec = statsEmitSec
         session.statsRepeat = statsRepeat
         session.onClosed = { Log.info("receiver session closed"); if !showWindow { exit(0) } }

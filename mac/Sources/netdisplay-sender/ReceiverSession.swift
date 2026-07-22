@@ -62,6 +62,8 @@ final class ReceiverSession {
     var onFrame: ((_ image: CVImageBuffer, _ pts: CMTime) -> Void)?
     /// Called once the handshake is accepted (display dimensions, negotiated codec).
     var onReady: ((_ display: HelloAck.Display?, _ codec: VideoCodec) -> Void)?
+    /// v1.4 PROJECTION_STATE: whether the sender is actively projecting + its label/source.
+    var onProjectionState: ((_ active: Bool, _ label: String?, _ sourceKind: String?) -> Void)?
     var onClosed: (() -> Void)?
 
     init(host: String, port: UInt16, name: String, deviceId: String,
@@ -145,6 +147,7 @@ final class ReceiverSession {
         case .projectionState:
             if let ps = try? JSONDecoder().decode(ProjectionState.self, from: frame.payload) {
                 Log.info("projection: active=\(ps.active) label=\(ps.label ?? "-") kind=\(ps.sourceKind ?? "-")")
+                onProjectionState?(ps.active, ps.label, ps.sourceKind)
             }
         case .ping:
             conn?.send(Wire.encode(.pong, frame.payload)) // echo payload back

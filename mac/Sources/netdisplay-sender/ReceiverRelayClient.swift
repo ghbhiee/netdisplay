@@ -32,6 +32,8 @@ final class ReceiverRelayClient {
     var onFrame: ((_ image: CVImageBuffer, _ pts: CMTime) -> Void)?
     /// Forwarded once the inner session's handshake is accepted.
     var onReady: ((_ display: HelloAck.Display?, _ codec: VideoCodec) -> Void)?
+    /// Forwarded PROJECTION_STATE (active + label/source).
+    var onProjectionState: ((_ active: Bool, _ label: String?, _ sourceKind: String?) -> Void)?
     /// Applied to the inner ReceiverSession (RECV_STATS export).
     var statsEmitSec: Int?
     var statsRepeat = true
@@ -108,6 +110,7 @@ final class ReceiverRelayClient {
                                      screen: screen, codecs: codecs)
             rs.onFrame = { [weak self] img, pts in self?.onFrame?(img, pts) }
             rs.onReady = { [weak self] display, codec in self?.onReady?(display, codec) }
+            rs.onProjectionState = { [weak self] a, l, k in self?.onProjectionState?(a, l, k) }
             rs.onClosed = { [weak self] in self?.onSessionClosed() }
             rs.statsEmitSec = statsEmitSec
             rs.statsRepeat = statsRepeat
