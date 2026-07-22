@@ -64,6 +64,8 @@ final class ReceiverSession {
     var onReady: ((_ display: HelloAck.Display?, _ codec: VideoCodec) -> Void)?
     /// v1.4 PROJECTION_STATE: whether the sender is actively projecting + its label/source.
     var onProjectionState: ((_ active: Bool, _ label: String?, _ sourceKind: String?) -> Void)?
+    /// VIDEO_CONFIG mid-session resize → new stream dimensions (window should follow).
+    var onResize: ((_ width: Int, _ height: Int) -> Void)?
     var onClosed: (() -> Void)?
 
     init(host: String, port: UInt16, name: String, deviceId: String,
@@ -183,11 +185,18 @@ final class ReceiverSession {
     }
 
     private func handleVideoConfig(_ payload: Data) {
-        guard let cfg = try? JSONDecoder().decode(VideoConfig.self, from: payload) else { return }
+        guard let cfg = try? JSONDecoder().decode(VideoConfig.self, from: payload) else {
+            Log.error("VIDEO_CONFIG decode failed — payload: \(String(data: payload, encoding: .utf8) ?? "?")")
+            return
+        }
         let newCodec = VideoCodec(rawValue: cfg.codec) ?? chosenCodec
-        Log.info("VIDEO_CONFIG → \(cfg.width)x\(cfg.height)@\(cfg.fps) \(cfg.codec) — resetting decoder")
+        Log.info("VIDEO_CONFIG → \(cfg.width)x\(cfg.height)@\(cfg.fps) \(cfg.codec) — resetting decoder + following size")
         chosenCodec = newCodec
+        // Follow the new size everywhere: stats field, backpressure state, and the window.
+        statLock.lock(); streamW = cfg.width; streamH = cfg.height; statLock.unlock()
+        waitingKey = false; consecutiveOverLimit = 0
         makeDecoder(codec: newCodec)              // fresh decoder waits for the next keyframe
+        onResize?(cfg.width, cfg.height)
         conn?.send(Wire.encode(.requestKeyframe))
     }
 

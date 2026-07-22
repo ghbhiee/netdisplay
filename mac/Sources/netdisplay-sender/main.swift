@@ -289,6 +289,9 @@ case "receive":
     let onProjState: (Bool, String?, String?) -> Void = { active, label, kind in
         window?.setLabel(active ? (label ?? kind) : "等待投射…")
     }
+    let onResize: (Int, Int) -> Void = { w, h in
+        window?.configure(width: w, height: h, title: "NetDisplay — \(w)x\(h)")
+    }
 
     func runLoop() { if showWindow { NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.run() } else { dispatchMain() } }
 
@@ -307,6 +310,7 @@ case "receive":
         client.onFrame = onFrame
         client.onReady = onReady
         client.onProjectionState = onProjState
+        client.onResize = onResize
         client.statsEmitSec = statsEmitSec
         client.statsRepeat = statsRepeat
         installSignalHandler { client.stop(); exit(0) }
@@ -319,6 +323,7 @@ case "receive":
         session.onFrame = onFrame
         session.onReady = onReady
         session.onProjectionState = onProjState
+        session.onResize = onResize
         session.statsEmitSec = statsEmitSec
         session.statsRepeat = statsRepeat
         session.onClosed = { Log.info("receiver session closed"); if !showWindow { exit(0) } }

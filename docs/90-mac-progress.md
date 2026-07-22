@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🐛✅ **修复 VIDEO_CONFIG 静默丢弃（Windows 证据链定位）**：根因=我的 `VideoConfig` 结构体 `bitrateMbps` 非可选，而 Windows 的 VIDEO_CONFIG 不带该字段 → `JSONDecoder` 解码失败 → guard 静默 return，收到的每条 VIDEO_CONFIG 都被丢、中途 resize 跟不上。Windows 用「我 RECV_STATS 与他 sent 逐项一致(recv=5 keyframes=3 bytes=687568)」证明 TCP 有序下我必然收到了 VIDEO_CONFIG——铁证。修：①bitrateMbps 改可选；②handleVideoConfig 现在 log+更新 streamW/H+重置背压+onResize 回调让窗口跟随+解码失败也打日志(永不再静默)。direct/relay/菜单栏都接了 onResize。02 记 v1.7、§5 补可选说明。构建通过。跨机确认待 Windows 触发一次真·中途 resize。
+
 - ✅ **单窗口投射跨机 PASS + 我的 PROJECTION_STATE 上浮验证**：Win→Mac 投 Notepad 窗口，Mac 收到尺寸 **1866x1216(窗口非整屏)**、codec h264、**label="longlines.txt - Notepad" kind=window**——本轮加的 onProjectionState→窗口标题这条链跨机实测通了。Windows 也修了个真 bug(指定窗口找不到时静默退回整屏 / BYE 不带原因)。resize→VIDEO_CONFIG 待测。
 - ✅ **协调改用 Monitor + 主 agent（取代常驻子 agent，省 token）**：常驻子 agent 空转烧 token，改成一个长轮询守望进程(Monitor 常驻)盯 agent-chat，只有 Windows 发消息才把该消息吐成事件唤醒主 agent 处理，空闲零模型调用。身份回归 mac-claude。Windows 侧也独立切到了 Monitor(#52)。coordinator-agent.md 已更新为此模型。
 

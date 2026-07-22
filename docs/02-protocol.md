@@ -13,6 +13,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > - 2026-07-22 v1.1 HELLO_ACK.display 增加**可选 `scale` 字段**（HiDPI 因子）；明确 **Sender 可覆盖 Receiver 请求的分辨率/缩放**，Receiver 一律以 HELLO_ACK.display 为唯一权威尺寸。向后兼容（老 Receiver 忽略 scale 即可）。（Mac 端 Claude）
 > - 2026-07-22 v1.2 HELLO.screen 增加**可选 `bitrateMbps` 字段**（Receiver 期望码率，Mbps 整数）：Sender 可采纳、可用 `--bitrate` 覆盖、也可忽略（老 Sender 的 JSON 解码会跳过未知字段，天然兼容）。用途：Receiver 设置界面里让用户调码率，重连生效。（Windows 端 Claude）
 > - 2026-07-22 v1.3 **codec 协商**（Receiver 端已实现，Sender 待实装，未实装时行为不变）：Receiver HELLO 增加可选顶层 **`codecs`** 数组——按偏好排序的解码能力，取值 `"hevc444"`（HEVC Rext Main 4:4:4）/`"hevc"`（HEVC Main 4:2:0）/`"h264"`。Sender 从中挑选并在 HELLO_ACK 的 `codec` 字段返回（原值 `"h264"` 扩展为可回 `"hevc"`/`"hevc444"`）；VIDEO_FRAME 载荷格式不变（HEVC 同样 Annex-B，关键帧内联 VPS/SPS/PPS）。VIDEO_CONFIG 的 `codec` 同步扩展。老 Sender 忽略 `codecs` 回 `"h264"`，天然兼容。依据：Windows 端实测硬解支持 HEVC Rext 4:4:4（见 91）。（Windows 端 Claude）
+> - 2026-07-23 v1.7 **VIDEO_CONFIG.bitrateMbps 明确为可选**：接收端 JSON 模型必须把它设为 optional，否则收到不带该字段的 VIDEO_CONFIG(Windows Sender 不发)会解码失败并静默丢弃，中途 resize 跟不上（Mac 端已踩坑修复；见 §5）。（Mac 端 Claude）
 > - 2026-07-23 v1.6 **codec `"hevc422"`**（承接 v1.3；Windows 实测硬解通过，Mac 编码器待实装）：`codecs`/`HELLO_ACK.codec`/`VIDEO_CONFIG.codec` 新增能力值 **`"hevc422"`** = HEVC Rext **Main 4:2:2 10-bit**（Windows 端 codec string `hev1.4.10.*`）。这是 Mac(M5 VideoToolbox) 硬编能到的最佳色度（**编不了 4:4:4**，见 90）。VIDEO_FRAME 载荷不变（Annex-B，**关键帧内联 VPS+SPS+PPS**，HEVC 三参数集）。协商必须**保留 `h264` 回退**（HEVC 无软解兜底）。偏好序建议 Receiver 上报 `["hevc422","hevc","h264"]`。（Mac 端 Claude）
 > - 2026-07-23 v1.5 **Relay token 认证**（仓库转公开，防公网滥用）：`RELAY_REGISTER`/`RELAY_JOIN` 增加可选 `token` 字段；relay 校验 token（与其配置一致才受理，否则回 `RELAY_ERROR{"reason":"unauthorized"}` 并断开）。**客户端两端把 relay 地址 + token 做成可配置项**（不硬编码进仓库）。relay 未配置 token 时可放行（向后兼容/私网）。（Mac 端 Claude）
 > - 2026-07-23 v1.4（**Mac 端提案，待 Windows 确认/实装**）：**连接与投射解耦**——配对一次、连接常驻、投射可随时开关/切换/弹回，详见 §10。新增 3 项：① **持久配对**（HELLO_ACK 下发 `pairSecret`，重连用 `pairHash=SHA256(pairSecret)` 自动撮合，免重输码；§5 原 M4 定义，现启用）；② **`PROJECTION_STATE(0x13, Sender→Receiver)`** 投射激活/空闲态（空闲时 Receiver **保留空白窗口**待下次用）；③ **`CONTROL(0x21, Receiver→Sender)`** 目标端控制（如「弹回窗口」按钮）。投射源切换沿用 VIDEO_CONFIG，**不断连**。（Mac 端 Claude）
@@ -155,6 +156,9 @@ Sender → Receiver 的 HELLO：
 ```json
 { "codec": "h264", "width": 2560, "height": 1600, "fps": 60, "bitrateMbps": 40 }
 ```
+
+- `bitrateMbps` **可选**：接收端解码不需要它（宽/高/帧率/codec 才是必需）。**Receiver 的 JSON 模型必须把它设为可选**——否则收到不带该字段的 VIDEO_CONFIG（Windows Sender 不发它）会解码失败并**静默丢弃整条 VIDEO_CONFIG**，中途 resize 就跟不上（Mac 端 2026-07-23 踩过，已修：v1.7）。
+- Receiver 收到后应**同时**：重置解码器、更新记录的尺寸（统计/canvas）、（有窗口时）跟随 resize，并请求关键帧。只重置解码器而不更新尺寸会画错。
 
 M1/M2 阶段参数固定，可不实现发送方；Receiver 必须能容忍收到它（重置解码器）。
 

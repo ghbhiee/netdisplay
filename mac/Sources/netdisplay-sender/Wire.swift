@@ -154,7 +154,7 @@ struct VideoConfig: Codable {
     let width: Int
     let height: Int
     let fps: Int
-    let bitrateMbps: Int
+    let bitrateMbps: Int?   // optional: receivers don't need it, and peers (Windows) omit it
 }
 
 struct ByeMsg: Codable {
