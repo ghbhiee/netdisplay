@@ -63,18 +63,19 @@ function scheduleReconnect(why) {
   }, reconnectDelay);
 }
 
-// 协议 v1.3 codec 协商：能力名 → WebCodecs codec string
+// 协议 v1.3/v1.6 codec 协商：能力名 → WebCodecs codec string
 const CODEC_MAP = {
   h264: "avc1.640033",
   hevc: "hev1.1.6.L153.B0",
-  hevc444: "hev1.4.10.L153.B0",
+  hevc422: "hev1.4.10.L153.B0", // v1.6：HEVC Rext Main 4:2:2 10-bit（真流实测硬解通过）
+  hevc444: "hev1.4.10.L153.B0", // 保留解码映射备用；上报按 02 v1.6 建议序，不含 444
 };
 let supportedCodecs = ["h264"]; // 启动时探测，按偏好排序
 let sessionCodec = "h264"; // 本次会话协商结果（HELLO_ACK.codec）
 
 async function detectCodecs() {
   const out = [];
-  for (const name of ["hevc444", "hevc"]) {
+  for (const name of ["hevc422", "hevc"]) {
     try {
       const r = await VideoDecoder.isConfigSupported({
         codec: CODEC_MAP[name],

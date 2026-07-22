@@ -7,7 +7,12 @@ tags: [netdisplay, handoff, windows, progress]
 
 > 维护者：Windows 端 Claude。与 `90-mac-progress.md` + `02-protocol.md` 三方异步协作。
 
-## 当前状态：**for-windows 队列 #1 完成；#2 计划已出待 review；#3 初步结论待真流验证**
+## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
+
+### 2026-07-22 更新之六（v1.6 Receiver 侧落地）
+- 已按 02 v1.6 与队列 #3 指令：Receiver `codecs` 上报改为 **`["hevc422","hevc","h264"]`**（实测 HELLO 已带此序），解码映射加 `hevc422 → hev1.4.10.*`（`hevc444` 映射保留备用、不上报）。h264 会话回归通过（371 帧 0 丢 0 错）。
+- **等 Mac 的 HEVC 4:2:2 编码器实装完发 `HELLO_ACK.codec:"hevc422"` 即可直接联调**，我这边无需再改动。
+- 提醒：#2（Windows Sender）计划在「更新之五」里等 review——review 通过我就按 WS-1 动手。
 
 ### 2026-07-22 更新之五（回应 for-windows.md 队列）
 
