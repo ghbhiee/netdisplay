@@ -1,14 +1,25 @@
 import AppKit
+import CoreGraphics
+import CoreVideo
 
 /// A status-bar (menu-bar) app wrapping the sender, with live-editable config.
 /// Runs as an accessory app (no Dock icon).
 final class MenuBarApp: NSObject, NSApplicationDelegate {
     private let controller: SenderController
+    private let senderName: String
+    private let deviceId: String
     private var statusItem: NSStatusItem!
     private var lastCode: String?
     private var appList: [String] = []
 
+    // Receive mode (this Mac as a target screen) — the symmetric-app half.
+    private var receiver: ReceiverRelayClient?
+    private var receiverWindow: ReceiverWindow?
+    private var receiving = false
+
     init(senderName: String, deviceId: String) {
+        self.senderName = senderName
+        self.deviceId = deviceId
         self.controller = SenderController(senderName: senderName, deviceId: deviceId)
         super.init()
     }
@@ -79,6 +90,13 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
                                 action: #selector(toggleStartStop), keyEquivalent: "s")
         toggle.target = self
         menu.addItem(toggle)
+
+        // Receive mode: this Mac acts as a target screen (symmetric app).
+        let recv = NSMenuItem(title: receiving ? "停止接收投射" : "接收投射（本机作目标屏）…",
+                              action: receiving ? #selector(stopReceiving) : #selector(startReceivingPrompt),
+                              keyEquivalent: "r")
+        recv.target = self
+        menu.addItem(recv)
         menu.addItem(.separator())
 
         // Projection source: whole desktop vs a single window
@@ -235,6 +253,61 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         guard let code = lastCode else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(code, forType: .string)
+    }
+
+    // MARK: - Receive (this Mac as a target screen)
+
+    @objc private func startReceivingPrompt() {
+        let cfg = controller.config
+        let alert = NSAlert()
+        alert.messageText = "接收投射（本机作目标屏）"
+        alert.informativeText = "连中转 \(cfg.relayServer)，输入发送端显示的 6 位配对码。已持久配对可留空。"
+        let codeField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        codeField.placeholderString = "6 位配对码（已配对可留空）"
+        alert.accessoryView = codeField
+        alert.addButton(withTitle: "开始接收")
+        alert.addButton(withTitle: "取消")
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        startReceiving(code: codeField.stringValue.trimmingCharacters(in: .whitespaces))
+    }
+
+    private func startReceiving(code: String) {
+        let cfg = controller.config
+        let parts = cfg.relayServer.split(separator: ":")
+        let host = String(parts.first ?? "15.tokencv.com")
+        let port = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
+        // Report this Mac's main-display pixel size + the codecs it can decode.
+        let screen = HelloReceiver.Screen(
+            width: Int(CGDisplayPixelsWide(CGMainDisplayID())),
+            height: Int(CGDisplayPixelsHigh(CGMainDisplayID())),
+            scale: 1, fps: cfg.fps, bitrateMbps: cfg.bitrateAuto ? nil : cfg.bitrateMbps)
+        let win = ReceiverWindow()
+        let client = ReceiverRelayClient(
+            host: host, port: port,
+            token: cfg.relayToken.isEmpty ? nil : cfg.relayToken,
+            code: code.isEmpty ? nil : code,
+            name: senderName, deviceId: deviceId, screen: screen,
+            codecs: ["hevc422", "hevc", "h264"])
+        client.onReady = { display, codec in
+            guard let d = display else { return }
+            win.configure(width: d.width, height: d.height,
+                          title: "NetDisplay 接收 — \(d.width)×\(d.height) \(codec.wire)")
+        }
+        client.onFrame = { image, _ in win.present(image) }
+        receiverWindow = win
+        receiver = client
+        receiving = true
+        client.start()
+        rebuildMenu()
+    }
+
+    @objc private func stopReceiving() {
+        receiver?.stop()
+        receiver = nil
+        receiverWindow = nil
+        receiving = false
+        rebuildMenu()
     }
     @objc private func quit() {
         controller.stop()

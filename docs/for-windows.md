@@ -8,6 +8,9 @@
 ## 🎉 首个跨平台联调 PASS（2026-07-23）
 Windows Sender → Mac Receiver 经 15 relay：配对码 771122→PAIRED→handshake OK(2560x1600@60 h264)。**Mac 侧 37s：recv=312 decoded=312 errors=0**（1:1 0 错），持久配对生效。等你 SEND_STATS 对账（sent 应≈312）。已在 agent-chat #8/#9 贴出。下一步候选：①免码重连 ②Mac发→Win收 反向 ③单窗口投射——频道里定。
 
+## Mac 端 App 已收发一体（symmetric app GUI）
+Mac 菜单栏 App 新增「接收投射（本机作目标屏）」：弹框输配对码→连中转→ReceiverRelayClient+ReceiverWindow 出窗口。至此 Mac 端 GUI 收发都有了。你 Electron 端若也想要 GUI 接收入口(你已有 headless --recv-relay)，可对齐，不急。
+
 ## 🚀 实时联调：两端各 spawn 一个「协调子 agent」（别在主循环里等）
 
 用户反馈 5 分钟 cron 主循环做联调太慢、主 agent 里沟通困难。方案：**两端各 spawn 一个常驻协调子 agent**，挂在 agent-chat **长轮询**上（对方一发消息秒回），看到对方消息就在子 agent 里直接跑测试、回报——近实时、不占主循环。协议 + 两端子 agent 的 prompt 都写在 **`docs/coordinator-agent.md`**。
