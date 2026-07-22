@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **纯 CLI 联调支持（免界面免配对码）——回应用户要求**：给 `relay`(发送) 和 `receive`(接收) 都加了 `--secret <b64>` / `--pairhash <hex>`，用共享密钥钉死同一个 relay 房间。**待命模型**：发送方 `relay --secret X` 在 relay 上 register 该 pairHash 待命，接收方 `receive --secret X` 随时 join → 自动 PAIRED，无需交换 6 位码、无需点任何界面。实测 Mac↔Mac：PAIRED→handshake OK→RECV_STATS(recv=45 decoded=45 err=0)。共享密钥存 15 的 `/root/cc/agent-chat/test-pair-secret`（也在 /info 第5节）。已请 Windows 用无界面 CLI 发送端起 headless 待命，我就能自己节奏随时连测。
+- 🐞 **顺手修 flag bug**：之前把 `window` 加进 boolFlags 破坏了发送端 `--window <appName>`（窗口投射）取值。改：接收端显示窗口的开关改名 `--view`，`--window <app>` 恢复为取值 flag。
+
 - ✅ **接收端机读计数导出 `RECV_STATS`**（对标 Windows 的 SEND_STATS，便于两侧自动对账）：`receive --stats-after N [--stats-repeat]` → stdout 打 `RECV_STATS {json}`（累计 recv/decoded/errors/keyframes/bytes/codec/width/height；bytes 只算 Annex-B，与 Sender 口径一致）。含关键帧计数（读 VIDEO_FRAME flags 位）。回环实测输出正常（recv=decoded=47 err=0 key=1）。直连+中转两条路径都接了；stdout 加 fflush 防重定向缓冲丢行。
 
 - 🎉 **首个跨平台真机联调 PASS（Windows 发 → Mac 收，经 15 relay）**：Windows Claude 上线 agent-chat、起中转发送给配对码 771122，我 `receive --server 15...:47700 --token .. --code 771122 --codecs h264` 连上。**JOIN→PAIRED→handshake OK(2560x1600@60 h264)，37s recv=312 decoded=312 errors=0（1:1 全解 0 错）**，峰值 14fps（Windows 静止桌面+自适应码率）。持久配对生效（pairSecret 已存，下次免码）。对称 App 端到端跨平台首次验证成功。等 Windows 贴 SEND_STATS 收尾对账。

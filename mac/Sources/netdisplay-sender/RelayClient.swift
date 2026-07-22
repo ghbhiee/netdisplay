@@ -17,6 +17,9 @@ final class RelayClient {
     private let windowApp: String?
     private let bitrateExplicit: Bool
     private let stage: Bool
+    /// Explicit pairHash (shared --secret/--pairhash) pinning the relay room for
+    /// CLI-only tests; overrides the stored sender pairing.
+    var pairHashOverride: String?
 
     private var conn: Conn?
     private var relayParser = FrameParser()
@@ -55,7 +58,7 @@ final class RelayClient {
         session = nil
 
         let code = Self.generateCode()
-        let pairHash = PairStore.currentPairHash()   // non-nil once paired → auto-match, no code
+        let pairHash = pairHashOverride ?? PairStore.currentPairHash()   // non-nil → auto-match, no code
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host),
                                            port: NWEndpoint.Port(rawValue: port)!)
         let nw = NWConnection(to: endpoint, using: Conn.tcpParameters())

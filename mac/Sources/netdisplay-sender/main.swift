@@ -74,7 +74,9 @@ func parseArgs() -> Args {
     guard !argv.isEmpty else { usage() }
     let command = argv.removeFirst()
     var a = Args(command: command)
-    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "window", "stats-repeat"]
+    // NB: "window" is a VALUE flag (--window <appName> = project that app's window
+    // on the sender). The receiver's "show a window" toggle is --view.
+    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "view", "stats-repeat"]
     var i = 0
     while i < argv.count {
         let tok = argv[i]
@@ -237,6 +239,12 @@ case "relay":
                              deviceId: devId, token: args.flags["token"], override: overrideFromArgs(args),
                              prioritizeQuality: args.bool("quality"), windowApp: args.flags["window"],
                              bitrateExplicit: args.flags["bitrate"] != nil, stage: args.bool("stage"))
+    // Shared pairing for CLI-only tests: --pairhash <hex> or --secret <base64>
+    // pins the relay room deterministically (overrides stored pairing).
+    if let ph = args.flags["pairhash"] ?? args.flags["secret"].flatMap({ PairStore.pairHash(fromSecret: $0) }) {
+        client.pairHashOverride = ph
+        Log.info("relay: pinned pairHash \(ph.prefix(12))… (shared secret)")
+    }
     installSignalHandler { Log.info("bye"); exit(0) }
     client.start()
     Log.info("relay mode: connecting to \(host):\(port)")
@@ -256,7 +264,7 @@ case "receive":
     // real 4:2:2 10-bit; falls back to hevc/h264 otherwise.
     let codecs = args.str("codecs", "hevc422,hevc,h264").split(separator: ",").map(String.init)
     let screen = HelloReceiver.Screen(width: w, height: h, scale: 1, fps: fps, bitrateMbps: bitrate)
-    let showWindow = args.bool("window")
+    let showWindow = args.bool("view")   // --view shows the decoded frames in a window
     let snapshotPath = args.flags["snapshot"]
     let statsEmitSec = args.flags["stats-after"].flatMap { Int($0) }
     let statsRepeat = args.bool("stats-repeat")
@@ -287,9 +295,12 @@ case "receive":
         let rhost = String(parts.first ?? "15.tokencv.com")
         let rport = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
         Log.info("receive(relay): \(rhost):\(rport) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs) window=\(showWindow)")
+        // Shared pairing for CLI-only tests: --pairhash <hex> or --secret <base64>.
+        let pinnedHash = args.flags["pairhash"] ?? args.flags["secret"].flatMap { PairStore.pairHash(fromSecret: $0) }
+        if let ph = pinnedHash { Log.info("receive: pinned pairHash \(ph.prefix(12))… (shared secret)") }
         let client = ReceiverRelayClient(host: rhost, port: rport, token: args.flags["token"],
-                                         code: args.flags["code"], name: name, deviceId: devId,
-                                         screen: screen, codecs: codecs)
+                                         code: args.flags["code"], pairHashOverride: pinnedHash,
+                                         name: name, deviceId: devId, screen: screen, codecs: codecs)
         client.onFrame = onFrame
         client.onReady = onReady
         client.statsEmitSec = statsEmitSec

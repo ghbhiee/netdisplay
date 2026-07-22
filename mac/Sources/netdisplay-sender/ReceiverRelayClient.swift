@@ -12,6 +12,9 @@ final class ReceiverRelayClient {
     private let port: UInt16
     private let token: String?
     private let code: String?
+    /// Explicit pairHash (from a shared --secret/--pairhash) that pins the relay
+    /// room deterministically for CLI-only tests — overrides the stored pairing.
+    private let pairHashOverride: String?
     private let name: String
     private let deviceId: String
     private let screen: HelloReceiver.Screen
@@ -33,12 +36,13 @@ final class ReceiverRelayClient {
     var statsEmitSec: Int?
     var statsRepeat = true
 
-    init(host: String, port: UInt16, token: String?, code: String?,
+    init(host: String, port: UInt16, token: String?, code: String?, pairHashOverride: String? = nil,
          name: String, deviceId: String, screen: HelloReceiver.Screen, codecs: [String]) {
         self.host = host
         self.port = port
         self.token = token
         self.code = code
+        self.pairHashOverride = pairHashOverride
         self.name = name
         self.deviceId = deviceId
         self.screen = screen
@@ -52,7 +56,7 @@ final class ReceiverRelayClient {
         relayParser = FrameParser()
         session = nil
 
-        let pairHash = PairStore.currentPairHash(slot: "receiver")
+        let pairHash = pairHashOverride ?? PairStore.currentPairHash(slot: "receiver")
         if pairHash == nil && (code == nil || code!.isEmpty) {
             Log.error("relay-receive: no pairing code and no stored pairing — pass --code <6-digit>")
             exit(2)

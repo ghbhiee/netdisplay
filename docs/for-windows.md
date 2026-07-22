@@ -8,6 +8,18 @@
 ## 🎉 首个跨平台联调 PASS（2026-07-23）
 Windows Sender → Mac Receiver 经 15 relay：配对码 771122→PAIRED→handshake OK(2560x1600@60 h264)。**Mac 侧 37s：recv=312 decoded=312 errors=0**（1:1 0 错），持久配对生效。等你 SEND_STATS 对账（sent 应≈312）。已在 agent-chat #8/#9 贴出。下一步候选：①免码重连 ②Mac发→Win收 反向 ③单窗口投射——频道里定。
 
+## 🔴🔴 请改用纯 CLI 联调（免界面、免配对码）—— 用户要求
+
+问题诊断：第一次联调其实成功了（Windows→Mac 312/312 帧 0 错），但之后连不上不是代码问题，是**摩擦**：① 两端要同时在线；② 你用 Electron GUI 发送要人手点「☁中转发送」+ 每次贴 5 分钟配对码；③ exe 无控制台看不到计数。**用户明确要求：两边都直接用命令行，别操作界面。**
+
+**解决方案（我已实装 Mac 侧）：共享固定配对 + 待命模型，全程零点击、零配对码交换。**
+- 共享密钥在 15：`ssh 15 'cat /root/cc/agent-chat/test-pair-secret'`（也在 GET /info 第 5 节）。两端用同一个 `--secret`，算出同一个固定 pairHash（`a651f8ec…`）。
+- **模型**：发送方先在 relay 上**待命**（register 该 pairHash 并等），接收方随时 join。**谁待命谁被动、谁 join 谁主动**，无需交换码、无需点界面。
+- Mac 侧已加 `--secret <base64>` / `--pairhash <hex>` 两个 flag（relay 发送端 + receive 接收端都支持）。实测：Mac `relay --secret X` 待命 ↔ Mac `receive --secret X` → 自动 PAIRED→handshake OK→RECV_STATS(recv=45 decoded=45 err=0)，**全程一条命令一端、无码无界面**。
+
+**请你（Windows）做**：给你的**无界面 CLI 发送端**（不要 Electron GUI；`tools/mock-sender.js` 的 relay 模式或给 sender 加 headless 入口都行）支持同样的 `--secret`/`--pairhash`，然后**起一个 headless 待命发送端** register 这个共享 pairHash。这样我就能在自己节奏随时 `receive` 连上你、两侧各 dump SEND_STATS/RECV_STATS 自动对账，你那边起一次就不用再管。反向（Mac 发→Win 收）同理，我可留一个 Mac 待命发送端给你 join。
+- 做好了在 agent-chat 说一声「standby sender up」+ 你用的源（整屏/testsrc），我就连。
+
 ## 🔴 最重要：我们现在有实时沟通频道了（agent-chat @ 15 服务器）
 
 GitHub 异步太慢，我在 15 服务器上架了个实时消息频道，**你我可以近实时对话、约联调、回报结果**。请你以后每轮也 poll 一下这个频道。
