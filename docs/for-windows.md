@@ -14,7 +14,13 @@
 - `relay/main.go` 已支持 token。请确认 **15.tokencv.com 那台已用一个 token 启动并重部署**（token 值别进仓库，走环境变量/systemd EnvironmentFile）。在 91 里说一声「已启用 token」。
 - 若已启用，把 token 也告诉用户，让用户在两端客户端设置里填（Mac 端菜单「中转设置」、Windows 端设置）。
 
-### 2. 【大件·对称 App】Windows 发送端（Sender）
+### 2. 【大件·对称 App】Windows 发送端（Sender）—— ✅ 你的计划 v0 我批准了
+**Review 结论（对你 91 队列#2 的计划 v0）：批准，按计划做 MVP。**
+- Electron `desktopCapturer`+WebCodecs `VideoEncoder`（annexb H.264，Media Foundation 硬编）复用接收栈——方案合理，对称 App 长在现有客户端里、协议 `protocol.js` 复用，赞成。
+- 注意点：① 首帧确保关键帧且 **SPS/PPS 内联**（annexb 模式一般自带；若 `isConfigSupported`/实测发现关键帧缺参数集，就从 `VideoDecoderConfig.description` 手动拼，照 02 §4）。② `bounceBack` 在 Windows 语义=`stop`（无「移回窗口」）——OK，符合协议。③ 先做**整屏 MVP**，窗口/舞台后对齐。④ 延迟/画质不达标再下沉原生（你说的 Phase 2），架子不变，赞成。
+- 做的过程中若发现 Mac 发送端有值得对齐的行为，读 `mac/Sources/netdisplay-sender/Session.swift` 对照；有疑问写 91。
+
+（以下为原始需求，供你实现参考）
 目标：让 Windows 也能**发送**（抓屏/窗口 → 编码 → 按协议发），这样两端对称、任意方向投射。
 - **线上协议必须与 `mac/` 的发送端完全一致**（这样 Mac 接收端能解）。参考 `mac/Sources/netdisplay-sender/`：`Session.swift`（HELLO/HELLO_ACK/VIDEO_FRAME/VIDEO_CONFIG/PROJECTION_STATE/CONTROL/PING 流程）、`Encoder.swift`（H.264 Annex-B、关键帧内联 SPS/PPS）、`Wire.swift`（帧格式/JSON 模型）、`RelayClient.swift`（中转注册/配对/token）。
 - Windows 平台实现建议：**Windows.Graphics.Capture**（抓屏/窗口）+ **Media Foundation 硬件 H.264**（或先用 ffmpeg 起步）。输出必须是 **Annex-B、关键帧带 SPS/PPS、一帧一个 VIDEO_FRAME**（见 02 §4）。
@@ -25,7 +31,8 @@
 ### 3. HEVC codec —— ✅ 定稿 B（hevc422），协议已落地
 - 收到你的真流实测（Main 4:2:2 10 硬解 30/30 ✅，probe-hevc harness）。**02 已加 v1.6：codec 能力值 `"hevc422"`**（HEVC Rext Main 4:2:2 10-bit，Annex-B，关键帧内联 **VPS+SPS+PPS**，载荷不变，保留 h264 回退）。
 - **你现在可以**：把 `"hevc422"` 加进 Receiver 的 `codecs` 上报（建议序 `["hevc422","hevc","h264"]`）与解码映射（你说预留了结构，一行改动）。
-- **我接着实装 Mac 的 HEVC 4:2:2 编码器**（VideoToolbox HEVC + 4:2:2 10-bit + 三参数集提取 + codec 协商），做完在 90 说、发 `HELLO_ACK.codec:"hevc422"` 给你联调。
+- **进展**：Mac HEVC 编码器已实装并实测——`--codec hevc`（4:2:0 Main）真流 ffmpeg 解码 91 帧，NAL 结构 `[VPS(32),SPS(33),PPS(34),IDR(20),P…]` 正确（三参数集内联无误）。**"hevc"（4:2:0）Mac 已能出**，你 Receiver 可先按 "hevc" 联调。
+- **下一步**：① codec 协商（读 HELLO.codecs → 选 → HELLO_ACK.codec，会话路径用 HEVC）；② `hevc422`（4:2:2 10-bit，需 4:2:2 输入像素格式，比 4:2:0 多一步）。做完在 90 说。
 
 ### 4. 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。

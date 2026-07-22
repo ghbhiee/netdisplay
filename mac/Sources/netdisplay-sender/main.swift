@@ -133,7 +133,8 @@ case "listen":
         let scale = args.int("scale", 1)
         let fps = args.int("fps", 60)
         let bitrate = args.int("bitrate", 40) * 1_000_000
-        Log.info("debug-raw mode: \(w)x\(h) scale=\(scale) @\(fps) \(bitrate/1_000_000)Mbps")
+        let codec = VideoCodec(rawValue: args.str("codec", "h264")) ?? .h264
+        Log.info("debug-raw mode: \(w)x\(h) scale=\(scale) @\(fps) \(bitrate/1_000_000)Mbps codec=\(codec.wire)")
 
         let pipeline: StreamPipeline
         if let app = args.flags["window"] {
@@ -142,7 +143,7 @@ case "listen":
             var built: StreamPipeline?
             Task {
                 built = await StreamPipeline.window(appName: app, fps: fps, bitrateBps: bitrate,
-                                                    prioritizeQuality: args.bool("quality"))
+                                                    prioritizeQuality: args.bool("quality"), codec: codec)
                 sem.signal()
             }
             sem.wait()
@@ -150,7 +151,8 @@ case "listen":
             pipeline = p
         } else {
             guard let p = StreamPipeline(name: "NetDisplay", pixelWidth: w, pixelHeight: h,
-                                         scale: scale, fps: fps, bitrateBps: bitrate, deviceSeed: devId) else {
+                                         scale: scale, fps: fps, bitrateBps: bitrate, deviceSeed: devId,
+                                         codec: codec) else {
                 Log.error("pipeline init failed (screen-recording permission?)"); exit(1)
             }
             pipeline = p

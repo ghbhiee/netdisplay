@@ -57,13 +57,14 @@ final class StreamPipeline {
 
     /// Display mode: create a virtual display and capture it.
     convenience init?(name: String, pixelWidth: Int, pixelHeight: Int, scale: Int, fps: Int,
-                      bitrateBps: Int, deviceSeed: String? = nil, prioritizeQuality: Bool = false) {
+                      bitrateBps: Int, deviceSeed: String? = nil, prioritizeQuality: Bool = false,
+                      codec: VideoCodec = .h264) {
         guard let vd = VirtualDisplay(name: name, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
                                       scale: scale, refreshRate: Double(fps), deviceSeed: deviceSeed) else {
             Log.error("failed to create virtual display"); return nil
         }
         guard let enc = Encoder(width: pixelWidth, height: pixelHeight, bitrateBps: bitrateBps,
-                                fps: fps, prioritizeQuality: prioritizeQuality) else {
+                                fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
             Log.error("failed to create encoder"); return nil
         }
         let cap = Capture(displayID: vd.displayID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
@@ -87,11 +88,11 @@ final class StreamPipeline {
 
     /// Window-projection mode: capture a single app window (no virtual display).
     static func window(appName: String, fps: Int, bitrateBps: Int,
-                       prioritizeQuality: Bool = false) async -> StreamPipeline? {
+                       prioritizeQuality: Bool = false, codec: VideoCodec = .h264) async -> StreamPipeline? {
         do {
             let r = try await WindowPicker.find(appName: appName)
             guard let enc = Encoder(width: r.pixelWidth, height: r.pixelHeight, bitrateBps: bitrateBps,
-                                    fps: fps, prioritizeQuality: prioritizeQuality) else {
+                                    fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
                 Log.error("failed to create encoder"); return nil
             }
             let cap = Capture(window: r.window, pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight)

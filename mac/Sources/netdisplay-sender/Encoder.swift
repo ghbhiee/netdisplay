@@ -3,9 +3,18 @@ import VideoToolbox
 import CoreMedia
 import CoreVideo
 
-/// VideoToolbox H.264 encoder. Input: NV12/BGRA CVPixelBuffer. Output (via
-/// `onEncoded`): a complete access unit in Annex-B, with SPS/PPS prepended on
-/// keyframes, plus pts (µs) and keyframe flag.
+/// Wire codec (matches protocol `codec` values). hevc422 (4:2:2 10-bit) needs a
+/// 4:2:2 input pixel format — added in a later step; hevc = HEVC Main 4:2:0.
+enum VideoCodec: String {
+    case h264, hevc, hevc422
+    var isHEVC: Bool { self != .h264 }
+    var cmType: CMVideoCodecType { isHEVC ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264 }
+    var wire: String { rawValue }
+}
+
+/// VideoToolbox H.264/HEVC encoder. Input: NV12/BGRA CVPixelBuffer. Output (via
+/// `onEncoded`): a complete access unit in Annex-B, with parameter sets
+/// (H.264 SPS/PPS, HEVC VPS/SPS/PPS) prepended on keyframes, plus pts (µs) + key flag.
 final class Encoder {
     private var session: VTCompressionSession?
     private let width: Int
@@ -13,6 +22,7 @@ final class Encoder {
     private let bitrate: Int
     private let fps: Int
     private let prioritizeQuality: Bool
+    private let codec: VideoCodec
     private let startCode: [UInt8] = [0, 0, 0, 1]
 
     /// Called on VideoToolbox's callback thread for each encoded frame.
@@ -21,12 +31,14 @@ final class Encoder {
     private var forceKeyframe = false
     private let lock = NSLock()
 
-    init?(width: Int, height: Int, bitrateBps: Int, fps: Int = 60, prioritizeQuality: Bool = false) {
+    init?(width: Int, height: Int, bitrateBps: Int, fps: Int = 60, prioritizeQuality: Bool = false,
+          codec: VideoCodec = .h264) {
         self.width = width
         self.height = height
         self.bitrate = bitrateBps
         self.fps = fps
         self.prioritizeQuality = prioritizeQuality
+        self.codec = codec
         guard setup() else { return nil }
     }
 
@@ -45,7 +57,7 @@ final class Encoder {
             allocator: nil,
             width: Int32(width),
             height: Int32(height),
-            codecType: kCMVideoCodecType_H264,
+            codecType: codec.cmType,
             encoderSpecification: spec,
             imageBufferAttributes: nil,
             compressedDataAllocator: nil,
@@ -63,7 +75,8 @@ final class Encoder {
         }
         set(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue)
         set(kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse)
-        set(kVTCompressionPropertyKey_ProfileLevel, kVTProfileLevel_H264_High_AutoLevel)
+        set(kVTCompressionPropertyKey_ProfileLevel,
+            codec.isHEVC ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel)
         // Keyframe every 2s (protocol §3), plus we force one on demand.
         set(kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 2 as CFNumber)
         set(kVTCompressionPropertyKey_MaxFrameDelayCount, 0 as CFNumber)
@@ -75,7 +88,7 @@ final class Encoder {
         set(kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
             prioritizeQuality ? kCFBooleanFalse : kCFBooleanTrue)
         VTCompressionSessionPrepareToEncodeFrames(session)
-        Log.info("encoder ready: \(width)x\(height) H.264 \(bitrate / 1_000_000)Mbps @\(fps) quality=\(prioritizeQuality)")
+        Log.info("encoder ready: \(width)x\(height) \(codec.wire) \(bitrate / 1_000_000)Mbps @\(fps) quality=\(prioritizeQuality)")
         return true
     }
 
@@ -125,18 +138,20 @@ final class Encoder {
                 dataPointerOut: &ptr) == noErr, let ptr else { return nil }
 
         var out = Data(capacity: total + 128)
-        // On keyframes, prepend SPS/PPS (they live in the format description).
+        // On keyframes, prepend parameter sets (H.264: SPS,PPS; HEVC: VPS,SPS,PPS).
         if isKeyframe(sample), let fmt = CMSampleBufferGetFormatDescription(sample) {
-            for i in 0..<2 { // index 0 = SPS, 1 = PPS
+            let count = codec.isHEVC ? 3 : 2
+            for i in 0..<count {
                 var psPtr: UnsafePointer<UInt8>?
                 var psLen = 0
-                if CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
-                        fmt, parameterSetIndex: i,
-                        parameterSetPointerOut: &psPtr,
-                        parameterSetSizeOut: &psLen,
-                        parameterSetCountOut: nil,
-                        nalUnitHeaderLengthOut: nil) == noErr,
-                   let psPtr {
+                let ok: OSStatus = codec.isHEVC
+                    ? CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+                        fmt, parameterSetIndex: i, parameterSetPointerOut: &psPtr,
+                        parameterSetSizeOut: &psLen, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+                    : CMVideoFormatDescriptionGetH264ParameterSetAtIndex(
+                        fmt, parameterSetIndex: i, parameterSetPointerOut: &psPtr,
+                        parameterSetSizeOut: &psLen, parameterSetCountOut: nil, nalUnitHeaderLengthOut: nil)
+                if ok == noErr, let psPtr {
                     out.append(contentsOf: startCode)
                     out.append(Data(bytes: psPtr, count: psLen))
                 }
