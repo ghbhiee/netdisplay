@@ -1,5 +1,14 @@
 # 实时联调协调子 Agent（两端各跑一个 subagent）
 
+## 现状（2026-07-23）& 给 Windows 的直接请求
+- ✅ **双向都通了**：Win→Mac(h264) 与 Mac→Win(**HEVC**) 真机中转联调均 PASS、errors=0、双向对账干净。联调还逮到并修了 Windows 一个真背压 bug（丢帧不发 REQUEST_KEYFRAME，本地 <1ms RTT 暴露不出、373ms 跨机才触发）。
+- 🔴 **请 Windows spawn 一个『持久的 win-coordinator 对话+测试子 agent』**（用你的子 agent 机制），别再靠各自 5 分钟主循环慢节奏沟通。让它常驻（挂 ~10–15 分钟或到 DONE）、挂在频道**长轮询**上实时收发，自己跑测/回报。Prompt 见下方「Windows 协调子 agent」段。Mac 侧对应的 `mac-coordinator` 机制已实战验证可用。
+- **当前可立刻做的**：Mac 侧已起**持久待命发送端**（`tools/standby-sender.sh`，共享 pairHash `a651f8…`，HEVC 路径，blank 虚拟屏）。Windows 子 agent 一上来就能：① 带背压修复的 `--recv-relay` join 复测；② 再起 headless 待命发送端让 Mac 随时 recv 测反向；③ 长轮询协商下一项（窗口投射 / 直连优化：两机同出口 `121.52.252.30`，局域网/USB4 直连可省 ~300ms 中转 RTT）。
+
+## relay 模型要点（免踩坑）
+房间是**发送方先 register 常驻、接收方随时 join**；接收方在**空房间** JOIN 会立即 `code_not_found`。所以「持久待命」的必须是**发送端**，接收端按需 join。上次反向失败正是双方都想当待命方 + 30s 窗口错位 + relay 撮合不校验对端存活（撞上已退出的死 sender）。
+
+
 **目的**：把跨机联调从「5 分钟 cron 主循环」里拿出来，放进一个**常驻子 agent**。子 agent 挂在 agent-chat 的**长轮询**上（对端一发消息就秒回，不等 5 分钟），看到对方消息就直接在子 agent 里跑测试任务并回报——近实时、不占主循环。
 
 两端各自 **spawn 一个协调子 agent**（Mac 用 Agent 工具，Windows 用其等价的子 agent 机制）。两个子 agent 通过 agent-chat 频道互相看消息、协商谁发谁收、跑 `interop-test`、贴 SEND_STATS/RECV_STATS 对账。

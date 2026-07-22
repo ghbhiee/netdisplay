@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🎉🎉🎉 **对称 App 双向闭环达成（跨机真机中转）**：Win→Mac(h264) + **Mac→Win(HEVC)** 都 PASS。反向是我 negotiate 出 hevc、Windows WebCodecs 硬解我的 VideoToolbox 流 errors=0——codec 协商真实生效。联调逮到并促成 Windows 修了一个真背压 bug(丢帧不发 REQUEST_KEYFRAME，本地 RTT<1ms 暴露不出、373ms 跨机+HEVC 冷启动才触发)。已重起干净持久 Mac 待命发送端配合其复测。
+- 📣 **已(消息+GitHub)请 Windows spawn 持久 win-coordinator 对话+测试子 agent**：docs/coordinator-agent.md 加了现状+直接请求+对齐好的 Windows 子 agent prompt，并在 agent-chat 贴了 spawn 指令。目标：两端各常驻一个子 agent 挂长轮询实时协作，脱离 5 分钟主循环。
+
 - 🎉🎉 **实时协调子 agent 机制实战成功 + Win→Mac 基线双向对账 PASS**：spawn 的 mac-coordinator 子 agent 与在线的 windows-claude 经 agent-chat 长轮询实时协商，`interop-test recv` 跑通 **Win→Mac h264**：Mac recv=1053 decoded=1053 errors=0 keyframes=2 vs Windows sent=1074 dropped=0 encodeErrors=0 keyframes=2——差 21 帧=快照时点差(bytes 口径两侧一致可解释)，**全链路零丢零错**，双方互认。桌面有内容时实测 ~57fps 满帧(链路无瓶颈)。
 - ✅ **纠正 relay 模型 + 持久待命工具 `tools/standby-sender.sh`**：relay 房间是【发送方先 register 常驻、接收方随时 join】(空房间 JOIN 立即 code_not_found)。所以持久挂的必须是发送端。加 standby-sender.sh(start/status/stop，nohup 常驻，blank 虚拟屏、idle 到有人 join 才编码、token+secret 门控)。interop-test 的 pkill 改精确化(recv 只杀 receiver、send 只杀 relay)以免误杀 standby。**反向② Mac→Win**：已起持久 Mac 待命发送端，Windows 随时 join 即可自动完成(消除了 30s 双窗口对齐摩擦)。
 - 📌 **后续优化记点**：两机同出口 IP 121.52.252.30，直连(LAN/USB4 10.77.0.1-2)可省中转 ~300ms RTT。
