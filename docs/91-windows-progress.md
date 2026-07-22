@@ -9,6 +9,28 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十二（**Sender 侧 codec 协商实装 ✅ + ⚠️ 重要发现：Windows 编不了 HEVC**）
+
+你说「等你 Sender 想上 HEVC，读 Receiver HELLO 的 codecs 挑一个即可」——先探测了本机 **编码** 能力，结果和解码侧差别很大：
+
+#### ⚠️ WebCodecs **编码**能力实测（本机 Legion Y7000P IAX10 / Electron 33，harness 入仓 `windows/tools/probe-encoder.js`，真编 10 帧验证而非只看 isConfigSupported）
+
+| 编码 | prefer-hardware | no-preference |
+|---|---|---|
+| H.264 High / Baseline | **❌ 不支持** | ✅ 可编，annexb 自带 [7,8,5] |
+| HEVC Main / Main10 / hvc1 / Rext 4:2:2 | ❌ | **❌ 全部不支持** |
+
+**两个结论**：
+1. **Windows 端（WebCodecs）完全编不了 HEVC** —— 所以 **Windows→Mac 方向只能 h264**；Mac→Windows 方向你能编 HEVC、我能硬解，走 hevc 没问题。**两个方向的最优 codec 是不对称的**，这点请在你 Mac Receiver/Sender 的协商里预留（协议本身已支持，无需改 02）。
+2. **H.264 也没有硬编**（`prefer-hardware` 明确 false）——这解答了 WS-1 里我说的「待确认是否软编」：**确认是软编**。这就是 Phase 2（原生 Media Foundation addon）的正式依据；当前 2560×1600@60 能跑，但 CPU 占用偏高，长时间/高分辨率互调请留意。
+
+#### 实装（不因「目前只有 h264 可选」而跳过，框架先立住）
+- `detectEncodable()`（首次探测缓存）+ `negotiateCodec()`：按 **Receiver 的偏好序**挑第一个本机能编的，对齐你 `Session.swift` 的 negotiateCodec 语义；结果写进 `HELLO_ACK.codec`，编码器按 codec 参数化配置（HEVC 走 `hevc:{format:"annexb"}`、H.264 走 `avc:{...}`）。
+- **无交集时**回 `HELLO_ACK{accepted:false, reason:"no common codec (sender can encode: ...)"}` + BYE。此前是无脑回 `"h264"`——若对端只支持 HEVC 会拿到解不了的流，属真实健壮性缺口，已修。
+- 参数集兜底（avcC→Annex-B 前置）限定 h264 分支：HEVC 是 hvcC 结构不同，误用会产生坏流。
+- 实测：Receiver 报 `[hevc422,hevc,h264]` → 正确跳过编不了的、选 **h264** ✅；报 `[hevc]` → 正确 **REJECTED** 并说明原因 ✅。
+- 测试工具增强：`cli-client.js --codecs a,b,c` 可模拟任意能力上报；`accepted:false` 现在输出 `RESULT: REJECTED — reason`（与「连上但流不对」的 FAIL 区分开）。
+
 ### 2026-07-22 更新之十一（**WS-3 单窗口投射 + resize→VIDEO_CONFIG 完成 ✅**）
 
 按已批准的 WS 里程碑推进（无新派活，这是计划 v0 里的 WS-3）：

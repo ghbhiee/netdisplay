@@ -57,6 +57,43 @@ function paramSetsFromAvcC(desc) {
   return out;
 }
 
+// ---------- codec 协商（v1.3/v1.6，Sender 侧） ----------
+// 能力名 → WebCodecs 编码配置片段。注意 HEVC 用 hevc.format，H.264 用 avc.format。
+const ENC_CODEC = {
+  h264: { codec: "avc1.640033", annexb: (c) => ({ ...c, avc: { format: "annexb" } }) },
+  hevc: { codec: "hev1.1.6.L120.B0", annexb: (c) => ({ ...c, hevc: { format: "annexb" } }) },
+  hevc422: { codec: "hev1.4.10.L120.B0", annexb: (c) => ({ ...c, hevc: { format: "annexb" } }) },
+};
+let encodable = null; // 本机可编能力，首次探测后缓存
+
+async function detectEncodable() {
+  if (encodable) return encodable;
+  const out = [];
+  for (const name of ["hevc422", "hevc", "h264"]) {
+    const e = ENC_CODEC[name];
+    for (const hw of ["prefer-hardware", "no-preference"]) {
+      try {
+        const cfg = e.annexb({
+          codec: e.codec, width: 1280, height: 720, bitrate: 10e6,
+          framerate: 30, latencyMode: "realtime", hardwareAcceleration: hw,
+        });
+        const r = await VideoEncoder.isConfigSupported(cfg);
+        if (r.supported) { out.push(name); break; }
+      } catch {}
+    }
+  }
+  encodable = out;
+  dbg("encodable codecs:", out.join(",") || "(none)");
+  return out;
+}
+
+// 从 Receiver 的偏好序里挑第一个本机能编的（对齐 Mac Session.swift 的 negotiateCodec）
+function negotiateCodec(receiverCodecs) {
+  const want = Array.isArray(receiverCodecs) && receiverCodecs.length ? receiverCodecs : ["h264"];
+  for (const name of want) if (encodable.includes(name)) return name;
+  return null;
+}
+
 // ---------- 采集 ----------
 // 当前投射源（null = 主屏）。WS-3：可选单个窗口。
 let source = null; // {id, name, kind}
@@ -88,6 +125,18 @@ async function captureTrack(fps) {
 async function startSession(sock, receiverHello, relayMode) {
   const fps = Math.min(60, Math.max(30, receiverHello?.screen?.fps || 60));
   const bitrate = (receiverHello?.screen?.bitrateMbps || 40) * 1e6; // v1.2：采纳 Receiver 期望码率
+  // v1.3/v1.6：按 Receiver 的 codecs 偏好序挑本机能编的
+  await detectEncodable();
+  const codecName = negotiateCodec(receiverHello?.codecs);
+  if (!codecName) {
+    sock.write(buildFrame(T.HELLO_ACK, {
+      version: 1, accepted: false,
+      reason: "no common codec (sender can encode: " + (encodable.join(",") || "none") + ")",
+    }));
+    sock.write(buildFrame(T.BYE, { reason: "no common codec" }));
+    throw new Error("no common codec with receiver");
+  }
+
   const { track, src } = await captureTrack(fps);
   // getSettings() 会把约束上限当尺寸（实测返回 4096×4096），不可信。
   // 先读第一帧拿真实 codedWidth/Height，再回 ACK、再配编码器。
@@ -103,7 +152,7 @@ async function startSession(sock, receiverHello, relayMode) {
     version: 1,
     accepted: true,
     display: { width, height, fps },
-    codec: "h264", // MVP 固定 h264；codec 协商随 hevc422 一起做（91 已确认）
+    codec: codecName, // v1.3/v1.6 协商结果
   };
   if (relayMode) ack.pairSecret = getPairSecret(); // v1.4 持久配对下发（中转模式）
   sock.write(buildFrame(T.HELLO_ACK, ack));
@@ -140,13 +189,14 @@ async function startSession(sock, receiverHello, relayMode) {
   const encoder = new VideoEncoder({
     output: (chunk, meta) => {
       if (stopped || sock.destroyed) return;
-      if (meta && meta.decoderConfig && meta.decoderConfig.description && !spsCache) {
+      // 参数集兜底仅 H.264（avcC 解析）；HEVC 是 hvcC 格式，结构不同，实测 annexb 自带 VPS/SPS/PPS
+      if (codecName === "h264" && meta?.decoderConfig?.description && !spsCache) {
         spsCache = paramSetsFromAvcC(meta.decoderConfig.description);
       }
       let data = new Uint8Array(chunk.byteLength);
       chunk.copyTo(data);
       const key = chunk.type === "key";
-      if (key && !nalTypesAnnexB(data).includes(7) && spsCache) {
+      if (key && codecName === "h264" && !nalTypesAnnexB(data).includes(7) && spsCache) {
         const merged = new Uint8Array(spsCache.length + data.length);
         merged.set(spsCache, 0);
         merged.set(data, spsCache.length);
@@ -164,15 +214,15 @@ async function startSession(sock, receiverHello, relayMode) {
   });
   // 硬编优先，不可用则退 no-preference（Chromium/Electron 的 MF 硬编开关随版本环境而异）
   const encoderCfg = async (w, h) => {
-    const base = {
-      codec: "avc1.640033",
+    const e = ENC_CODEC[codecName];
+    const base = e.annexb({
+      codec: e.codec,
       width: w,
       height: h,
       bitrate,
       framerate: fps,
       latencyMode: "realtime",
-      avc: { format: "annexb" },
-    };
+    });
     for (const hw of ["prefer-hardware", "no-preference"]) {
       try {
         const r = await VideoEncoder.isConfigSupported({ ...base, hardwareAcceleration: hw });

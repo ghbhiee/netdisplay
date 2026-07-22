@@ -45,6 +45,8 @@ function startProtocol() {
       name: os.hostname(),
       deviceId: crypto.randomUUID(),
       screen: { width: 2560, height: 1600, scale: 1, fps: 60 },
+      // v1.3/v1.6：可用 --codecs hevc,h264 指定上报的解码能力（测 Sender 协商）
+      codecs: (arg("codecs", "h264") || "h264").split(","),
     })
   );
   // PING 循环
@@ -76,6 +78,7 @@ const parser = new FrameParser((type, payload) => {
     case T.HELLO_ACK:
       stats.helloAck = JSON.parse(payload.toString());
       console.log("[cli] HELLO_ACK:", payload.toString());
+      if (stats.helloAck.accepted === false) finish(); // 协商失败：立即出结论
       break;
     case T.VIDEO_FRAME: {
       const v = parseVideoPayload(payload);
@@ -130,6 +133,11 @@ function finish() {
   s.fps = +(stats.frames / SECONDS).toFixed(1);
   console.log("=== SUMMARY ===");
   console.log(JSON.stringify(s, null, 2));
+  // 对端明确拒绝（如 codec 协商无交集）是协议正常路径，与「连上了但流不对」区分开
+  if (stats.helloAck && stats.helloAck.accepted === false) {
+    console.log("RESULT: REJECTED — " + (stats.helloAck.reason || "no reason"));
+    process.exit(0);
+  }
   const pass =
     stats.helloAck?.accepted === true &&
     stats.frames > 0 &&

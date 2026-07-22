@@ -1,0 +1,96 @@
+<!doctype html>
+<html><body><script>
+// 探测本机 WebCodecs **编码**能力（Sender 侧 codec 协商用）
+// 不止看 isConfigSupported，还真编几帧验证 Annex-B 输出与参数集内联。
+const { ipcRenderer } = require("electron");
+
+function nalTypesH264(u8, max = 6) {
+  const t = [];
+  for (let i = 0; i + 3 < u8.length && t.length < max; i++) {
+    let sc = 0;
+    if (!u8[i] && !u8[i + 1] && u8[i + 2] === 1) sc = 3;
+    else if (!u8[i] && !u8[i + 1] && !u8[i + 2] && u8[i + 3] === 1) sc = 4;
+    if (!sc) continue;
+    t.push(u8[i + sc] & 0x1f);
+    i += sc;
+  }
+  return t;
+}
+function nalTypesHEVC(u8, max = 6) {
+  const t = [];
+  for (let i = 0; i + 3 < u8.length && t.length < max; i++) {
+    let sc = 0;
+    if (!u8[i] && !u8[i + 1] && u8[i + 2] === 1) sc = 3;
+    else if (!u8[i] && !u8[i + 1] && !u8[i + 2] && u8[i + 3] === 1) sc = 4;
+    if (!sc) continue;
+    t.push((u8[i + sc] >> 1) & 0x3f);
+    i += sc;
+  }
+  return t;
+}
+
+async function tryEncode(name, codec, hw, isHEVC) {
+  const row = { name, codec, hw };
+  const base = {
+    codec, width: 1280, height: 720, bitrate: 10e6, framerate: 30,
+    latencyMode: "realtime", hardwareAcceleration: hw,
+  };
+  // Annex-B 请求键：H.264 用 avc.format，HEVC 用 hevc.format
+  const cfg = isHEVC ? { ...base, hevc: { format: "annexb" } } : { ...base, avc: { format: "annexb" } };
+  try {
+    const s = await VideoEncoder.isConfigSupported(cfg);
+    row.configSupported = !!s.supported;
+  } catch (e) { row.configSupported = "err:" + e.name; }
+  if (row.configSupported !== true) return row;
+
+  // 真编 10 帧
+  let chunks = 0, keyNals = null, err = null, desc = false;
+  const enc = new VideoEncoder({
+    output: (chunk, meta) => {
+      chunks++;
+      if (meta?.decoderConfig?.description) desc = true;
+      if (chunk.type === "key" && !keyNals) {
+        const d = new Uint8Array(chunk.byteLength);
+        chunk.copyTo(d);
+        keyNals = (isHEVC ? nalTypesHEVC : nalTypesH264)(d);
+      }
+    },
+    error: (e) => { err = e.message; },
+  });
+  try {
+    enc.configure(cfg);
+    const cv = new OffscreenCanvas(1280, 720);
+    const ctx = cv.getContext("2d");
+    for (let i = 0; i < 10; i++) {
+      ctx.fillStyle = `hsl(${i * 36},70%,50%)`;
+      ctx.fillRect(0, 0, 1280, 720);
+      const f = new VideoFrame(cv, { timestamp: i * 33333 });
+      enc.encode(f, { keyFrame: i === 0 });
+      f.close();
+    }
+    await enc.flush();
+  } catch (e) { err = err || e.message; }
+  try { enc.close(); } catch {}
+  row.chunks = chunks;
+  row.keyNals = keyNals; // H.264 期望含 7,8,5；HEVC 期望含 32,33,34,IDR(19/20)
+  row.hasDescription = desc; // true = 输出可能是 avcC/hvcC 而非 annexb
+  if (err) row.error = err;
+  return row;
+}
+
+(async () => {
+  const cases = [
+    ["H.264 High (现用)", "avc1.640033", false],
+    ["H.264 Baseline", "avc1.42001f", false],
+    ["HEVC Main", "hev1.1.6.L120.B0", true],
+    ["HEVC Main (hvc1)", "hvc1.1.6.L120.B0", true],
+    ["HEVC Main10", "hev1.2.4.L120.B0", true],
+    ["HEVC Rext 4:2:2 10", "hev1.4.10.L120.B0", true],
+  ];
+  const out = [];
+  for (const [name, codec, isHEVC] of cases)
+    for (const hw of ["prefer-hardware", "no-preference"])
+      out.push(await tryEncode(name, codec, hw, isHEVC));
+  ipcRenderer.send("probe-result", JSON.stringify(out));
+})();
+</script></body></html>

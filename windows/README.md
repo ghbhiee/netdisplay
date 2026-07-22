@@ -27,8 +27,10 @@ npm run probe      # 探测本机 WebCodecs 解码能力（HEVC/4:4:4/AV1）
 
 - `mock-sender.js` — 模拟 Mac Sender（ffmpeg testsrc2 实时 H.264）：
   `node tools/mock-sender.js [--port 47800] [--v14] [--reconfig N] [--relay [--use-pairhash] [--token T]]`
-- `cli-client.js` — 无 UI 协议验证客户端：`node tools/cli-client.js --direct <ip> | --relay <码>`
-- `probe-codecs.js` — WebCodecs 能力探测
+- `cli-client.js` — 无 UI 协议验证客户端：`node tools/cli-client.js --direct <ip> | --relay <码> [--codecs hevc,h264]`
+- `probe-codecs.js` — WebCodecs **解码**能力探测（isConfigSupported）
+- `probe-hevc.js` — HEVC **真流**解码验证（需先用 x265 生成测试流，见文件头）
+- `probe-encoder.js` — WebCodecs **编码**能力探测（真编 10 帧，验证 Annex-B 与参数集）
 
 ## 自动化测试参数（Electron 启动参数）
 
