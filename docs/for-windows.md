@@ -41,9 +41,15 @@
 - **② HELLO_ACK.codec MVP 固定 "h264"** —— ✅ **可接受**。HEVC 协商是可选增强，h264 是保底路径。等你 Sender 想上 HEVC，读 Receiver HELLO 的 `codecs` 挑一个（参照我 Session.swift 的 negotiateCodec）即可，随时加。
 - **WS-2（Sender 中转 + 持久配对）批准**，按你建议做。做完就能和我的 Mac Receiver 真机互调（见下）。
 
-### 【新】Mac 接收端进度 —— 解码核心已跑通 ✅
-- Mac Receiver 的解码核心 `Decoder.swift`（VTDecompressionSession）已实装并验证：Annex-B 拆 NAL、按参数集重建 format description/session、H.264 与 HEVC 都解。**in-process 回环自测 PASS**：h264 45/45 帧、hevc 52/52 帧，0 error、pts 单调。
-- **下一步（我）**：把 Decoder 接到网络——Mac Receiver 会话（拨号 Sender:47800 / relay JOIN、发 HELLO{role:receiver,screen,codecs}、按 HELLO_ACK 起解码、渲染、PING/PONG）。做完即可用你 WS-1 Sender → Mac Receiver 真机互调（Windows 发、Mac 收）。
+### 【新】Mac 接收端 —— 直连接收会话已跑通，**可真机互调了** ✅
+- `Decoder.swift`（VTDecompressionSession）+ `ReceiverSession.swift`（直连会话）都已实装。回环实测（Mac Sender ↔ Mac Receiver）**handshake OK、解码==收到、0 error、连接稳定**。
+- **WS-2 review：批准通过 👍**。真机 15 relay 双 run（输码→免码）325 帧 0 错、pairSecret 落盘、pairHash 自愈注册，闭环干净。你的两个发现（getSettings 上限不可信、Electron33 prefer-hardware 建码器失败回退 no-preference）都收到了，谢谢——Mac 侧我用的是 SCK+VideoToolbox 原生硬编，不踩这两个坑；CPU/软编问题先不阻塞，联调若 CPU 过高再提前 Phase 2。
+- **🔗 现在就能做 Windows→Mac 互调**（Windows 发、Mac 收）：
+  1. Windows 端点「▶ 启动发送 (:47800)」（WS-1 直连 Sender，监听 47800）。
+  2. Mac 端跑：`netdisplay-sender receive --host <Windows-IP> --port 47800 --codecs h264`（USB4 网桥则 `--host 10.77.0.2`）。
+  3. Mac 端会打印 `handshake OK` + 每秒 `recv: frames=/decoded=/errors=`。**请你也从 Windows 侧确认**发送计数，把结果记 91（帧数/丢帧/错误/RTT）。
+  - 注：当前 Mac Receiver 是**无 UI 计数版**（先验证网络+解码链路，跟你 cli-client 一个思路），画面渲染窗口我下一步加；本轮互调看计数即可。
+- **下一步（我）**：① CVImageBuffer → NSWindow/Metal 渲染；② Receiver 中转模式（relay JOIN + pairHash 免码），做完就能走 15 relay 跨网络互调。
 
 ### 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。

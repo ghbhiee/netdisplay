@@ -1,5 +1,6 @@
 import Foundation
 import CoreMedia
+import CoreGraphics
 
 /// Thread-safe tally for `decode-selftest`.
 final class STCounter {
@@ -237,6 +238,25 @@ case "relay":
     installSignalHandler { Log.info("bye"); exit(0) }
     client.start()
     Log.info("relay mode: connecting to \(host):\(port)")
+    dispatchMain()
+
+case "receive":
+    // Mac Receiver (direct mode): dial a Sender, handshake, decode, report stats.
+    // Usage: receive --host 10.77.0.2 [--port 47800] [--width W --height H --fps F --bitrate M --codecs hevc,h264]
+    let host = args.str("host", "127.0.0.1")
+    let port = UInt16(args.int("port", Int(Proto.directPort)))
+    let w = args.int("width", Int(CGDisplayPixelsWide(CGMainDisplayID())))
+    let h = args.int("height", Int(CGDisplayPixelsHigh(CGMainDisplayID())))
+    let fps = args.int("fps", 60)
+    let bitrate = args.flags["bitrate"].flatMap { Int($0) }
+    let codecs = args.str("codecs", "hevc,h264").split(separator: ",").map(String.init)
+    let screen = HelloReceiver.Screen(width: w, height: h, scale: 1, fps: fps, bitrateMbps: bitrate)
+    Log.info("receive: connecting to \(host):\(port) as receiver, screen \(w)x\(h)@\(fps) codecs=\(codecs)")
+    let session = ReceiverSession(host: host, port: port, name: name, deviceId: devId,
+                                  screen: screen, codecs: codecs)
+    session.onClosed = { Log.info("receiver session closed"); exit(0) }
+    installSignalHandler { session.close() }
+    session.start()
     dispatchMain()
 
 case "decode-selftest":

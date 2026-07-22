@@ -1,0 +1,216 @@
+import Foundation
+import Network
+import CoreMedia
+import CoreVideo
+
+/// Mac Receiver (symmetric app's receive half). Dials a Sender in direct mode,
+/// performs the Receiver handshake, decodes the incoming H.264/HEVC stream, and
+/// reports stats. Decoded frames are handed to `onFrame` for a renderer (a later
+/// step wires an NSWindow); this headless core unblocks Windows-Sender → Mac
+/// interop of the network + decode path.
+final class ReceiverSession {
+    private let host: String
+    private let port: UInt16
+    private let name: String
+    private let deviceId: String
+    private let screen: HelloReceiver.Screen
+    private let codecs: [String]
+
+    private var conn: Conn?
+    private let parser = FrameParser()
+    private var decoder: Decoder?
+    private var chosenCodec: VideoCodec = .h264
+
+    private var pingTimer: DispatchSourceTimer?
+    private var watchdog: DispatchSourceTimer?
+    private var lastRx = Date()
+    private var ended = false
+
+    // Stats
+    private let statLock = NSLock()
+    private var framesDecoded = 0, framesTotal = 0, decodeErrors = 0
+    private var statsTimer: DispatchSourceTimer?
+
+    /// Decoded frame sink for a future renderer.
+    var onFrame: ((_ image: CVImageBuffer, _ pts: CMTime) -> Void)?
+    /// Called once the handshake is accepted (display dimensions, negotiated codec).
+    var onReady: ((_ display: HelloAck.Display?, _ codec: VideoCodec) -> Void)?
+    var onClosed: (() -> Void)?
+
+    init(host: String, port: UInt16, name: String, deviceId: String,
+         screen: HelloReceiver.Screen, codecs: [String]) {
+        self.host = host
+        self.port = port
+        self.name = name
+        self.deviceId = deviceId
+        self.screen = screen
+        self.codecs = codecs
+    }
+
+    func start() {
+        let ep = NWEndpoint.hostPort(host: NWEndpoint.Host(host),
+                                     port: NWEndpoint.Port(rawValue: port)!)
+        let nw = NWConnection(to: ep, using: Conn.tcpParameters())
+        let c = Conn(nw, label: "netdisplay.receiver")
+        c.onData = { [weak self] in self?.onData($0) }
+        c.onClose = { [weak self] in self?.handleClose() }
+        conn = c
+        c.start { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case .ready:
+                Log.info("receiver connected to \(self.host):\(self.port) — sending HELLO")
+                self.sendHello()
+                self.startTimers()
+            case .failed(let e):
+                Log.error("receiver connection failed: \(e)")
+                self.handleClose()
+            default:
+                break
+            }
+        }
+    }
+
+    private func sendHello() {
+        let hello = HelloReceiver(version: Proto.version, role: "receiver", name: name,
+                                  deviceId: deviceId, screen: screen, codecs: codecs)
+        conn?.send(Wire.encodeJSON(.hello, hello))
+    }
+
+    // MARK: Receive
+
+    private func onData(_ data: Data) {
+        lastRx = Date()
+        parser.feed(data)
+        do {
+            while let frame = try parser.next() {
+                handleFrame(frame)
+            }
+        } catch {
+            Log.error("receiver frame parse error: \(error) — closing")
+            close()
+        }
+    }
+
+    private func handleFrame(_ frame: FrameParser.Frame) {
+        guard let type = MsgType(rawValue: frame.type) else { return }
+        switch type {
+        case .helloAck:      handleHelloAck(frame.payload)
+        case .videoConfig:   handleVideoConfig(frame.payload)
+        case .videoFrame:    handleVideoFrame(frame.payload)
+        case .projectionState:
+            if let ps = try? JSONDecoder().decode(ProjectionState.self, from: frame.payload) {
+                Log.info("projection: active=\(ps.active) label=\(ps.label ?? "-") kind=\(ps.sourceKind ?? "-")")
+            }
+        case .ping:
+            conn?.send(Wire.encode(.pong, frame.payload)) // echo payload back
+        case .pong:
+            break
+        case .bye:
+            let reason = (try? JSONDecoder().decode(ByeMsg.self, from: frame.payload))?.reason ?? "?"
+            Log.info("sender said BYE: \(reason)"); close()
+        default:
+            break
+        }
+    }
+
+    private func handleHelloAck(_ payload: Data) {
+        guard let ack = try? JSONDecoder().decode(HelloAck.self, from: payload) else { return }
+        guard ack.accepted else {
+            Log.error("handshake rejected: \(ack.reason ?? "?")"); close(); return
+        }
+        chosenCodec = VideoCodec(rawValue: ack.codec ?? "h264") ?? .h264
+        makeDecoder(codec: chosenCodec)
+        if let d = ack.display {
+            Log.info("handshake OK — stream \(d.width)x\(d.height)@\(d.fps) scale=\(d.scale ?? 1) codec=\(chosenCodec.wire)")
+        }
+        onReady?(ack.display, chosenCodec)
+        // Nudge a keyframe so decode can start immediately.
+        conn?.send(Wire.encode(.requestKeyframe))
+    }
+
+    private func handleVideoConfig(_ payload: Data) {
+        guard let cfg = try? JSONDecoder().decode(VideoConfig.self, from: payload) else { return }
+        let newCodec = VideoCodec(rawValue: cfg.codec) ?? chosenCodec
+        Log.info("VIDEO_CONFIG → \(cfg.width)x\(cfg.height)@\(cfg.fps) \(cfg.codec) — resetting decoder")
+        chosenCodec = newCodec
+        makeDecoder(codec: newCodec)              // fresh decoder waits for the next keyframe
+        conn?.send(Wire.encode(.requestKeyframe))
+    }
+
+    private func handleVideoFrame(_ payload: Data) {
+        guard payload.count >= 9 else { return }
+        let ptsUs = payload.prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        let annexB = payload.subdata(in: payload.index(payload.startIndex, offsetBy: 9)..<payload.endIndex)
+        statLock.lock(); framesTotal += 1; statLock.unlock()
+        decoder?.decode(annexB: annexB, ptsUs: ptsUs)
+    }
+
+    private func makeDecoder(codec: VideoCodec) {
+        let d = Decoder(codec: codec)
+        d.onDecoded = { [weak self] image, pts in
+            guard let self else { return }
+            self.statLock.lock(); self.framesDecoded += 1; self.statLock.unlock()
+            self.onFrame?(image, pts)
+        }
+        d.onDecodeError = { [weak self] st in
+            guard let self else { return }
+            self.statLock.lock(); self.decodeErrors += 1; self.statLock.unlock()
+            self.conn?.send(Wire.encode(.requestKeyframe))  // ask for a fresh IDR
+            if self.decodeErrors <= 3 { Log.info("decode error \(st) → REQUEST_KEYFRAME") }
+        }
+        decoder = d
+    }
+
+    // MARK: Timers
+
+    private func startTimers() {
+        // PING every 3s (8 random bytes; Sender echoes as PONG).
+        let ping = DispatchSource.makeTimerSource(queue: .global())
+        ping.schedule(deadline: .now() + 3, repeating: 3)
+        ping.setEventHandler { [weak self] in
+            var bytes = [UInt8](repeating: 0, count: 8)
+            for i in 0..<8 { bytes[i] = UInt8.random(in: 0...255) }
+            self?.conn?.send(Wire.encode(.ping, Data(bytes)))
+        }
+        pingTimer = ping; ping.resume()
+
+        // Watchdog: 10s with no data → dead connection.
+        let wd = DispatchSource.makeTimerSource(queue: .global())
+        wd.schedule(deadline: .now() + 2, repeating: 2)
+        wd.setEventHandler { [weak self] in
+            guard let self else { return }
+            if Date().timeIntervalSince(self.lastRx) > 10 {
+                Log.error("watchdog: no data 10s — closing"); self.close()
+            }
+        }
+        watchdog = wd; wd.resume()
+
+        // Stats once a second.
+        let st = DispatchSource.makeTimerSource(queue: .global())
+        st.schedule(deadline: .now() + 1, repeating: 1)
+        st.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.statLock.lock()
+            let d = self.framesDecoded, t = self.framesTotal, e = self.decodeErrors
+            self.framesDecoded = 0; self.framesTotal = 0
+            self.statLock.unlock()
+            Log.info("recv: frames=\(t)/s decoded=\(d)/s errors=\(e)")
+        }
+        statsTimer = st; st.resume()
+    }
+
+    private func handleClose() {
+        guard !ended else { return }
+        ended = true
+        pingTimer?.cancel(); watchdog?.cancel(); statsTimer?.cancel()
+        decoder = nil
+        onClosed?()
+    }
+
+    func close() {
+        conn?.send(Wire.encodeJSON(.bye, ByeMsg(reason: "receiver closed")))
+        conn?.close()
+        handleClose()
+    }
+}

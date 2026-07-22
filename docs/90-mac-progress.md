@@ -9,6 +9,10 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 接收端·网络会话 `ReceiverSession.swift`**（直连模式）：拨号 Sender:47800 → 发 HELLO{role:receiver,screen,codecs} → 收 HELLO_ACK 起 Decoder（按协商 codec）→ VIDEO_FRAME 解析([pts u64|flags u8|annexB]) 喂解码 → PROJECTION_STATE 日志 → PING(3s)/PONG 回显 → 看门狗(10s无数据断) → 解码错误自动发 REQUEST_KEYFRAME；VIDEO_CONFIG 重建解码器等关键帧。新增 `receive` 命令。
+- ✅ **回环实测**（Mac `listen` ↔ Mac `receive`）：**handshake OK**（stream 1280x800@60 h264）、解码帧数==收到帧数、0 error、连接稳定无看门狗触发。（静止虚拟桌面 SCK 按变化投帧、稳态帧率低是采集侧特性，非接收端问题；真实内容会连续。）**Windows WS-1/WS-2 Sender → Mac receive 可真机互调了。**
+- **下一步（我）**：① NSWindow/Metal 渲染器把 CVImageBuffer 显示出来（当前 onFrame 是计数）；② Receiver 中转模式（relay JOIN + pairHash 免码）。
+
 - ✅ **Mac 接收端·解码核心 `Decoder.swift`**：VTDecompressionSession；Annex-B 拆 NAL（3/4 字节起始码）、参数集分类（H264 SPS7/PPS8、HEVC VPS32/SPS33/PPS34）→ CMVideoFormatDescriptionCreateFrom{H264,HEVC}ParameterSets → 建/换会话；VCL 转 AVCC 喂 VTDecompressionSessionDecodeFrame（异步 handler 出 CVImageBuffer）；解码错误回调触发 REQUEST_KEYFRAME（待网络层接）。
 - ✅ **回环自测命令 `decode-selftest`**（虚拟屏→Encoder→Decoder 计帧）：**PASS** —— h264 45/45、hevc 52/52，0 error、pts 单调。下一步把 Decoder 接网络（Receiver 会话），即可与 Windows WS-1 Sender 真机互调。
 
