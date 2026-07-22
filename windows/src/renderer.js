@@ -538,7 +538,10 @@ function refreshSendButtons() {
   $("btnSendRelay").style.display = on ? "none" : "block";
   $("btnSendStop").style.display = on ? "block" : "none";
 }
-const sendStatus = (s) => { $("sendStatus").textContent = s; };
+const sendStatus = (s) => {
+  $("sendStatus").textContent = s;
+  if (s) console.log("[sender] " + s); // headless 模式转到 stdout，和 setStatus 的 [recv] 对称
+};
 
 // WS-3：投射源列表（整屏 / 单窗口）
 let sourceList = [];
@@ -632,9 +635,20 @@ window.addEventListener("keyup", (e) => {
   await refreshSources();
   // 测试：--send-window <名字子串> 选中匹配的窗口作为投射源
   if (a.sendWindow) {
+    sender.requireWindow(a.sendWindow); // 声明后不允许悄悄退回整屏
     const m = sourceList.find((s) => s.kind === "window" && s.name.includes(a.sendWindow));
-    if (m) { $("sendSource").value = m.id; applySource(); }
-    else console.log("SEND_SOURCE_NOT_FOUND " + a.sendWindow);
+    if (m) {
+      $("sendSource").value = m.id;
+      applySource();
+      // 确认 select 真的接受了这个值：option 不存在时赋值会被静默丢弃，
+      // 那样会退回整屏，而对端只会看到「尺寸是整屏」，很难反推原因。
+      const ok = $("sendSource").value === m.id;
+      console.log(`SEND_SOURCE ${ok ? "OK" : "SELECT_REJECTED"} kind=${m.kind} name="${m.name}" id=${m.id}`);
+      if (!ok) console.log("SEND_SOURCE_FALLBACK 将退回整屏投射");
+    } else {
+      console.log(`SEND_SOURCE_NOT_FOUND "${a.sendWindow}" —— 可选窗口: ` +
+        sourceList.filter((s) => s.kind === "window").map((s) => `"${s.name}"`).join(", "));
+    }
   }
   if (a.send) { await sender.startSender(sendStatus); refreshSendButtons(); }
   else if (a.sendRelay) {

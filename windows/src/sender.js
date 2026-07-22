@@ -97,14 +97,31 @@ function negotiateCodec(receiverCodecs) {
 // ---------- 采集 ----------
 // 当前投射源（null = 主屏）。WS-3：可选单个窗口。
 let source = null; // {id, name, kind}
+let requiredWindow = null; // 用户明确要求投的窗口名；设了就不允许退回整屏
 const listSources = () => ipcRenderer.invoke("capture-sources");
 function setSource(s) { source = s || null; }
+function requireWindow(name) { requiredWindow = name || null; }
 
 async function captureTrack(fps) {
   let src = source;
   if (!src) {
+    if (requiredWindow) {
+      // 明确指定了要投的窗口却拿不到，绝不能悄悄投整屏——对端只会看到「尺寸是整屏」，
+      // 无从反推原因。最常见的成因是窗口被最小化：desktopCapturer 不枚举最小化窗口。
+      throw new Error(
+        `找不到指定窗口「${requiredWindow}」——若它已最小化请先还原（最小化的窗口无法被捕获）`
+      );
+    }
     const all = await listSources();
     src = all.find((s) => s.kind === "desktop") || all[0];
+  } else if (requiredWindow) {
+    // 会话开始时再确认一次：窗口可能在待命期间被关掉或最小化了
+    const all = await listSources();
+    if (!all.some((s) => s.id === src.id)) {
+      throw new Error(
+        `窗口「${src.name}」已不可捕获（被关闭或最小化）——还原后对端重连即可`
+      );
+    }
   }
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
@@ -350,8 +367,12 @@ function attachReceiverHandler(sock, relayMode) {
           try {
             active = await startSession(sock, hello, relayMode);
           } catch (e) {
-            onStatus("启动采集失败: " + e.message);
-            sock.write(buildFrame(T.BYE, { reason: "capture failed" }));
+            // 把真实原因带给对端：只回 "capture failed" 时对方无从判断是权限、
+            // 窗口失效还是编码器问题，只能来回猜（跨机联调实际踩过）。
+            const why = e && e.message ? e.message : String(e);
+            dbg("startSession failed:", why);
+            onStatus("启动采集失败: " + why);
+            sock.write(buildFrame(T.BYE, { reason: "capture failed: " + why }));
             sock.destroy();
           }
           break;
@@ -515,5 +536,6 @@ module.exports = {
   getSenderStats,
   listSources, // WS-3：可投射的屏幕/窗口列表
   setSource, // WS-3：选择投射源（null = 主屏），下次会话生效
+  requireWindow, // WS-3：声明必须投某窗口，找不到就报错而非退回整屏
   isSending: () => !!server || relayActive,
 };
