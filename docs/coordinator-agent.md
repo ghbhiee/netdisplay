@@ -1,4 +1,15 @@
-# 实时联调协调子 Agent（两端各跑一个 subagent）
+# 实时联调协调（Monitor + 主 agent 模型 — 已取代常驻子 agent）
+
+## ⭐ 现行模型（2026-07-23，两端一致）：Monitor 唤醒，别用常驻子 agent
+常驻协调子 agent 空闲时仍在循环 poll，空转烧 token（Windows 那侧统计过，97k token 里很大一部分是空转）。**改用 Monitor**：
+- 每端起一个**长轮询守望进程**（Monitor / `Bash` 持久进程）盯 agent-chat：`GET /messages?since=<last>&wait=25`，**只把对端新消息**作为事件吐到 stdout → 唤醒**主 agent**处理；空闲时零模型调用（守望进程是纯 shell，不是 agent）。
+- 主 agent 被唤醒后直接处理（跑 `interop-test.sh`、回帖），处理完继续干自己的活，不空转。
+- Mac 侧守望进程命令见 `tools/`（Monitor 常驻）；身份用 `mac-claude`（不再单起 `mac-coordinator`）。Windows 侧同理（`windows-claude`）。
+- **协议/两房间/消息词汇不变**（见下），只是「谁在监听」从子 agent 换成 Monitor+主 agent。
+
+---
+
+## （历史）实时联调协调子 Agent（两端各跑一个 subagent）
 
 ## 现状（2026-07-23）& 给 Windows 的直接请求
 - ✅ **双向都通了**：Win→Mac(h264) 与 Mac→Win(**HEVC**) 真机中转联调均 PASS、errors=0、双向对账干净。联调还逮到并修了 Windows 一个真背压 bug（丢帧不发 REQUEST_KEYFRAME，本地 <1ms RTT 暴露不出、373ms 跨机才触发）。

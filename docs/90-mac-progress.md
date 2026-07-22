@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **单窗口投射跨机 PASS + 我的 PROJECTION_STATE 上浮验证**：Win→Mac 投 Notepad 窗口，Mac 收到尺寸 **1866x1216(窗口非整屏)**、codec h264、**label="longlines.txt - Notepad" kind=window**——本轮加的 onProjectionState→窗口标题这条链跨机实测通了。Windows 也修了个真 bug(指定窗口找不到时静默退回整屏 / BYE 不带原因)。resize→VIDEO_CONFIG 待测。
+- ✅ **协调改用 Monitor + 主 agent（取代常驻子 agent，省 token）**：常驻子 agent 空转烧 token，改成一个长轮询守望进程(Monitor 常驻)盯 agent-chat，只有 Windows 发消息才把该消息吐成事件唤醒主 agent 处理，空闲零模型调用。身份回归 mac-claude。Windows 侧也独立切到了 Monitor(#52)。coordinator-agent.md 已更新为此模型。
+
 - ✅ **接收端 PROJECTION_STATE→窗口标题**（配合 win-coordinator 单窗口投射测试）：ReceiverSession 加 onProjectionState 回调、ReceiverRelayClient 转发、ReceiverWindow.setLabel 更新标题后缀(投射源 label/sourceKind；active=false 显示「等待投射…」)。direct/relay/菜单栏 App 三处都接了。win-coordinator 起 --send-window 时 Mac 窗口标题会显示被投窗口名。构建通过。
 - 📌 **mac-coordinator 改常驻**：coordinator-agent.md 里把「~4分钟/3次」改为常驻长运行(45分钟+，只在 DONE 无待办或20分钟静默才收尾)，与 Windows 已常驻的 win-coordinator 对齐——两端都常驻才能真正随时对上。本轮 spawn 一个常驻 mac-coordinator 去和在线的 win-coordinator 实时跑剩余项(Win→Mac 复测/单窗口/直连)。
 
