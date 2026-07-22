@@ -33,6 +33,14 @@ final class ReceiverSession {
     private var framesDecoded = 0, framesTotal = 0, decodeErrors = 0
     private var bytesAnnexB = 0
     private var statsTimer: DispatchSourceTimer?
+    // Cumulative totals for RECV_STATS export (mirror of Windows SEND_STATS).
+    private var cumRecv = 0, cumDecoded = 0, cumErrors = 0, cumBytes = 0, cumKeyframes = 0
+    private var streamW = 0, streamH = 0
+    private var emitStatsTimer: DispatchSourceTimer?
+    /// If set, emit `RECV_STATS {json}` to stdout every N seconds (cumulative).
+    var statsEmitSec: Int?
+    /// If false and statsEmitSec set, emit exactly once then stop.
+    var statsRepeat = true
 
     /// Decoded frame sink for a future renderer.
     var onFrame: ((_ image: CVImageBuffer, _ pts: CMTime) -> Void)?
@@ -147,6 +155,7 @@ final class ReceiverSession {
         }
         makeDecoder(codec: chosenCodec)
         if let d = ack.display {
+            statLock.lock(); streamW = d.width; streamH = d.height; statLock.unlock()
             Log.info("handshake OK — stream \(d.width)x\(d.height)@\(d.fps) scale=\(d.scale ?? 1) codec=\(chosenCodec.wire)")
         }
         onReady?(ack.display, chosenCodec)
@@ -166,8 +175,12 @@ final class ReceiverSession {
     private func handleVideoFrame(_ payload: Data) {
         guard payload.count >= 9 else { return }
         let ptsUs = payload.prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        let isKey = (payload[payload.index(payload.startIndex, offsetBy: 8)] & 0x01) != 0
         let annexB = payload.subdata(in: payload.index(payload.startIndex, offsetBy: 9)..<payload.endIndex)
-        statLock.lock(); framesTotal += 1; bytesAnnexB += annexB.count; statLock.unlock()
+        statLock.lock()
+        framesTotal += 1; bytesAnnexB += annexB.count
+        cumRecv += 1; cumBytes += annexB.count; if isKey { cumKeyframes += 1 }
+        statLock.unlock()
         decoder?.decode(annexB: annexB, ptsUs: ptsUs)
     }
 
@@ -175,12 +188,12 @@ final class ReceiverSession {
         let d = Decoder(codec: codec)
         d.onDecoded = { [weak self] image, pts in
             guard let self else { return }
-            self.statLock.lock(); self.framesDecoded += 1; self.statLock.unlock()
+            self.statLock.lock(); self.framesDecoded += 1; self.cumDecoded += 1; self.statLock.unlock()
             self.onFrame?(image, pts)
         }
         d.onDecodeError = { [weak self] st in
             guard let self else { return }
-            self.statLock.lock(); self.decodeErrors += 1; self.statLock.unlock()
+            self.statLock.lock(); self.decodeErrors += 1; self.cumErrors += 1; self.statLock.unlock()
             self.conn?.send(Wire.encode(.requestKeyframe))  // ask for a fresh IDR
             if self.decodeErrors <= 3 { Log.info("decode error \(st) → REQUEST_KEYFRAME") }
         }
@@ -224,12 +237,40 @@ final class ReceiverSession {
             Log.info(String(format: "recv: frames=%d/s decoded=%d/s errors=%d %.2fMbps(annexb)", t, d, e, mbps))
         }
         statsTimer = st; st.resume()
+
+        // Optional machine-readable RECV_STATS export (mirror of Windows SEND_STATS).
+        if let sec = statsEmitSec, sec > 0 {
+            let et = DispatchSource.makeTimerSource(queue: .global())
+            et.schedule(deadline: .now() + Double(sec), repeating: statsRepeat ? Double(sec) : .infinity)
+            et.setEventHandler { [weak self] in
+                guard let self else { return }
+                print("RECV_STATS \(self.statsJSON())"); fflush(stdout)
+                if !self.statsRepeat { self.emitStatsTimer?.cancel() }
+            }
+            emitStatsTimer = et; et.resume()
+        }
+    }
+
+    /// Cumulative stats as JSON. `bytes` = Annex-B payload only (matches the
+    /// Windows Sender's `bytes`), so `recv`≈Sender `sent`, `bytes`≈Sender `bytes`.
+    func statsJSON() -> String {
+        statLock.lock()
+        let obj: [String: Any] = [
+            "recv": cumRecv, "decoded": cumDecoded, "errors": cumErrors,
+            "keyframes": cumKeyframes, "bytes": cumBytes,
+            "codec": chosenCodec.wire, "width": streamW, "height": streamH
+        ]
+        statLock.unlock()
+        let data = (try? JSONSerialization.data(withJSONObject: obj)) ?? Data()
+        return String(data: data, encoding: .utf8) ?? "{}"
     }
 
     private func handleClose() {
         guard !ended else { return }
         ended = true
-        pingTimer?.cancel(); watchdog?.cancel(); statsTimer?.cancel()
+        pingTimer?.cancel(); watchdog?.cancel(); statsTimer?.cancel(); emitStatsTimer?.cancel()
+        // Final line so a one-shot run always prints totals before exit.
+        if statsEmitSec != nil { print("RECV_STATS \(statsJSON())"); fflush(stdout) }
         decoder = nil
         onClosed?()
     }

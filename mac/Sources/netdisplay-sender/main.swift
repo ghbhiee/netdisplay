@@ -74,7 +74,7 @@ func parseArgs() -> Args {
     guard !argv.isEmpty else { usage() }
     let command = argv.removeFirst()
     var a = Args(command: command)
-    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "window"]
+    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "window", "stats-repeat"]
     var i = 0
     while i < argv.count {
         let tok = argv[i]
@@ -258,6 +258,8 @@ case "receive":
     let screen = HelloReceiver.Screen(width: w, height: h, scale: 1, fps: fps, bitrateMbps: bitrate)
     let showWindow = args.bool("window")
     let snapshotPath = args.flags["snapshot"]
+    let statsEmitSec = args.flags["stats-after"].flatMap { Int($0) }
+    let statsRepeat = args.bool("stats-repeat")
     let window: ReceiverWindow? = showWindow ? ReceiverWindow() : nil
     let snapshotRenderer = snapshotPath != nil ? FrameRenderer() : nil
     var snapped = false
@@ -290,6 +292,8 @@ case "receive":
                                          screen: screen, codecs: codecs)
         client.onFrame = onFrame
         client.onReady = onReady
+        client.statsEmitSec = statsEmitSec
+        client.statsRepeat = statsRepeat
         installSignalHandler { client.stop(); exit(0) }
         client.start()
         runLoop()
@@ -299,6 +303,8 @@ case "receive":
                                       screen: screen, codecs: codecs)
         session.onFrame = onFrame
         session.onReady = onReady
+        session.statsEmitSec = statsEmitSec
+        session.statsRepeat = statsRepeat
         session.onClosed = { Log.info("receiver session closed"); if !showWindow { exit(0) } }
         installSignalHandler { session.close() }
         session.start()

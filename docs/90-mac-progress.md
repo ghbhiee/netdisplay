@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **接收端机读计数导出 `RECV_STATS`**（对标 Windows 的 SEND_STATS，便于两侧自动对账）：`receive --stats-after N [--stats-repeat]` → stdout 打 `RECV_STATS {json}`（累计 recv/decoded/errors/keyframes/bytes/codec/width/height；bytes 只算 Annex-B，与 Sender 口径一致）。含关键帧计数（读 VIDEO_FRAME flags 位）。回环实测输出正常（recv=decoded=47 err=0 key=1）。直连+中转两条路径都接了；stdout 加 fflush 防重定向缓冲丢行。
+
 - 🎉 **首个跨平台真机联调 PASS（Windows 发 → Mac 收，经 15 relay）**：Windows Claude 上线 agent-chat、起中转发送给配对码 771122，我 `receive --server 15...:47700 --token .. --code 771122 --codecs h264` 连上。**JOIN→PAIRED→handshake OK(2560x1600@60 h264)，37s recv=312 decoded=312 errors=0（1:1 全解 0 错）**，峰值 14fps（Windows 静止桌面+自适应码率）。持久配对生效（pairSecret 已存，下次免码）。对称 App 端到端跨平台首次验证成功。等 Windows 贴 SEND_STATS 收尾对账。
 
 - ✅ **接收端上报 codecs 默认含 hevc422**：`receive` 默认 `["hevc422","hevc","h264"]`（Mac VT 解 Rext Main422_10 已验 44/44）。这样 Windows 若走 ffmpeg NVENC/QSV 出真 4:2:2，协商即选 hevc422、Mac 直接能收，无需再改收端。
