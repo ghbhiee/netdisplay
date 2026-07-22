@@ -9,6 +9,35 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之三十（**WS-5a/b 采集管线完成：两条 HQ 路径均 PASS**）
+
+`windows/src/ffmpeg-capture.js` + 自测 harness `tools/test-hq-capture.js`。
+
+#### 实测结果（30fps，有动态内容）
+| 路径 | 帧 | 关键帧 | 首帧关键帧 | 参数集内联 | 码率 | 结论 |
+|---|---|---|---|---|---|---|
+| 整屏 `ddagrab` | 174 | 3 | ✓ | VPS+SPS+PPS ✓ | 6.51 Mbps | **PASS** |
+| 单窗口 `gdigrab` | 175 | 3 | ✓ | ✓ | 3.29 Mbps | **PASS** |
+
+pts 单调、AU 边界正确、零错误。**边界⑦放开后的单窗口 HQ 路径确认可行**，用户强调的一等特性能享受到 4:2:2。
+
+#### 实现要点
+- **AUD 切帧**：按 HEVC AUD（NAL 35）定位 AU 边界，缓冲里至少见到两个 AUD 才切出一个完整 AU，末尾未完成的留到下一批。关键帧判定用 IRAP 区间（NAL 16–23），不是只认 IDR。
+- **两条路径的关键差异**：`ddagrab` 输出 D3D11 帧**必须** `hwdownload`；`gdigrab` 本就是系统内存帧，**加了反而报错**——这点容易踩，代码里按 source.kind 分支处理。
+- **子进程生命周期（边界⑥）**：stderr 全程留尾 4KB 并按 error 级别上报；非主动退出一律视为异常并把 stderr 尾部带出；`stop()` 后用 `taskkill /T` 兜底清子进程树。**实测 stop() 后 ffmpeg 残留数 = 0**。
+- **REQUEST_KEYFRAME**：周期 GOP 模式下无法中途强制 IDR，只记日志说明「最长等待 N 秒」（边界④，已与 Mac 确认接受）。
+
+#### 失败路径同样验证
+抓一个不存在的窗口 → `frames=0`、明确报错且**原因可读**：
+```
+ffmpeg 未产出任何帧就退出（code=...）
+Error opening input file title=根本不存在的窗口xyz.
+```
+不会静默退回整屏——与 `requireWindow`、`ffmpeg-probe` 的显式路径处理保持同一原则。
+
+#### 下一步
+接进 `sender.js` 的 codec 协商：探测到 HQ 且对端 codecs 含 `hevc422` 才走这条，否则回退 WebCodecs 基线；`HELLO_ACK.codec` 反映实际路径。
+
 ### 2026-07-22 更新之二十九（**WS-5a 开工：HQ 探测模块完成**）
 
 WS-5 计划已获批准（边界⑦放开，单窗口也走 HQ）。第一块交付：`windows/src/ffmpeg-probe.js`。
