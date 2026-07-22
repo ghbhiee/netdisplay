@@ -18,6 +18,7 @@ final class StreamPipeline {
     // Retained for encoder re-creation on window resize.
     private let encBitrate: Int
     private let encQuality: Bool
+    private let encCodec: VideoCodec
 
     private let pendingLock = NSLock()
     private var pendingEncodes = 0
@@ -43,12 +44,13 @@ final class StreamPipeline {
 
     // Designated init: wires pre-built components.
     private init(pixelWidth: Int, pixelHeight: Int, fps: Int, bitrateBps: Int, prioritizeQuality: Bool,
-                 encoder: Encoder, capture: Capture, virtualDisplay: VirtualDisplay?) {
+                 codec: VideoCodec, encoder: Encoder, capture: Capture, virtualDisplay: VirtualDisplay?) {
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.fps = fps
         self.encBitrate = bitrateBps
         self.encQuality = prioritizeQuality
+        self.encCodec = codec
         self.encoder = encoder
         self.capture = capture
         self.virtualDisplay = virtualDisplay
@@ -67,10 +69,11 @@ final class StreamPipeline {
                                 fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
             Log.error("failed to create encoder"); return nil
         }
-        let cap = Capture(displayID: vd.displayID, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+        let cap = Capture(displayID: vd.displayID, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+                          pixelFormat: codec.captureFormat)
         self.init(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps,
                   bitrateBps: bitrateBps, prioritizeQuality: prioritizeQuality,
-                  encoder: enc, capture: cap, virtualDisplay: vd)
+                  codec: codec, encoder: enc, capture: cap, virtualDisplay: vd)
     }
 
     /// Window-projection mode: capture a specific already-resolved window.
@@ -81,10 +84,11 @@ final class StreamPipeline {
                                 fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
             Log.error("failed to create encoder"); return nil
         }
-        let cap = Capture(window: scWindow, pixelWidth: pixelWidth, pixelHeight: pixelHeight)
+        let cap = Capture(window: scWindow, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
+                          pixelFormat: codec.captureFormat)
         return StreamPipeline(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps,
                               bitrateBps: bitrateBps, prioritizeQuality: prioritizeQuality,
-                              encoder: enc, capture: cap, virtualDisplay: nil)
+                              codec: codec, encoder: enc, capture: cap, virtualDisplay: nil)
     }
 
     /// Window-projection mode: capture a single app window (no virtual display).
@@ -96,11 +100,12 @@ final class StreamPipeline {
                                     fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
                 Log.error("failed to create encoder"); return nil
             }
-            let cap = Capture(window: r.window, pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight)
+            let cap = Capture(window: r.window, pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight,
+                              pixelFormat: codec.captureFormat)
             Log.info("window projection: '\(appName)' → \(r.pixelWidth)x\(r.pixelHeight)px")
             return StreamPipeline(pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight, fps: fps,
                                   bitrateBps: bitrateBps, prioritizeQuality: prioritizeQuality,
-                                  encoder: enc, capture: cap, virtualDisplay: nil)
+                                  codec: codec, encoder: enc, capture: cap, virtualDisplay: nil)
         } catch {
             Log.error("window projection failed: \(error.localizedDescription)")
             return nil
@@ -218,7 +223,7 @@ final class StreamPipeline {
         reconfiguring = true
         defer { reconfiguring = false }
         guard let newEnc = Encoder(width: width, height: height, bitrateBps: encBitrate,
-                                   fps: fps, prioritizeQuality: encQuality) else {
+                                   fps: fps, prioritizeQuality: encQuality, codec: encCodec) else {
             Log.error("reconfigure: encoder re-create failed"); return
         }
         // Swap encoder + capture size together. The onFrame size-guard skips any

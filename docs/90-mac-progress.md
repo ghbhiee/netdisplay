@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🔧 **修复 resize 掉 codec bug**：StreamPipeline.reconfigure() 之前重建 Encoder 没传 codec → 窗口 resize 后 HEVC 会话会静默降回 H.264。现在存 `encCodec` 并传入，resize 后保持编码格式。
+- 🔬 **hevc422 调研结论**：VT 的输出色度取决于**输入像素格式**，喂 BGRA(8bit) 即便设 Main42210 profile，ffprobe 实测输出仍是 **Main / yuv420p**（20Mbps 30fps 出流正常，但不是 4:2:2）。要真 4:2:2 10bit 必须先把 BGRA 转成 10bit 4:2:2 缓冲（v210）再喂编码器——需加一个 VTPixelTransferSession 转换级（下一步）。已备好 `VideoCodec.profileLevel/.captureFormat` 与 negotiate 里的 hevc422 项，转换级落地后放开即可。
+
 - ✅ **codec 协商**：Session 读 HELLO.codecs → negotiateCodec 挑 Mac 能编的（hevc→h264，hevc422 暂排除）→ 回 HELLO_ACK.codec + 用于编码器/VIDEO_CONFIG。实测 [hevc422,hevc,h264]→hevc、[h264]→h264。真实会话自动用 HEVC 4:2:0。
 
 - ✅ **HEVC 编码器（codec 化）**：Encoder 支持 h264/hevc/hevc422 参数化；`--codec hevc` 实测出 HEVC Main 4:2:0，VPS+SPS+PPS 正确内联、ffmpeg 解 91 帧。下一步 codec 协商 + hevc422（4:2:2 输入）。

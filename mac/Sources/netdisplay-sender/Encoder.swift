@@ -10,6 +10,20 @@ enum VideoCodec: String {
     var isHEVC: Bool { self != .h264 }
     var cmType: CMVideoCodecType { isHEVC ? kCMVideoCodecType_HEVC : kCMVideoCodecType_H264 }
     var wire: String { rawValue }
+    /// VT profile: H.264 High, HEVC Main (4:2:0 8-bit), or HEVC Rext Main 4:2:2 10-bit.
+    var profileLevel: CFString {
+        switch self {
+        case .h264:    return kVTProfileLevel_H264_High_AutoLevel
+        case .hevc:    return kVTProfileLevel_HEVC_Main_AutoLevel
+        case .hevc422: return kVTProfileLevel_HEVC_Main42210_AutoLevel
+        }
+    }
+    /// Capture pixel format the encoder needs. 4:2:2 requires a full-chroma
+    /// source (BGRA); VT subsamples to 4:2:2 10-bit. 4:2:0 paths use NV12.
+    var captureFormat: OSType {
+        self == .hevc422 ? kCVPixelFormatType_32BGRA
+                         : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+    }
 }
 
 /// VideoToolbox H.264/HEVC encoder. Input: NV12/BGRA CVPixelBuffer. Output (via
@@ -75,8 +89,7 @@ final class Encoder {
         }
         set(kVTCompressionPropertyKey_RealTime, kCFBooleanTrue)
         set(kVTCompressionPropertyKey_AllowFrameReordering, kCFBooleanFalse)
-        set(kVTCompressionPropertyKey_ProfileLevel,
-            codec.isHEVC ? kVTProfileLevel_HEVC_Main_AutoLevel : kVTProfileLevel_H264_High_AutoLevel)
+        set(kVTCompressionPropertyKey_ProfileLevel, codec.profileLevel)
         // Keyframe every 2s (protocol §3), plus we force one on demand.
         set(kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration, 2 as CFNumber)
         set(kVTCompressionPropertyKey_MaxFrameDelayCount, 0 as CFNumber)
