@@ -125,7 +125,11 @@
       <label class="chk"><input type="checkbox" id="windowed" />窗口模式（不全屏，1:1 像素显示）</label>
       <label class="chk"><input type="checkbox" id="overlayOn" checked />显示统计浮层（RTT / fps / 丢帧）</label>
 
-      <label>发送端（把本机屏幕投给对方）</label>
+      <label>发送端（把本机屏幕/窗口投给对方）</label>
+      <div class="row" style="margin-bottom:6px">
+        <select id="sendSource"><option value="">整个屏幕</option></select>
+        <button id="btnRefreshSources" class="secondary" style="flex:0 0 68px;padding:8px;border-radius:6px;border:1px solid #2a3948">刷新</button>
+      </div>
       <div class="actions" style="margin-top:6px">
         <button id="btnSend" class="secondary" style="background:#1b3a2a;color:#9fd7a8">▶ 直连发送 (:47800)</button>
         <button id="btnSendRelay" class="secondary" style="background:#1b2f3a;color:#9fc2d7">☁ 中转发送</button>

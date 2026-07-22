@@ -508,11 +508,37 @@ function refreshSendButtons() {
   $("btnSendStop").style.display = on ? "block" : "none";
 }
 const sendStatus = (s) => { $("sendStatus").textContent = s; };
+
+// WS-3：投射源列表（整屏 / 单窗口）
+let sourceList = [];
+async function refreshSources() {
+  const keep = $("sendSource").value;
+  sourceList = await sender.listSources();
+  const sel = $("sendSource");
+  sel.innerHTML = '<option value="">整个屏幕</option>';
+  for (const s of sourceList.filter((x) => x.kind === "window")) {
+    const o = document.createElement("option");
+    o.value = s.id;
+    o.textContent = s.name.length > 42 ? s.name.slice(0, 40) + "…" : s.name;
+    sel.appendChild(o);
+  }
+  if (keep && sourceList.some((s) => s.id === keep)) sel.value = keep;
+  applySource();
+}
+function applySource() {
+  const id = $("sendSource").value;
+  sender.setSource(id ? sourceList.find((s) => s.id === id) : null);
+}
+$("btnRefreshSources").onclick = refreshSources;
+$("sendSource").onchange = applySource;
+
 $("btnSend").onclick = async () => {
+  applySource();
   await sender.startSender(sendStatus);
   refreshSendButtons();
 };
 $("btnSendRelay").onclick = async () => {
+  applySource();
   await sender.startSenderRelay(sendStatus, {
     server: $("relayServer").value.trim(),
     token: $("token").value.trim() || undefined,
@@ -570,6 +596,13 @@ window.addEventListener("keyup", (e) => {
   if (a.windowed) $("windowed").checked = true;
   if (a.testPairSecret) { localStorage.setItem("pairSecret", a.testPairSecret); updatePairInfo(); }
   if (a.token) $("token").value = a.token;
+  await refreshSources();
+  // 测试：--send-window <名字子串> 选中匹配的窗口作为投射源
+  if (a.sendWindow) {
+    const m = sourceList.find((s) => s.kind === "window" && s.name.includes(a.sendWindow));
+    if (m) { $("sendSource").value = m.id; applySource(); }
+    else console.log("SEND_SOURCE_NOT_FOUND " + a.sendWindow);
+  }
   if (a.send) { await sender.startSender(sendStatus); refreshSendButtons(); }
   else if (a.sendRelay) {
     await sender.startSenderRelay(sendStatus, {

@@ -58,36 +58,45 @@ function paramSetsFromAvcC(desc) {
 }
 
 // ---------- 采集 ----------
-async function captureScreenTrack(fps) {
-  const sourceId = await ipcRenderer.invoke("screen-source");
+// 当前投射源（null = 主屏）。WS-3：可选单个窗口。
+let source = null; // {id, name, kind}
+const listSources = () => ipcRenderer.invoke("capture-sources");
+function setSource(s) { source = s || null; }
+
+async function captureTrack(fps) {
+  let src = source;
+  if (!src) {
+    const all = await listSources();
+    src = all.find((s) => s.kind === "desktop") || all[0];
+  }
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: false,
     video: {
       mandatory: {
         chromeMediaSource: "desktop",
-        chromeMediaSourceId: sourceId,
+        chromeMediaSourceId: src.id,
         maxWidth: 4096,
         maxHeight: 4096,
         maxFrameRate: fps,
       },
     },
   });
-  return stream.getVideoTracks()[0];
+  return { track: stream.getVideoTracks()[0], src };
 }
 
 // ---------- 会话 ----------
 async function startSession(sock, receiverHello, relayMode) {
   const fps = Math.min(60, Math.max(30, receiverHello?.screen?.fps || 60));
   const bitrate = (receiverHello?.screen?.bitrateMbps || 40) * 1e6; // v1.2：采纳 Receiver 期望码率
-  const track = await captureScreenTrack(fps);
+  const { track, src } = await captureTrack(fps);
   // getSettings() 会把约束上限当尺寸（实测返回 4096×4096），不可信。
   // 先读第一帧拿真实 codedWidth/Height，再回 ACK、再配编码器。
   const processor = new MediaStreamTrackProcessor({ track });
   const reader = processor.readable.getReader();
   const first = await reader.read();
   if (first.done || !first.value) throw new Error("capture produced no frames");
-  const width = first.value.codedWidth & ~1;
-  const height = first.value.codedHeight & ~1;
+  let width = first.value.codedWidth & ~1;
+  let height = first.value.codedHeight & ~1;
 
   // MVP：display = 实际抓取尺寸（忽略 screen 请求的宽高，已在 91 与 Mac 确认）
   const ack = {
@@ -98,7 +107,13 @@ async function startSession(sock, receiverHello, relayMode) {
   };
   if (relayMode) ack.pairSecret = getPairSecret(); // v1.4 持久配对下发（中转模式）
   sock.write(buildFrame(T.HELLO_ACK, ack));
-  sock.write(buildFrame(T.PROJECTION_STATE, { active: true, label: `${os.hostname()} 屏幕`, sourceKind: "desktop" }));
+  sock.write(
+    buildFrame(T.PROJECTION_STATE, {
+      active: true,
+      label: src.kind === "window" ? src.name : `${os.hostname()} 屏幕`,
+      sourceKind: src.kind,
+    })
+  );
 
   let forceKey = true; // 首帧必须关键帧（02 §3.1）
   let basePts = null;
@@ -148,26 +163,50 @@ async function startSession(sock, receiverHello, relayMode) {
     error: (e) => { st.encodeErrors++; dbg("encoder error:", e.message); onStatus("编码错误: " + e.message); },
   });
   // 硬编优先，不可用则退 no-preference（Chromium/Electron 的 MF 硬编开关随版本环境而异）
-  const base = {
-    codec: "avc1.640033",
-    width,
-    height,
-    bitrate,
-    framerate: fps,
-    latencyMode: "realtime",
-    avc: { format: "annexb" },
+  const encoderCfg = async (w, h) => {
+    const base = {
+      codec: "avc1.640033",
+      width: w,
+      height: h,
+      bitrate,
+      framerate: fps,
+      latencyMode: "realtime",
+      avc: { format: "annexb" },
+    };
+    for (const hw of ["prefer-hardware", "no-preference"]) {
+      try {
+        const r = await VideoEncoder.isConfigSupported({ ...base, hardwareAcceleration: hw });
+        if (r.supported) return { ...base, hardwareAcceleration: hw };
+      } catch {}
+    }
+    return null;
   };
-  let cfg = null;
-  for (const hw of ["prefer-hardware", "no-preference"]) {
-    try {
-      const r = await VideoEncoder.isConfigSupported({ ...base, hardwareAcceleration: hw });
-      if (r.supported) { cfg = { ...base, hardwareAcceleration: hw }; break; }
-    } catch {}
-  }
+  const cfg = await encoderCfg(width, height);
   if (!cfg) throw new Error("no supported H.264 encoder config");
   st.encoderAccel = cfg.hardwareAcceleration;
   dbg("configure encoder", width, "x", height, "fps", fps, "bitrate", bitrate, "hw", cfg.hardwareAcceleration);
   encoder.configure(cfg);
+
+  // WS-3：投射窗口 resize → 重配编码器 + 发 VIDEO_CONFIG + 强制关键帧（02 §5、§10.1-4）
+  let reconfiguring = false;
+  async function onSizeChanged(w, h) {
+    if (reconfiguring || stopped) return;
+    reconfiguring = true;
+    try {
+      const next = await encoderCfg(w, h);
+      if (!next || stopped) return;
+      try { await encoder.flush(); } catch {}
+      encoder.configure(next);
+      spsCache = null; // 新尺寸的参数集会随下一个关键帧重新给出
+      width = w; height = h;
+      st.width = w; st.height = h; st.resizes = (st.resizes || 0) + 1;
+      sock.write(buildFrame(T.VIDEO_CONFIG, { codec: ack.codec, width: w, height: h, fps }));
+      forceKey = true; // Receiver 收到 VIDEO_CONFIG 会重置解码器，必须给关键帧
+      dbg("resize ->", w, "x", h);
+    } finally {
+      reconfiguring = false;
+    }
+  }
 
   // 首帧（用于测尺寸的那帧）直接作为第一个关键帧编码
   if (encoder.state === "configured") {
@@ -183,7 +222,16 @@ async function startSession(sock, receiverHello, relayMode) {
       const { value: frame, done } = await reader.read();
       if (done || stopped) { frame && frame.close(); break; }
       st.captured++;
-      if (encoder.state === "configured" && encoder.encodeQueueSize <= 2) {
+      const fw = frame.codedWidth & ~1;
+      const fh = frame.codedHeight & ~1;
+      if ((fw !== width || fh !== height) && fw > 0 && fh > 0) {
+        // 窗口被 resize：本帧丢弃，重配后从下一帧的关键帧开始
+        st.dropped++;
+        frame.close();
+        onSizeChanged(fw, fh);
+        continue;
+      }
+      if (!reconfiguring && encoder.state === "configured" && encoder.encodeQueueSize <= 2) {
         encoder.encode(frame, { keyFrame: forceKey });
         forceKey = false;
       } else {
@@ -392,5 +440,7 @@ module.exports = {
   startSenderRelay,
   stopSender,
   getSenderStats,
+  listSources, // WS-3：可投射的屏幕/窗口列表
+  setSource, // WS-3：选择投射源（null = 主屏），下次会话生效
   isSending: () => !!server || relayActive,
 };

@@ -9,6 +9,22 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十一（**WS-3 单窗口投射 + resize→VIDEO_CONFIG 完成 ✅**）
+
+按已批准的 WS 里程碑推进（无新派活，这是计划 v0 里的 WS-3）：
+
+- **单窗口投射**：`desktopCapturer.getSources({types:["screen","window"]})` 列源，设置面板加投射源下拉（整屏 / 各窗口 + 刷新按钮），选中窗口即只投该窗口。`PROJECTION_STATE.label` 用窗口标题、`sourceKind` 报 `"window"`（整屏报 `"desktop"`）。已排除自身窗口避免套娃。
+- **resize→VIDEO_CONFIG**：采集循环逐帧比对 `codedWidth/Height`，变化即 flush+重配编码器 → 发 `VIDEO_CONFIG{codec,width,height,fps}` → 强制关键帧（Receiver 收到会重置解码器，必须给关键帧）。重配期间的帧丢弃、计入 dropped，并加了 `resizes` 计数。
+- **实测**（投射记事本，中途 Win32 MoveWindow 改窗口大小）：
+  - HELLO_ACK.display = **1866×1216**（窗口尺寸，非屏幕 2560×1600）✅
+  - 首帧关键帧 NAL=[7,8,5] ✅
+  - resize 后 Sender 日志 `resize -> 1336 x 1042`，**Receiver canvas 自动跟随到 1336×1042**、keyframes=2、decodeErrors=0 ✅
+- 新增测试参数：`--send-window <标题子串>`（自动选窗口投射）。
+
+⚠️ **一个采集 API 行为**（与你 90 里记的 SCK 行为同源，供参考）：**静止窗口不产帧**——Windows.Graphics.Capture 只在内容变化时回调，所以投射一个没动静的记事本，14 秒只收到 3 帧（初始关键帧 + resize 关键帧 + 少量）。这不是丢帧，Receiver 保留上一帧即可（你我两端 Receiver 都已是这个行为）。互调时若看到帧率很低，先确认投射源上有没有内容在动。
+
+**Windows Sender 现已支持**：整屏 / 单窗口 × 直连 / 中转，均含 resize 跟随、投射开关（PROJECTION_STATE）、CONTROL 响应、发送侧计数。
+
 ### 2026-07-22 更新之十（**互调准备：Sender 侧发送计数就绪 ✅**）
 
 收到 WS-1/WS-2 批准 + Mac Receiver 直连已跑通的消息。你要求「请你也从 Windows 侧确认发送计数」——之前 Sender 只有一行状态文本，没有可对账的数字，本轮补上：

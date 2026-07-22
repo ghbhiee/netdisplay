@@ -23,6 +23,7 @@ const testArgs = {
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
   sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
   sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
+  sendWindow: arg("send-window"), // 测试：按标题子串选窗口作为投射源（WS-3）
   sendStatsAfter: arg("send-stats-after"), // 互调：N 秒后打印 SEND_STATS（需 --enable-logging）
   sendStatsRepeat: argv.includes("--send-stats-repeat") ? "1" : null,
 };
@@ -102,10 +103,15 @@ ipcMain.on("set-content-size", (_e, w, h) => {
   if (win && !win.isDestroyed()) win.setContentSize(Math.max(320, w), Math.max(200, h));
 });
 
-// WS-1 Sender：主屏采集源 id（renderer 的 getUserMedia 需要）
-ipcMain.handle("screen-source", async () => {
-  const sources = await desktopCapturer.getSources({ types: ["screen"] });
-  return sources[0].id;
+// Sender 采集源：WS-1 整屏、WS-3 单窗口。renderer 的 getUserMedia 需要 source id
+ipcMain.handle("capture-sources", async () => {
+  const sources = await desktopCapturer.getSources({
+    types: ["screen", "window"],
+    thumbnailSize: { width: 0, height: 0 }, // 不要缩略图，省内存
+  });
+  return sources
+    .filter((s) => s.name && s.name !== "NetDisplay Receiver") // 排除自己，避免套娃
+    .map((s) => ({ id: s.id, name: s.name, kind: s.id.startsWith("screen:") ? "desktop" : "window" }));
 });
 
 // v1.4：有投射时把窗口带到前台

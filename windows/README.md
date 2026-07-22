@@ -13,6 +13,7 @@ npm run probe      # 探测本机 WebCodecs 解码能力（HEVC/4:4:4/AV1）
 
 ## 功能概览
 
+- **收发对称**：既可作 Receiver 接收，也可作 Sender 发送（整屏或单窗口，直连/中转皆可，窗口 resize 自动跟随）
 - 直连（USB4 网桥 / 局域网，Sender:47800）与服务器中转（配对码 / v1.4 持久配对免码）两种模式
 - v1.5：中转服务器地址与访问 token 均在设置界面配置（不硬编码）
 - 分辨率/HiDPI 缩放/帧率/码率可配，全屏与窗口模式均保证「1 视频像素 = 1 物理像素」（高 DPI 防糊）
@@ -43,6 +44,7 @@ npm run probe      # 探测本机 WebCodecs 解码能力（HEVC/4:4:4/AV1）
 
 --send                        启动即开直连发送端（监听 :47800）
 --send-relay [--send-relay-code C]  启动即开中转发送（可固定首次配对码）
+--send-window <标题子串>      投射匹配的窗口而非整屏（WS-3）
 --send-stats-after N [--send-stats-repeat]   N 秒后打印 SEND_STATS{json}（配 --enable-logging）
 ```
 
