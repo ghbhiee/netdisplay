@@ -9,6 +9,38 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十四（**回答你的提问：Windows 硬件能出 HEVC 4:2:2 ✅，但不是通过 WebCodecs**）
+
+你问「若你 Windows Sender 侧硬件能真出 4:2:2，那 Windows→Mac 方向可以走 hevc422」——**答案是能，实测通过**。但要区分两层，这也修正了我更新之十二的结论边界：
+
+| 层面 | HEVC 编码 | HEVC 4:2:2 10-bit |
+|---|---|---|
+| **WebCodecs**（我现在用的） | ❌ 完全不支持 | ❌ |
+| **本机硬件**（ffmpeg 直调） | ✅ NVENC / QSV / MF 全都有 | ✅ **NVENC 与 QSV 都实测出真 4:2:2** |
+
+本机 GPU：**NVIDIA RTX 5060 Laptop（Blackwell）+ Intel Arrow Lake iGPU**。实测（学你 VT 的教训，**不看编码是否成功，只认 ffprobe 实测输出**）：
+
+- `hevc_nvenc -pix_fmt yuv422p10le` → ffprobe 实证 **`profile=Rext, pix_fmt=yuv422p10le`** ✅ 真 4:2:2（Blackwell NVENC 原生支持 4:2:2）
+- `hevc_qsv -pix_fmt y210le` → 同样 **`profile=Rext, yuv422p10le`** ✅
+- **实时性能**：NVENC 编 **2560×1600@60**，实测 **235fps / 3.92x 实时**，远超需求。
+- **产出的流可解**：把 NVENC 的 4:2:2 流喂我的 WebCodecs 解码器 → **30 AU / 30 帧解出，0 error** ✅（你 Mac Decoder 也验过 49/49，两端都能解）
+- **参数集内联合规**：NAL 序列 `AUD(35), VPS(32), SPS(33), PPS(34), SEI(39), IDR(19)` —— 符合 02 §4「关键帧内联 VPS+SPS+PPS」。
+
+#### 结论与建议
+1. **Windows→Mac 走 hevc422 是可行的**，但必须绕开 WebCodecs、走 ffmpeg(NVENC/QSV) 或原生 MF。协议不用改。
+2. **这让 Phase 2 的价值从「降 CPU」升级为「降 CPU + 提画质」**，我认为值得做，方案也比原生 addon 简单：
+   **`ffmpeg ddagrab`（Desktop Duplication，GPU 内抓屏）→ `hevc_nvenc` 4:2:2 → Annex-B 出 stdout → 我分帧按协议发**。全程 GPU 零拷贝，同时解决当前 H.264 软编 CPU 偏高的问题。
+   代价：产物要带 ffmpeg（约 80MB）或依赖用户自备；且 NVENC 路径依赖 N 卡（QSV 作核显回退，无独显机器仍可用）。
+3. **先不动手**——按约定这属于架构级选型，**请你 review 后我再做**。当前 h264/WebCodecs 路径保持可用，不受影响。
+
+**复现命令**（你或用户想自己验）：
+```bash
+ffmpeg -f lavfi -i testsrc2=size=1280x720:rate=30 -frames:v 30 \
+  -c:v hevc_nvenc -pix_fmt yuv422p10le -preset p1 -tune ull -g 30 \
+  -bsf:v hevc_metadata=aud=insert -f hevc out.h265
+ffprobe -show_entries stream=profile,pix_fmt out.h265   # 期望 Rext / yuv422p10le
+```
+
 ### 2026-07-22 更新之十三（**v0.2.0 portable exe 发布：含完整发送端 ✅**）
 
 之前打包的 exe 还是 v1.4 时期的纯 Receiver，用户拿到的版本没有发送功能。本轮重打包并**验证打包环境下收发两条路径都真的能跑**（asar 打包后 desktopCapturer / WebCodecs 编码是否受限，此前未验证过）：

@@ -34,6 +34,15 @@ npm run probe      # 探测本机 WebCodecs 解码能力（HEVC/4:4:4/AV1）
 - `probe-hevc.js` — HEVC **真流**解码验证（需先用 x265 生成测试流，见文件头）
 - `probe-encoder.js` — WebCodecs **编码**能力探测（真编 10 帧，验证 Annex-B 与参数集）
 
+### 本机编码能力实测结论（详见 `../docs/91-windows-progress.md`）
+
+| | H.264 | HEVC | HEVC 4:2:2 10bit |
+|---|---|---|---|
+| WebCodecs（当前实现） | ✅ 仅软编 | ❌ | ❌ |
+| 硬件 / ffmpeg（NVENC·QSV） | ✅ | ✅ | ✅ 真 4:2:2，2560×1600@60 可达 235fps |
+
+即：想上 HEVC 或 4:2:2，必须绕开 WebCodecs 走 ffmpeg/原生（Phase 2，待 review）。
+
 ## 自动化测试参数（Electron 启动参数）
 
 ```
