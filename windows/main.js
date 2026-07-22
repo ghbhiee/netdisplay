@@ -29,6 +29,9 @@ const testArgs = {
   secret: arg("secret"), // 联调：共享固定 pairSecret（base64），零配对码待命
   pairhash: arg("pairhash"), // 联调：直接指定房间 pairHash（hex），不下发 secret
   headless: argv.includes("--headless") ? "1" : null, // 无窗口 CLI 模式
+  recvRelay: argv.includes("--recv-relay") ? "1" : null, // 接收端：中转 join（配 --secret/--pairhash）
+  recvStatsAfter: arg("recv-stats-after"), // 接收端：N 秒后打印 RECV_STATS
+  recvStatsRepeat: argv.includes("--recv-stats-repeat") ? "1" : null,
 };
 const isTest = !!testArgs.exitAfter;
 const isHeadless = !!testArgs.headless; // CLI 待命模式：无窗口、无托盘、日志走 stdout
@@ -75,7 +78,7 @@ app.whenReady().then(() => {
   // headless：把 renderer 的日志转到主进程 stdout，无需 --enable-logging
   if (isHeadless) {
     win.webContents.on("console-message", (_e, _lvl, message) => {
-      if (/^\[sender\]|^SEND_STATS|^SEND_SOURCE/.test(message)) console.log(message);
+      if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE/.test(message)) console.log(message);
     });
   }
 

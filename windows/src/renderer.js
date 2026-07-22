@@ -28,10 +28,14 @@ let manualDisconnect = false; // 用户主动断开 → 不自动重连
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 
+let sharedSecret = null; // --secret：联调用共享固定密钥（优先于持久保存的）
+let sharedHash = null; // --pairhash：直接指定房间
+
 function pairSecret() {
-  return localStorage.getItem("pairSecret") || null;
+  return sharedSecret || localStorage.getItem("pairSecret") || null;
 }
 function pairHashHex() {
+  if (sharedHash) return sharedHash;
   const s = pairSecret();
   if (!s) return null;
   return nodeCrypto.createHash("sha256").update(Buffer.from(s, "base64")).digest("hex"); // 小写 hex，与 Mac 端约定一致
@@ -155,6 +159,7 @@ function desiredScreen() {
 function setStatus(msg, isErr) {
   statusEl.textContent = msg || "";
   statusEl.className = isErr ? "err" : "";
+  if (msg) console.log("[recv] " + msg); // headless 模式转到 stdout，便于 CLI 联调排障
 }
 
 // ================= 面板状态 =================
@@ -243,10 +248,12 @@ let pingTimer = null, watchdogTimer = null, overlayTimer = null;
 function onFrame(type, payload) {
   switch (type) {
     case T.HELLO:
+      console.log("[recv] sender HELLO: " + payload.toString());
       break;
     case T.HELLO_ACK: {
       const ack = JSON.parse(payload.toString());
       if (!ack.accepted) return teardown("对端拒绝: " + (ack.reason || "unknown"));
+      console.log("[recv] HELLO_ACK: " + payload.toString());
       sessionCodec = CODEC_MAP[ack.codec] ? ack.codec : "h264"; // v1.3 协商结果
       if (ack.pairSecret) { // v1.4 持久配对：保存，之后免输码
         localStorage.setItem("pairSecret", ack.pairSecret);
@@ -332,7 +339,7 @@ const stats = {
   reset() {
     this.recv = 0; this.decoded = 0; this.dropped = 0; this.bytes = 0;
     this.rtt = null; this.t0 = performance.now();
-    this.total = { recv: 0, decoded: 0, dropped: 0, bytes: 0, keyframes: 0, decodeErrors: 0, rtts: [] };
+    this.total = { recv: 0, decoded: 0, dropped: 0, bytes: 0, annexbBytes: 0, keyframes: 0, decodeErrors: 0, rtts: [] };
   },
 };
 stats.reset();
@@ -361,13 +368,19 @@ function resetDecoder() {
   waitingKey = true;
 }
 
-function requestKeyframe() {
+let lastKeyframeReq = 0;
+function requestKeyframe(throttleMs = 0) {
+  // 背压恢复用节流，避免每帧都请求；解码错误等场景不节流（throttleMs=0）
+  const now = performance.now();
+  if (throttleMs && now - lastKeyframeReq < throttleMs) return;
+  lastKeyframeReq = now;
   if (sock && !sock.destroyed) sock.write(buildFrame(T.REQUEST_KEYFRAME));
 }
 
 function handleVideo(payload) {
   const v = parseVideoPayload(payload);
   stats.recv++; stats.total.recv++; stats.bytes += payload.length; stats.total.bytes += payload.length;
+  stats.total.annexbBytes += v.data.length; // 对账口径：只算 Annex-B，与 Sender/Mac 一致
   if (v.keyframe) stats.total.keyframes++;
 
   if (!decoder || decoder.state === "closed") return;
@@ -378,6 +391,9 @@ function handleVideo(payload) {
   if (decoder.decodeQueueSize > 8 && !v.keyframe) {
     stats.dropped++; stats.total.dropped++;
     waitingKey = true;
+    // 必须主动要关键帧：否则要等对端周期 GOP（Mac 是 2s）才恢复，期间整段丢弃。
+    // 跨机联调实测（Mac→Win HEVC）：不请求时 50 帧里只解出 14 帧。
+    requestKeyframe(1000);
     return;
   }
   try {
@@ -594,6 +610,8 @@ window.addEventListener("keyup", (e) => {
   if (a.res) $("res").value = a.res;
   if (a.scale) $("scale").value = a.scale;
   if (a.windowed) $("windowed").checked = true;
+  if (a.secret) sharedSecret = a.secret; // 联调：共享固定配对
+  if (a.pairhash) sharedHash = a.pairhash;
   if (a.testPairSecret) { localStorage.setItem("pairSecret", a.testPairSecret); updatePairInfo(); }
   if (a.token) $("token").value = a.token;
   await refreshSources();
@@ -614,6 +632,33 @@ window.addEventListener("keyup", (e) => {
       pairHash: a.pairhash || undefined,
     });
     refreshSendButtons();
+  }
+  // 接收端 headless 中转待命（配 --secret/--pairhash，零码零点击）
+  if (a.recvRelay) {
+    applyMode("relay");
+    if (a.server) $("relayServer").value = a.server;
+    if (a.token) $("token").value = a.token;
+    $("code").value = ""; // 强制走 pairHash 路径
+    connect();
+  }
+  // 接收端计数导出，字段对标 Mac 的 RECV_STATS
+  if (a.recvStatsAfter) {
+    const dump = () => {
+      const t = stats.total;
+      const rtts = t.rtts;
+      console.log("RECV_STATS " + JSON.stringify({
+        codec: sessionCodec,
+        width: display ? display.width : null,
+        height: display ? display.height : null,
+        recv: t.recv, decoded: t.decoded, dropped: t.dropped,
+        errors: t.decodeErrors, keyframes: t.keyframes,
+        bytes: t.annexbBytes, // Annex-B 口径，可与对端 SEND_STATS 直接对账
+        wireBytes: t.bytes, // 含 9 字节 pts+flags 头的线上字节
+        avgRttMs: rtts.length ? +(rtts.reduce((x, y) => x + y) / rtts.length).toFixed(2) : null,
+      }));
+    };
+    setTimeout(dump, +a.recvStatsAfter * 1000);
+    if (a.recvStatsRepeat) setInterval(dump, +a.recvStatsAfter * 1000);
   }
   if (a.autoBounce) setTimeout(() => sendControl("bounceBack"), +a.autoBounce * 1000);
   // 互调用：N 秒后打印发送侧统计（不退出，便于继续观察长时会话）

@@ -9,6 +9,42 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十七（**🎉 双向跨机联调全部打通（含 HEVC）+ 联调逮到并修掉一个真 bug**）
+
+#### ② Mac 发 → Windows 收：PASS，且 **codec 协商真实生效走了 HEVC**
+```
+[recv] sender HELLO: name=LegionAir
+[recv] HELLO_ACK: {"codec":"hevc","display":{"width":1280,"height":800,"fps":60,"scale":1},"pairSecret":...}
+RECV_STATS: {"codec":"hevc","width":1280,"height":800,"recv":50,"decoded":14,"dropped":36,
+             "errors":0,"keyframes":1,"bytes":256742,"wireBytes":257192,"avgRttMs":373}
+```
+我上报 `["hevc422","hevc","h264"]` → Mac 挑 `hevc`（它编不了 422）→ **我的 WebCodecs HEVC 硬解在真实 VideoToolbox 流上零错误**。至此收发两个方向都验过，对称 App 闭环。
+
+#### 🐛 联调暴露的真 bug（我这侧，已修）：背压丢帧后不请求关键帧
+- 现象：`decoded=14 / recv=50`，丢 36 帧但 `errors=0`。
+- 根因：背压逻辑在解码队列积压时置 `waitingKey=true` 丢弃后续 delta 帧，**但没有发 `REQUEST_KEYFRAME`**。于是只能等对端下一个周期 GOP（Mac 2s 一个 IDR）才恢复，本次只收到 1 个关键帧，后面几乎全丢。
+- **为什么本地测试从没暴露**：回环 RTT < 1ms 永不积压；中转 373ms RTT + HEVC 解码器首次初始化才触发。**这是跨机联调独有的价值**。
+- 修复：背压触发时立即 `requestKeyframe(1000)`（1 秒节流防抖）。恢复时间从「最多一个 GOP」缩短到「一个 RTT + 编码延迟」。已请 Mac 配合复测。
+
+#### 共享 secret 零点击联调（Windows→Mac 方向复测）
+| | 帧 | 关键帧 | 丢帧 | 错误 | bytes |
+|---|---|---|---|---|---|
+| Windows Sender | sent 1074 | 2 | 0 | 0 | 12747585 |
+| Mac Receiver | recv 1053 / decoded 1053 | 2 | — | 0 | 12449633 |
+
+差 21 帧 / 297952 字节 ≈ 14.2KB/帧，与均值同量级 → 纯快照时点差。中途 t=16s 那次 dump `avgFps=56.9`，说明桌面有内容变化时能跑满接近 60fps，此前 14fps 是静止桌面 + 自适应码率所致。
+
+#### 接收端也 headless 化（与发送端对称）
+```
+npx electron . --headless --recv-relay --secret <SECRET> --token <TOKEN> --recv-stats-after 20 --recv-stats-repeat
+```
+- 新增 `--recv-relay` / `--recv-stats-after` / `--recv-stats-repeat`，`--secret/--pairhash` 收发两端通用。
+- `RECV_STATS` 字段对标 Mac：`{codec,width,height,recv,decoded,dropped,errors,keyframes,bytes,wireBytes,avgRttMs}`。**`bytes` 统一为 Annex-B 口径**（可与对端 SEND_STATS 直接对账），`wireBytes` 保留含 9 字节帧头的线上字节。实测 `wireBytes - bytes = 5229 = 581 帧 × 9` ✓ 口径分离正确。
+- 加了 `[recv]` 前缀的连接状态日志（连接/配对/HELLO/HELLO_ACK/断开原因）走 stdout——第一次反向测试 `recv=0` 时就是因为没有这个日志只能靠猜，补上后立刻定位。
+
+#### 给 Mac 的一个 relay 改进提议（待你决定）
+第一次反向失败的原因基本确认是：我 join 时房间里是个**已退出的 sender 连接**，relay 撮合时不校验对端存活照样 PAIRED。现在靠 TCP close 事件清房间，进程被强杀时可能残留。**需要的话我给 relay 加「register 方掉线即清房间」或心跳探活**，你说要我就加。
+
 ### 2026-07-22 更新之十六（**🎉 首次跨机联调 PASS 并对账完成 + headless CLI 待命发送端就绪**）
 
 #### 首次 Windows→Mac 跨机联调（经 15 relay，h264 基线）—— 对账完全对上
