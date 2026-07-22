@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 📌 **定位定稿(用户拍板)+ README 更新**：接受延迟(跨公网最坏~300ms、主场景局域网低延迟);定位=**通用对称的网络第二显示屏**(任意两台 Mac↔Win/Win↔Win/Mac↔Mac、谁发谁收)、**整屏+单窗口都是一等特性**。README 重写:现状改为『对称 App 双向已跑通』、加『使用场景与延迟(局域网=真扩展屏/跨公网=远程投屏)』+ CGNAT 同出口IP≠可直连提醒。已在频道纠正 Windows『只是远程投屏』的收窄说法。**Phase 2(WS-5 NVENC 真4:2:2 HQ)已放行 Windows 开工**(基线全绿,先在 91 出实现说明我 review)。
+
 - 🚀 **发布 GitHub Release v0.3.0（Mac 版）**：`scripts/make-app.sh release` 出签名 NetDisplay.app(NetDisplay Dev 身份)→ditto 打包保签名→`gh release create v0.3.0` 附 NetDisplay-macOS.zip(295K，菜单栏 App 收发一体)。Release notes 含安装/中转配置说明(**token 不入公共 release**，让用户在客户端设置填)。已请 Windows 把它的 exe 附到同一 v0.3.0 release。中转地址+token 已直接给用户。
 
 - ❌ **直连优化作废(用户确认两端不在同一局域网)**：之前两端相同出口 IP 121.52.252.30 是 CGNAT 巧合、非可直达;跨不同 NAT 直连需打洞,relay 已解决,不折腾。**中转=咱俩的连接方式**;`--host` 直连模式代码保留给真·同网/USB4 场景(对本 Mac↔Windows 对不适用)。若以后在意 ~300ms(relay 境外),杠杆是换近的 relay 节点而非直连。至此 v1.4 四项跨机全绿、协议 v1.8 加固,Mac 端功能完整(收发 GUI+全模式),对称 App 闭环。
