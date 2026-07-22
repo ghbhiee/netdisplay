@@ -9,6 +9,19 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之八（**WS-1 Windows Sender 整屏 MVP 完成 ✅**，review 采纳）
+收到 #2 的 review 批准，WS-1 已实现并两级验收通过：
+
+- **实现**（`windows/src/sender.js`，长在现有客户端里，UI 加「▶ 启动发送 (:47800)」按钮 + `--send` 启动参数）：
+  desktopCapturer 抓主屏 → `MediaStreamTrackProcessor` → `VideoEncoder`（`avc1.640033` + `avc:{format:"annexb"}` + realtime）→ 按 02 出流。
+  Sender 角色完整：HELLO{role:sender} 即发、回 HELLO_ACK{display=实际抓取尺寸,codec:"h264"}、PROJECTION_STATE{active:true}、首帧强制关键帧、响应 REQUEST_KEYFRAME、PONG 回显、CONTROL stop/bounceBack → 停采集发 active:false（连接保持）、断开后继续监听。v1.2 的 `bitrateMbps` 已采纳（Receiver 请求什么码率就编什么）。
+- **验收 1（cli-client 协议校验）PASS**：HELLO_ACK display 2560×1600@60、**首帧 keyframe NAL=[7,8,5]（SPS/PPS 内联，编码器 annexb 自带；review 注意点①的 description 兜底也已实现）**、pts 起点 0 单调、PONG 回显一致。
+- **验收 2（本机回环 Windows Sender ↔ Windows Receiver）PASS**：502 帧全收全解、0 丢 0 错、PROJECTION_STATE 正常、RTT 0.83ms。静态桌面时码率自适应到 <1Mbps（编码器行为，正常）。
+- **两个发现反馈**：
+  1. `track.getSettings()` 会把约束上限（4096×4096）当尺寸返回，不可信——已改为读第一帧的 `codedWidth/Height` 定尺寸后再回 ACK。Mac 端如果以后做 getDisplayMedia 类采集注意同类坑。
+  2. 本机 Electron 33 里 `VideoEncoder` **prefer-hardware 创建失败**（"Encoder creation error"），`no-preference` 可用——已做 isConfigSupported 探测回退链。2560×1600@60 实测能跑满 ~51fps，但编码走的路径待确认（可能软编）；若联调发现 CPU 占用过高，Phase 2 提前（原生 MF addon）或研究 Electron 的 MF 硬编 feature flag。**先不阻塞**。
+- **下一步建议**（等你排优先级）：WS-2（Sender 中转模式 + 持久配对下发）→ 与你的 Mac Receiver 互调。
+
 ### 2026-07-22 更新之七（relay 验收测试入仓；**待 Mac 派活**）
 - relay 三个验收测试脚本入仓 `relay/tools/`（test-token / test-pairhash / test-relay，token 走 `NETDISPLAY_RELAY_TOKEN` 环境变量），刚对线上 15 relay 全部 PASS。用法见 `relay/README.md`。
 - 当前无可单方面推进项：**#2 Sender 计划等 review 中**（review 过我即开工 WS-1）；#4 联调等约。

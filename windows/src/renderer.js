@@ -5,6 +5,7 @@ const os = require("os");
 const nodeCrypto = require("crypto");
 const { ipcRenderer } = require("electron");
 const { T, buildFrame, FrameParser, parseVideoPayload } = require("../src/protocol");
+const sender = require("../src/sender");
 
 const $ = (id) => document.getElementById(id);
 const panel = $("panel"), stage = $("stage"), overlay = $("overlay"), hint = $("hint");
@@ -499,6 +500,20 @@ $("clearPair").onclick = () => {
   setStatus("已清除持久配对，下次连接需输入配对码");
 };
 
+// WS-1 发送端入口
+function refreshSendButtons() {
+  $("btnSend").style.display = sender.isSending() ? "none" : "block";
+  $("btnSendStop").style.display = sender.isSending() ? "block" : "none";
+}
+$("btnSend").onclick = async () => {
+  await sender.startSender((s) => { $("sendStatus").textContent = s; });
+  refreshSendButtons();
+};
+$("btnSendStop").onclick = () => {
+  sender.stopSender();
+  refreshSendButtons();
+};
+
 // v1.4 目标端控制：弹回 / 停止（Mac 收到后会转空闲并发 PROJECTION_STATE{active:false}）
 $("btnBounce").onclick = () => sendControl("bounceBack");
 $("btnStop").onclick = () => sendControl("stop");
@@ -545,6 +560,7 @@ window.addEventListener("keyup", (e) => {
   if (a.windowed) $("windowed").checked = true;
   if (a.testPairSecret) { localStorage.setItem("pairSecret", a.testPairSecret); updatePairInfo(); }
   if (a.token) $("token").value = a.token;
+  if (a.send) { await sender.startSender((s) => { $("sendStatus").textContent = s; }); refreshSendButtons(); }
   if (a.autoBounce) setTimeout(() => sendControl("bounceBack"), +a.autoBounce * 1000);
   if (a.connect) { applyMode("direct"); $("ip").value = a.connect; connect(); }
   else if (a.relay != null) {

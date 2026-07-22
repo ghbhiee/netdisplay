@@ -1,6 +1,6 @@
 // NetDisplay Receiver — Electron 主进程（v1.4：托盘常驻、投射自动显示）
 "use strict";
-const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, screen, Tray, Menu, nativeImage, desktopCapturer } = require("electron");
 const path = require("path");
 
 const argv = process.argv.slice(1);
@@ -20,6 +20,7 @@ const testArgs = {
   autoBounce: arg("auto-bounce"), // 测试：N 秒后自动发 CONTROL bounceBack
   token: arg("token"), // 测试：relay 访问令牌
   testPairSecret: arg("test-pair-secret"), // 测试：预置 pairSecret（base64）
+  send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
 };
 const isTest = !!testArgs.exitAfter;
 
@@ -91,6 +92,12 @@ ipcMain.on("set-fullscreen", (_e, v) => {
 
 ipcMain.on("set-content-size", (_e, w, h) => {
   if (win && !win.isDestroyed()) win.setContentSize(Math.max(320, w), Math.max(200, h));
+});
+
+// WS-1 Sender：主屏采集源 id（renderer 的 getUserMedia 需要）
+ipcMain.handle("screen-source", async () => {
+  const sources = await desktopCapturer.getSources({ types: ["screen"] });
+  return sources[0].id;
 });
 
 // v1.4：有投射时把窗口带到前台

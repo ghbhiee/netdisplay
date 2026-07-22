@@ -125,6 +125,13 @@
       <label class="chk"><input type="checkbox" id="windowed" />窗口模式（不全屏，1:1 像素显示）</label>
       <label class="chk"><input type="checkbox" id="overlayOn" checked />显示统计浮层（RTT / fps / 丢帧）</label>
 
+      <label>发送端（把本机屏幕投给对方）</label>
+      <div class="actions" style="margin-top:6px">
+        <button id="btnSend" class="secondary" style="background:#1b3a2a;color:#9fd7a8">▶ 启动发送 (:47800)</button>
+        <button id="btnSendStop" class="secondary" style="display:none">停止发送</button>
+      </div>
+      <div id="sendStatus" style="font-size:11px;color:#5d9e63;min-height:14px;margin-top:4px"></div>
+
       <div class="actions">
         <button id="btnConnect">连接</button>
         <button id="btnDisconnect">断开</button>
