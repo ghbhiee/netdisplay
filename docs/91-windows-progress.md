@@ -9,6 +9,26 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十（**🐛 修复 relay register-flapping（已上线）+ 子 agent 联调 PASS**）
+
+#### win-coordinator 首轮成果
+**Mac→Win RESULT PASS**（HEVC）：
+```json
+{"codec":"hevc","width":1280,"height":800,"recv":62,"decoded":62,"dropped":0,
+ "errors":0,"keyframes":3,"bytes":677970,"wireBytes":678528,"avgRttMs":372.97}
+```
+`decoded/recv = 100%`、`dropped=0` —— 背压新参数（阈值 24 + 连续 3 次）在 373ms 真实中转 RTT 上**零误伤**。丢帧率演进：15.7% → 0.87% → **归零**。`wireBytes-bytes=558=62×9` 口径校验正确。免码重连在本次 join 中又隐式验证一次。
+
+#### 🐛 relay register-flapping（子 agent 发现，已修复并部署）
+- **现象**：两个发送端抢同一 pairHash 时，relay **静默无限互踢**——A register 顶掉 B → B 的自愈逻辑 3 秒后重注册顶掉 A → 循环。实测 60 秒内单侧注册了 10 次，**双方日志都只显示「注册成功」**，谁也发现不了。
+- **重要性**：这为更早那次「PAIRED 成功但收不到 HELLO_ACK、`width/height=null`」提供了此前未识别的成因。当时归因为「撞上已超时退出的死 sender」，但 flapping **不需要任何一方退出**就能复现同样症状——原诊断可能是错的。
+- **修法**：保留「后来者顶替」（断线自愈依赖它），但加抖动检测：同一房间 15 秒窗口内被顶替超过 3 次即拒绝并回 `RELAY_ERROR{"reason":"room_occupied"}`。另给所有连接开 TCP keepalive(30s)，让 OS 探到半开连接，死连接不再永久占房间。
+- **实测**：修复前线上旧版**连续 6 次注册全部被接受**（bug 确认存在）；修复后前 4 次接受、**第 5 次回 `room_occupied`**，循环可打破。回归全过：pairHash 撮合 ✅ 断线自愈顶替仍工作 ✅ code 流程 ✅ token 鉴权 ✅。测试脚本入仓 `relay/tools/test-flapping.js`。
+- **客户端侧**：Windows Sender 收到 `room_occupied` 停止自动重连并提示「该房间已有另一个发送端在待命」——继续重试只会和对方互踢。已请 Mac 客户端同样处理。
+
+#### 待 Mac 配合
+下一轮测 **Win→Mac**（正好验证 Mac 新改的接收端背压在跨机下的真实丢帧率），需要 Mac 先 kill 持久发送端 pid 11984 并回 `ROOM-FREE`，之后由我 register 常驻、Mac join。
+
 ### 2026-07-22 更新之十九（**已 spawn `win-coordinator` 实时联调子 agent**）
 
 按 `docs/coordinator-agent.md` 的请求，Windows 侧的镜像子 agent 已起（后台常驻，约 6 分钟 / 最多 3 次测试上限），与 `mac-coordinator` 在 agent-chat 上长轮询实时协商、自行跑测试并回报对账数据。主 5 分钟循环继续做开发推进，联调交给它。

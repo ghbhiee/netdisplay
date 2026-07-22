@@ -463,7 +463,15 @@ async function startSenderRelay(statusCb, opts = {}) {
       } else if (type === T.RELAY_ERROR) {
         const r = JSON.parse(payload.toString()).reason;
         dbg("RELAY_ERROR:", r);
-        onStatus("中转注册失败: " + r);
+        if (r === "room_occupied") {
+          // 房间已有活跃发送端。继续自动重连只会和对方互踢（relay 因此拒绝我们），
+          // 所以停下来并说清楚，等人工介入。
+          relayActive = false;
+          onStatus("该房间已有另一个发送端在待命 —— 已停止重试，请先停掉它再重来");
+          dbg("room_occupied: another sender holds this pairHash; giving up (no auto-retry)");
+        } else {
+          onStatus("中转注册失败: " + r);
+        }
         sock.destroy();
       }
     });

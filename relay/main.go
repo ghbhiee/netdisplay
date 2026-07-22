@@ -52,7 +52,19 @@ type room struct {
 	sender     net.Conn
 	created    time.Time
 	persistent bool // pairHash 房间：不过期、可替换注册（v1.4 持久配对）
+
+	// 抖动检测（v1.7）：pairHash 房间允许「后来者顶替」以便断线自愈，但两个都活着的
+	// 发送端会互相顶替 —— 各自的「断线 3s 后重注册」逻辑正好互相踩，形成静默的无限
+	// 互踢循环（双方日志都只显示「注册成功」，谁也发现不了）。这里数一下短时间内的
+	// 顶替次数，超限就拒绝并回 room_occupied，打破循环。
+	replaces    int
+	lastReplace time.Time
 }
+
+const (
+	flapWindow = 15 * time.Second // 在此窗口内的重复顶替算作抖动
+	flapMax    = 3                // 窗口内允许的顶替次数，超过则拒绝
+)
 
 func isHex(s string) bool {
 	for _, c := range s {
@@ -161,6 +173,10 @@ func sendErr(c net.Conn, reason string) {
 func handle(c net.Conn) {
 	if tc, ok := c.(*net.TCPConn); ok {
 		tc.SetNoDelay(true)
+		// 持久待命的发送端可能长时间无数据；开 keepalive 让 OS 探到半开连接
+		// （进程被强杀 / 网络断），否则死连接会一直占着房间。
+		tc.SetKeepAlive(true)
+		tc.SetKeepAlivePeriod(30 * time.Second)
 	}
 	c.SetReadDeadline(time.Now().Add(unpairedTTL))
 	t, p, err := readFrame(c)
@@ -186,18 +202,35 @@ func handle(c net.Conn) {
 	switch t {
 	case tRegister:
 		mu.Lock()
+		replaces, lastReplace := 0, time.Time{}
 		if old, exists := rooms[key]; exists {
-			if persistent {
-				// pairHash 房间：新注册替换旧连接（断线重连自愈）
-				old.sender.Close()
-			} else {
+			if !persistent {
 				mu.Unlock()
 				sendErr(c, "code_taken")
 				c.Close()
 				return
 			}
+			// pairHash 房间：新注册替换旧连接（断线重连自愈）——但要防互踢抖动
+			replaces, lastReplace = old.replaces, old.lastReplace
+			if time.Since(lastReplace) < flapWindow {
+				replaces++
+			} else {
+				replaces = 1
+			}
+			if replaces > flapMax {
+				mu.Unlock()
+				log.Printf("register flapping on %s, rejecting (%d replaces in %v)", key, replaces, flapWindow)
+				sendErr(c, "room_occupied")
+				c.Close()
+				return
+			}
+			lastReplace = time.Now()
+			old.sender.Close()
 		}
-		rooms[key] = &room{sender: c, created: time.Now(), persistent: persistent}
+		rooms[key] = &room{
+			sender: c, created: time.Now(), persistent: persistent,
+			replaces: replaces, lastReplace: lastReplace,
+		}
 		mu.Unlock()
 		if persistent {
 			c.SetReadDeadline(time.Time{}) // 持久待命，不超时
