@@ -1,0 +1,21 @@
+# macOS
+.DS_Store
+
+# Swift (mac/)
+mac/.build/
+mac/build/
+*.swiftpm
+*.xcuserstate
+
+# Node / Electron (windows/)
+windows/node_modules/
+windows/dist/
+windows/out/
+
+# Go (relay/)
+relay/netdisplay-relay
+relay/*.exe
+
+# scratch / artifacts
+*.h264
+*.log
