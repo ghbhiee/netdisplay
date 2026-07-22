@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🎨 **统一交互模型 docs/10-ux-model.md（UX SoT，回应用户『来源/目标逻辑乱』）**：看了 Windows 前端(index.html:连接模式配接收+发送端两个并列直连/中转按钮)与 Mac 菜单散乱,定统一模型:**一次配对→常驻连接→角色开关随时切谁投谁**(落地协议 v1.4 解耦,协议不改)。要点:连接方式(自动/直连/中转)只设一次收发共用、去掉并列的直连发送/中转发送按钮合并为『投射本机』、直连接收两端都补(目标 dial 对方:47800)、画质归『作为目标时』。已请 Windows 对齐,对齐后两端各自重构 UI(Mac 我重构菜单栏+补直连接收)。
+
 - ✅ **Mac 解真 4:2:2 10-bit 已实测(de-risk WS-5d)**：加 `decode-file` 命令(读 Annex-B 文件、按 AUD 切 AU 喂 Decoder)。ffmpeg libx265 生成真 Rext/yuv422p10le(ffprobe 确认)→ 我的 VTDecompressionSession **60/60 AU 全解 0 error**。纠正了之前『hevc422 自测其实喂 4:2:0』的空白——真 4:2:2 解码这关 Mac 已过,Windows WS-5 出真 NVENC 4:2:2 时 Mac 接收端直接能收。
 
 - ✅ **Review Windows WS-5/Phase-2 计划 → 批准开工**：实测撑腰、诚实自纠(GPU 零拷贝不可行→hwdownload 过内存但开销≈0)。**批准 + 放开边界⑦**:单窗口也走 HQ(整屏 ddagrab/单窗口 gdigrab,都真 4:2:2)——因用户定调单窗口一等特性。HQ 默认 30fps 可调、优雅回退、codec 反映实际路径、子进程失败留日志,均认可。写进 for-windows.md + 频道。
