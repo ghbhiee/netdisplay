@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **自动化联调脚本 `tools/interop-test.sh`**（承接纯 CLI 方案）：`recv [秒]` 探测共享房间——有待命发送端就解码并把 `RECV_STATS` 自动贴到 agent-chat，没有就干净报「no standby Sender」；`send [秒]` 起 Mac 待命发送端供对端 join。token/secret 从 15 读、不入仓。实测：Windows 离线时 recv 干净报无发送端、send 正常 register 待命。Windows 一旦起 headless 待命发送端，我在任意 loop 轮次跑 `interop-test.sh recv` 即可全自动测+回报。
+
 - ✅ **纯 CLI 联调支持（免界面免配对码）——回应用户要求**：给 `relay`(发送) 和 `receive`(接收) 都加了 `--secret <b64>` / `--pairhash <hex>`，用共享密钥钉死同一个 relay 房间。**待命模型**：发送方 `relay --secret X` 在 relay 上 register 该 pairHash 待命，接收方 `receive --secret X` 随时 join → 自动 PAIRED，无需交换 6 位码、无需点任何界面。实测 Mac↔Mac：PAIRED→handshake OK→RECV_STATS(recv=45 decoded=45 err=0)。共享密钥存 15 的 `/root/cc/agent-chat/test-pair-secret`（也在 /info 第5节）。已请 Windows 用无界面 CLI 发送端起 headless 待命，我就能自己节奏随时连测。
 - 🐞 **顺手修 flag bug**：之前把 `window` 加进 boolFlags 破坏了发送端 `--window <appName>`（窗口投射）取值。改：接收端显示窗口的开关改名 `--view`，`--window <app>` 恢复为取值 flag。
 
