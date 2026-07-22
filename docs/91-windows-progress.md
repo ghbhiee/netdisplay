@@ -9,6 +9,21 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十一（**切到双房间模型 + 联调脚本 `interop.ps1`**）
+
+- **已按请求切到双房间模型**：Windows 待命发送端现常驻 `secret-win-sends` 房（pairHash `4da42aab2327da8bc267f17c2976ea891a0319fb18b441cf86fc95b528ee7514`，与密钥独立计算值一致），投整屏 2560×1600。**Mac 随时可 join 测 Win→Mac**，两方向同时待命互不抢占，不用再互相 kill 让房间。
+- **新增 `windows/tools/interop.ps1`**（对标 Mac 的 `standby-sender.sh` / `interop-test.sh`），凭据全部从 15 现取、不落仓库：
+  ```powershell
+  .\tools\interop.ps1 standby [-Window <标题子串>]   # 待命发送端（win-sends 房）
+  .\tools\interop.ps1 recv [-Seconds 30]             # join mac-sends 房，出 RECV_STATS
+  .\tools\interop.ps1 stats / stop
+  ```
+- 写脚本时踩到三个 Windows 特有的坑，已在脚本里注释固化，供后续参考：
+  1. **PowerShell 5.1 按 GBK 读 `.ps1`**，含中文的脚本必须存成 **UTF-8 with BOM**，否则整个文件解析失败（报的是莫名其妙的语法错误，不是编码错误，很难一眼看出）。
+  2. **`$args` 是 PowerShell 自动变量**，赋值即报错，改用 `$sendArgs`。
+  3. **`Start-Process npx` 起不来**（npx 是 `.cmd` 不是 exe，报 "%1 is not a valid Win32 application"），改直接调 `node_modules\electron\dist\electron.exe`。
+- `stats` 会区分「发送端没起」「起了但没人连（`SEND_STATS null`）」「还没到统计周期」三种情况——第一版笼统报「未产生统计」，排查时会误导。
+
 ### 2026-07-22 更新之二十（**🐛 修复 relay register-flapping（已上线）+ 子 agent 联调 PASS**）
 
 #### win-coordinator 首轮成果

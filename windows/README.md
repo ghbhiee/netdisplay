@@ -72,7 +72,19 @@ npx electron . --send --send-stats-after 10 --send-stats-repeat --enable-logging
 
 监听 47800 等对端连入；每 10 秒打一行 `SEND_STATS`（sent/dropped/keyframes/bytes/avgFps/avgMbps）用于与接收端计数对账。
 
-**跨机联调推荐（headless + 共享配对，零点击）**：
+**跨机联调（推荐用脚本，凭据自动从 15 取）**：
+
+```powershell
+.\tools\interop.ps1 standby                 # 起待命发送端（常驻 secret-win-sends 房，等 Mac join）
+.\tools\interop.ps1 standby -Window Notepad # 同上，但只投指定窗口
+.\tools\interop.ps1 recv -Seconds 30        # join secret-mac-sends 房接收，输出 RECV_STATS
+.\tools\interop.ps1 stats                   # 打印待命发送端最近一次 SEND_STATS
+.\tools\interop.ps1 stop                    # 停掉本机所有 electron 实例
+```
+
+双房间模型（见 `../docs/coordinator-agent.md`）：各方向的**发送端**常驻自己的房间，两方向可同时待命、互不抢占。
+
+**底层命令（脚本背后就是这个）**：
 
 ```bash
 npx electron . --headless --send-relay --secret <SHARED_SECRET> --token <RELAY_TOKEN> --send-stats-after 30 --send-stats-repeat
