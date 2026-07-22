@@ -34,7 +34,14 @@ final class ReceiverSession {
     private var bytesAnnexB = 0
     private var statsTimer: DispatchSourceTimer?
     // Cumulative totals for RECV_STATS export (mirror of Windows SEND_STATS).
-    private var cumRecv = 0, cumDecoded = 0, cumErrors = 0, cumBytes = 0, cumKeyframes = 0
+    private var cumRecv = 0, cumDecoded = 0, cumErrors = 0, cumBytes = 0, cumKeyframes = 0, cumDropped = 0
+
+    // Receiver-side backpressure (mirrors the Windows fix): when VT's async decode
+    // queue backs up (high RTT / slow decode), drop delta frames until the next
+    // keyframe AND proactively request one, so recovery is ~1 RTT, not a full GOP.
+    private let decodeBacklogLimit = 8
+    private var waitingKey = false
+    private var lastKeyframeReq = Date.distantPast
     private var streamW = 0, streamH = 0
     private var emitStatsTimer: DispatchSourceTimer?
     /// If set, emit `RECV_STATS {json}` to stdout every N seconds (cumulative).
@@ -181,7 +188,29 @@ final class ReceiverSession {
         framesTotal += 1; bytesAnnexB += annexB.count
         cumRecv += 1; cumBytes += annexB.count; if isKey { cumKeyframes += 1 }
         statLock.unlock()
+
+        // Backpressure. Once dropping, keep dropping deltas until a keyframe lands.
+        let pending = decoder?.pending ?? 0
+        if waitingKey {
+            if isKey { waitingKey = false } else { dropFrame(); return }
+        } else if pending >= decodeBacklogLimit && !isKey {
+            waitingKey = true
+            requestKeyframeThrottled()
+            dropFrame(); return
+        }
         decoder?.decode(annexB: annexB, ptsUs: ptsUs)
+    }
+
+    private func dropFrame() {
+        statLock.lock(); cumDropped += 1; statLock.unlock()
+    }
+
+    /// Ask the Sender for a fresh IDR, at most once per second.
+    private func requestKeyframeThrottled() {
+        let now = Date()
+        guard now.timeIntervalSince(lastKeyframeReq) >= 1.0 else { return }
+        lastKeyframeReq = now
+        conn?.send(Wire.encode(.requestKeyframe))
     }
 
     private func makeDecoder(codec: VideoCodec) {
@@ -231,10 +260,11 @@ final class ReceiverSession {
             guard let self else { return }
             self.statLock.lock()
             let d = self.framesDecoded, t = self.framesTotal, e = self.decodeErrors, b = self.bytesAnnexB
+            let drp = self.cumDropped
             self.framesDecoded = 0; self.framesTotal = 0; self.bytesAnnexB = 0
             self.statLock.unlock()
             let mbps = Double(b) * 8 / 1_000_000
-            Log.info(String(format: "recv: frames=%d/s decoded=%d/s errors=%d %.2fMbps(annexb)", t, d, e, mbps))
+            Log.info(String(format: "recv: frames=%d/s decoded=%d/s dropped=%d errors=%d %.2fMbps(annexb)", t, d, drp, e, mbps))
         }
         statsTimer = st; st.resume()
 
@@ -256,7 +286,7 @@ final class ReceiverSession {
     func statsJSON() -> String {
         statLock.lock()
         let obj: [String: Any] = [
-            "recv": cumRecv, "decoded": cumDecoded, "errors": cumErrors,
+            "recv": cumRecv, "decoded": cumDecoded, "dropped": cumDropped, "errors": cumErrors,
             "keyframes": cumKeyframes, "bytes": cumBytes,
             "codec": chosenCodec.wire, "width": streamW, "height": streamH
         ]

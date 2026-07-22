@@ -21,6 +21,13 @@ final class Decoder {
     /// Called when a decode fails hard (receiver should request a keyframe).
     var onDecodeError: ((OSStatus) -> Void)?
 
+    // In-flight async decodes, for receiver-side backpressure.
+    private let pendingLock = NSLock()
+    private var _pending = 0
+    /// Number of frames submitted to VT but not yet returned by its async handler.
+    var pending: Int { pendingLock.lock(); defer { pendingLock.unlock() }; return _pending }
+    private func pendingDelta(_ d: Int) { pendingLock.lock(); _pending += d; pendingLock.unlock() }
+
     init(codec: VideoCodec) { self.codec = codec }
 
     deinit {
@@ -57,19 +64,21 @@ final class Decoder {
         }
         guard let sample = makeSampleBuffer(avcc: avcc, fmt: fmt, ptsUs: ptsUs) else { return }
 
+        pendingDelta(1)
         let status = VTDecompressionSessionDecodeFrame(
             session, sampleBuffer: sample,
             flags: [._EnableAsynchronousDecompression],
             infoFlagsOut: nil
         ) { [weak self] status, _, image, pts, _ in
             guard let self else { return }
+            self.pendingDelta(-1)   // async handler fired → one less in flight
             if status == noErr, let image {
                 self.onDecoded?(image, pts)
             } else if status != noErr {
                 self.onDecodeError?(status)
             }
         }
-        if status != noErr { onDecodeError?(status) }
+        if status != noErr { pendingDelta(-1); onDecodeError?(status) } // handler won't fire
     }
 
     // MARK: Parameter sets → format description → session

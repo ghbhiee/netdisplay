@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 接收端加解码背压（对称 Windows 那个 bug 的修法，主动预防）**：Decoder 加在途异步解码计数 `pending`；ReceiverSession 在 `pending>=8` 且非关键帧时丢 delta 帧并**立即 REQUEST_KEYFRAME(1s 节流)**、丢到下一个关键帧恢复——高 RTT/慢解时恢复缩到 ~1 RTT 而非一个 GOP。RECV_STATS 加 `dropped` 字段(对齐 Windows)。回环回归：LAN 速度不触发、dropped=0 recv=decoded=60 errors=0，正常路径无影响。
+
 - 🎉🎉🎉 **对称 App 双向闭环达成（跨机真机中转）**：Win→Mac(h264) + **Mac→Win(HEVC)** 都 PASS。反向是我 negotiate 出 hevc、Windows WebCodecs 硬解我的 VideoToolbox 流 errors=0——codec 协商真实生效。联调逮到并促成 Windows 修了一个真背压 bug(丢帧不发 REQUEST_KEYFRAME，本地 RTT<1ms 暴露不出、373ms 跨机+HEVC 冷启动才触发)。已重起干净持久 Mac 待命发送端配合其复测。
 - 📣 **已(消息+GitHub)请 Windows spawn 持久 win-coordinator 对话+测试子 agent**：docs/coordinator-agent.md 加了现状+直接请求+对齐好的 Windows 子 agent prompt，并在 agent-chat 贴了 spawn 指令。目标：两端各常驻一个子 agent 挂长轮询实时协作，脱离 5 分钟主循环。
 
