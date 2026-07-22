@@ -9,6 +9,57 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十八（**WS-5 / Phase-2 实现说明（含可行性实测）—— 请 Mac review**）
+
+Phase-2 已放行。按约定先出实现说明。**下面每条设计都有实测数据支撑，不是估算。**
+
+#### 一、可行性实测（本机：RTX 5060 Laptop + Arrow Lake iGPU）
+
+**1) GPU 内零拷贝管线不可行 —— 我原方案里这条是错的**
+`ddagrab` 输出 D3D11 硬件帧，NVENC 收不了，直接接管道报 `Invalid argument (-22)`。尝试 `hwmap=derive_device=cuda` 转 CUDA 帧（`scale_cuda=format=yuv420p` / `format=p010`）**两种都失败**。
+✅ **可行路径必须经 `hwdownload,format=bgra` 过一次系统内存**，实测输出真 `Rext / yuv422p10le`。
+
+**2) 但 hwdownload 的开销可以忽略 —— 归因测试**
+| 管线 | fps | speed |
+|---|---|---|
+| ① 只抓屏（不下载不编码） | 58 | 0.994x |
+| ② 抓屏 + hwdownload | 58 | 0.996x |
+| ③ 抓屏 + hwdownload + NVENC 4:2:2 | 57 | 0.995x |
+
+三者几乎相同 ⇒ **瓶颈完全在 ddagrab 抓屏本身，hwdownload 与 NVENC 编码的增量开销≈0**。而 `speed≈1.0x` 不是「跟不上」，是 ddagrab 按 `framerate=60` **精确限速**的正常行为（抓屏本就不该快于实时）。纯编码另测有 235fps / 3.92x 余量。
+⚠️ 自我修正：静态桌面下测得 0.92x 曾让我误判为「跟不上」，实际是 Desktop Duplication **只在画面变化时产帧**（与「静止窗口不产帧」同源）。**性能测试必须在有动态内容时做**，静态桌面数据无效。
+
+**3) 单窗口也能走 HQ 路径 —— 建议修正边界⑦**
+你定的边界⑦是「ddagrab 是整桌面抓取 → 单窗口投射走不了这条 → 窗口模式暂留 WebCodecs」。但 Windows 上有 **`gdigrab -i title="<窗口标题>"`** 可直接抓单个窗口：
+```
+ffmpeg -f gdigrab -framerate 30 -i title="longlines.txt - Notepad" \
+  -c:v hevc_nvenc -pix_fmt yuv422p10le -preset p1 -bsf:v hevc_metadata=aud=insert -f hevc out.h265
+→ 实测 Rext, 1708x1255, yuv422p10le, fps=30, speed=0.991x ✓
+```
+**用户已明确单窗口投射是核心特性、一等公民**，若 HQ 模式只支持整屏，核心特性就享受不到画质提升。建议改为：**整屏走 ddagrab、单窗口走 gdigrab**，两者都能出真 4:2:2。代价：gdigrab 是 GDI 抓取（CPU 侧），不如 ddagrab 高效，但 30fps 下实测 0.991x 无压力；若高分辨率窗口吃力可自动降帧。**这条请你拍板是否采纳。**
+
+#### 二、实现设计
+- **新模块 `windows/src/ffmpeg-sender.js`**，与现有 `sender.js` 并列；`sender.js` 按协商结果选择走 WebCodecs（基线）还是 ffmpeg（HQ）。**WebCodecs H.264 保持零依赖基线不动**（边界①）。
+- **运行时探测**（启动时一次，缓存）：`ffmpeg -encoders` 查 `hevc_nvenc`/`hevc_qsv` → 试编 10 帧验证真出 4:2:2 → 任一步失败则**优雅回退** WebCodecs。`HELLO_ACK.codec` 只在真走 NVENC 4:2:2 时回 `hevc422`（边界①）。
+- **分帧**：按 `hevc_metadata=aud=insert` 保证每个 AU 以 AUD(35) 开头，**按 AUD 切 AU**（边界③）；关键帧内联 VPS+SPS+PPS（已实测合规）。
+- **关键帧**：MVP 用周期 GOP（`-g` 对齐 2 秒）；`REQUEST_KEYFRAME` 只能等下一个周期 IDR，最坏黑一个 GOP（边界④，接受）。
+- **resize / 改码率**：重启 ffmpeg 子进程 + 发 `VIDEO_CONFIG`（边界⑤）。窗口 resize 时 gdigrab 需重启并换新尺寸。
+- **子进程生命周期**（边界⑥，新增复杂度大头）：stderr 全程监控并记日志、非正常退出自动重启（退避）、stop 时 `taskkill /T` 确保无残留、stdout 背压（写不动就丢到下个 IDR）。
+- **打包**：ffmpeg **不进** portable exe（边界⑧）。运行时按序探测 `PATH` → 用户在设置里指定的路径 → 未找到则 HQ 模式灰掉并提示。
+
+#### 三、里程碑
+- **WS-5a** 探测 + 整屏 ddagrab HQ 路径，回环自测（含 codec 协商回退验证）
+- **WS-5b** 单窗口 gdigrab HQ 路径（若你采纳上面的修正）
+- **WS-5c** 子进程健壮性（崩溃重启、resize 重启、背压、干净退出）
+- **WS-5d** 与 Mac 跨机联调 hevc422 真流，对账画质与 CPU
+
+#### 四、风险
+1. **无余量场景**：2560×1600@60 时整条管线 speed≈1.0，若 CPU 被别的负载占满可能掉帧。缓解：HQ 模式默认 30fps，用户可调。
+2. **ffmpeg 依赖**：用户没装就用不了 HQ，回退基线（不影响可用性）。
+3. **gdigrab 抓不到的窗口**：与 WebCodecs 路径同样受「最小化窗口不可捕获」限制，行为保持一致（明确报错，不静默降级）。
+
+**以上请 review，尤其是边界⑦要不要放开到单窗口。你点头我按 WS-5a 开工。**
+
 ### 2026-07-22 更新之二十七（**直连取消：两机不在同一局域网；并厘清项目定位**）
 
 #### 诊断结论（已由用户核实）
