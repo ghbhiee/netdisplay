@@ -239,15 +239,24 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     @objc private func editRelaySettings() {
         let alert = NSAlert()
         alert.messageText = "中转服务器设置"
-        alert.informativeText = "地址（host:port）与访问 token（公网 relay 鉴权，留空=不鉴权）"
-        let server = NSTextField(frame: NSRect(x: 0, y: 30, width: 320, height: 24))
+        alert.informativeText = "两端填同一个即可。token 留空 = 不鉴权。"
+        let W: CGFloat = 520
+        let serverLabel = NSTextField(labelWithString: "中转地址（host:port）")
+        serverLabel.frame = NSRect(x: 0, y: 86, width: W, height: 18)
+        let server = NSTextField(frame: NSRect(x: 0, y: 62, width: W, height: 24))
         server.stringValue = controller.config.relayServer
-        server.placeholderString = "relay.example.com:47700"
-        let token = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
+        server.placeholderString = "15.tokencv.com:47700"
+        let tokenLabel = NSTextField(labelWithString: "访问 token（可 Cmd+V 粘贴，字段够宽能看全）")
+        tokenLabel.frame = NSRect(x: 0, y: 26, width: W, height: 18)
+        let token = NSTextField(frame: NSRect(x: 0, y: 0, width: W, height: 24))
         token.stringValue = controller.config.relayToken
-        token.placeholderString = "token"
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 58))
-        box.addSubview(server); box.addSubview(token)
+        token.placeholderString = "粘贴 token（48 位十六进制）"
+        token.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        token.cell?.wraps = false
+        token.cell?.isScrollable = true       // no length cap; long token scrolls within the field
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: W, height: 110))
+        box.addSubview(serverLabel); box.addSubview(server)
+        box.addSubview(tokenLabel); box.addSubview(token)
         alert.accessoryView = box
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
