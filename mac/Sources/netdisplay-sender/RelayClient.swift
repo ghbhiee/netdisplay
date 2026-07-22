@@ -55,6 +55,7 @@ final class RelayClient {
         session = nil
 
         let code = Self.generateCode()
+        let pairHash = PairStore.currentPairHash()   // non-nil once paired → auto-match, no code
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host),
                                            port: NWEndpoint.Port(rawValue: port)!)
         let nw = NWConnection(to: endpoint, using: Conn.tcpParameters())
@@ -67,18 +68,25 @@ final class RelayClient {
             guard let self else { return }
             if case .ready = state {
                 Log.info("relay: connected to \(self.host):\(self.port)")
-                let reg = RelayRegister(v: 1, role: "sender", code: code, pairHash: nil, token: self.token)
+                let reg = RelayRegister(v: 1, role: "sender", code: code, pairHash: pairHash, token: self.token)
                 conn.send(Wire.encodeJSON(.relayRegister, reg))
                 self.backoff = 1
-                print("")
-                print("  ┌───────────────────────────────────┐")
-                print("  │  NetDisplay 配对码 (pairing code)   │")
-                print("  │            \(code)                 │")
-                print("  │  在 Windows 端输入此码即可连接        │")
-                print("  └───────────────────────────────────┘")
-                print("")
-                Log.info("relay: registered with code \(code), waiting for peer")
-                self.onState?(.waitingForPeer(code: code))
+                if pairHash != nil {
+                    // Persistent pairing: peer auto-matches by pairHash, no code entry.
+                    print("\n  ✓ 已持久配对，自动待命（无需配对码）\n")
+                    Log.info("relay: registered with pairHash (persistent pairing), waiting for peer")
+                    self.onState?(.waitingForPeer(code: "已配对·免码"))
+                } else {
+                    print("")
+                    print("  ┌───────────────────────────────────┐")
+                    print("  │  NetDisplay 配对码 (pairing code)   │")
+                    print("  │            \(code)                 │")
+                    print("  │  在 Windows 端输入此码即可连接        │")
+                    print("  └───────────────────────────────────┘")
+                    print("")
+                    Log.info("relay: registered with code \(code), waiting for peer")
+                    self.onState?(.waitingForPeer(code: code))
+                }
             }
         }
     }

@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **v1.4 增量3 持久配对（Mac 端）**：HELLO_ACK 下发 pairSecret（存 ~/.netdisplay-sender/pairSecret）；relay 有 secret 则 pairHash 免码注册。pairHash=hex(sha256(base64decode(secret)))，与 Windows 实测一致。
+
 ### 2026-07-23 更新之二：v1.4 连接/投射解耦（Mac 端增量 1+2 完成）
 
 - ✅ **增量1 解耦**：连接常驻，投射变成可开关/切换/弹回的子状态。发 `PROJECTION_STATE(0x13)`（active:true 带 label / active:false 空闲）；收 `CONTROL(0x21){"bounceBack"}` → 停投射、弹回窗口（reap 舞台屏→窗口回主屏）、转空闲。实测：弹回后 **PONG 正常、无 BYE，连接仍活**。

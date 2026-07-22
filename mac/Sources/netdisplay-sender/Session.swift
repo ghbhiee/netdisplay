@@ -205,7 +205,7 @@ final class Session {
         if !helloAckSent {
             let ack = HelloAck(version: Proto.version, accepted: true,
                                display: .init(width: outW, height: outH, fps: fps, scale: outScale),
-                               codec: "h264", reason: nil, pairSecret: nil)
+                               codec: "h264", reason: nil, pairSecret: PairStore.ensureSecret())
             conn.send(Wire.encodeJSON(.helloAck, ack))
             helloAckSent = true
         } else {
@@ -247,7 +247,7 @@ final class Session {
         let name = r.window.owningApplication?.applicationName ?? "窗口"
         if !helloAckSent {
             conn.send(Wire.encodeJSON(.helloAck, HelloAck(version: Proto.version, accepted: true,
-                display: .init(width: r.pixelWidth, height: r.pixelHeight, fps: fps, scale: 1), codec: "h264", reason: nil, pairSecret: nil)))
+                display: .init(width: r.pixelWidth, height: r.pixelHeight, fps: fps, scale: 1), codec: "h264", reason: nil, pairSecret: PairStore.ensureSecret())))
             helloAckSent = true
         } else {
             sendVideoConfig(width: r.pixelWidth, height: r.pixelHeight, fps: fps)
