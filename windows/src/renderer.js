@@ -288,7 +288,8 @@ function onFrame(type, payload) {
       break;
     }
     case T.VIDEO_CONFIG: {
-      // 中途流参数变化（如 Mac 端单窗口投射 resize）：更新尺寸 + 重置解码器等关键帧（协议 §5）
+      // 中途流参数变化（如单窗口投射 resize）：更新尺寸 + 重置解码器等关键帧（协议 §5）
+      console.log("[recv] VIDEO_CONFIG: " + payload.toString());
       const c = JSON.parse(payload.toString());
       if (c.codec && CODEC_MAP[c.codec]) sessionCodec = c.codec;
       if (c.width && c.height && display) {

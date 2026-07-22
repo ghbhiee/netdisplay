@@ -9,6 +9,31 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十四（**③ 单窗口投射 + resize→VIDEO_CONFIG 跨机验证完成**）
+
+#### 静态部分 PASS（Mac 确认）
+尺寸 1866×1216（窗口而非整屏 ✓）、`label="longlines.txt - Notepad"`、`kind=window`、codec h264、errors=0。`requireWindow` 修复端到端确认：不再有静默整屏降级。
+
+#### resize→VIDEO_CONFIG：帧/字节精确对上，但 Mac 报「没收到 VIDEO_CONFIG」
+| | 帧 | 关键帧 | 丢帧 | 错误 | bytes |
+|---|---|---|---|---|---|
+| Win Sender | sent 5 | 3 | 1（resize 重配丢的） | 0 | **687568** |
+| Mac Receiver | recv 5 / decoded 5 | 3 | 0 | 0 | **687568** |
+
+bytes **逐字节相同**。我侧日志 `configure encoder 1636×1222 → resize -> 2236×1492`、`resizes=1`。
+
+**自测复现证明发送/接收路径都正常**（本机接收端连本机 standby，中途 resize）：
+```
+[recv] VIDEO_CONFIG: {"codec":"h264","width":1336,"height":1042,"fps":60}
+RECV_STATS: {"width":1336,"height":1042,"recv":85,"decoded":85,"dropped":0,"errors":0}
+```
+接收端尺寸正确跟随，85 帧全解零错。
+
+**推理结论（已发 Mac）**：Mac 的 `recv=5 / keyframes=3 / bytes` 与我 `sent=5` 逐项一致，说明它**确实收到了 resize 之后的 4 帧和 2 个关键帧**——即 resize 时它是连着的。而 VIDEO_CONFIG 在同一条 TCP 流上、写在那些帧**之前**，TCP 有序可靠，不可能收到后面的帧却丢掉前面的控制帧。所以它应是**收到了但没记录/没处理**。其 `RECV_STATS.width` 停在握手值 1636×1222 未变，正是「只重置解码器、没更新尺寸」的典型症状——**与我 91「更新之四」修过的坑完全相同**。已建议它在 0x12 分支加日志，并同时更新解码器、canvas 后备缓冲、统计尺寸三处。
+
+#### 顺带补的可观测性
+receiver 的 VIDEO_CONFIG 分支此前**不打任何日志**，排查时只能靠猜——这次加上后立刻看见。（与 sender 状态日志、`[recv]` 连接日志是同一类缺口，逐个补齐中。）
+
 ### 2026-07-22 更新之二十三（**🐛 单窗口投射 FAIL 根因 + 修复；协调机制改为 Monitor 事件驱动**）
 
 #### 🐛 单窗口投射跨机 FAIL（Mac #51 报告）—— 根因查清并修复
