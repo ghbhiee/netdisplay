@@ -58,8 +58,8 @@ function sendControl(action) {
 
 function scheduleReconnect(why) {
   if (manualDisconnect || reconnectTimer) return;
-  // 自动重连仅中转+已持久配对（93 §4：配一次之后自动就绪）
-  if (mode !== "relay" || !pairSecret()) return;
+  // 自动重连需要「无需人工输入即可重建」：中转/自动模式 + 已持久配对
+  if (mode === "direct" || !pairSecret()) return;
   setStatus(`${why || "连接断开"} — ${Math.round(reconnectDelay / 1000)}s 后自动重连…`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
@@ -105,7 +105,7 @@ const deviceId =
 // ================= 设置（全部持久化） =================
 const FIELDS = ["ip", "code", "relayServer", "token", "res", "scale", "fps", "bitrate", "customW", "customH"];
 const CHECKS = ["windowed", "overlayOn"];
-let mode = localStorage.getItem("pref.mode") || "direct";
+let mode = localStorage.getItem("pref.mode") || "auto"; // ux-model：默认自动，用户不必先懂直连/中转
 
 function loadPrefs() {
   for (const id of FIELDS) {
@@ -127,8 +127,14 @@ function applyMode(m) {
   mode = m;
   localStorage.setItem("pref.mode", m);
   for (const b of $("modeSeg").children) b.classList.toggle("on", b.dataset.mode === m);
-  $("grpDirect").classList.toggle("hidden", m !== "direct");
-  $("grpRelay").classList.toggle("hidden", m !== "relay");
+  // 自动模式两组字段都要填（并行探测哪条通用哪条）
+  $("grpDirect").classList.toggle("hidden", m === "relay");
+  $("grpRelay").classList.toggle("hidden", m === "direct");
+  $("modeHint").textContent = {
+    auto: "自动：同时试直连和中转，先通的用哪个",
+    direct: "直连：同一局域网或 USB4 网桥，延迟最低",
+    relay: "中转：跨网络可用，无需公网 IP 或端口转发",
+  }[m] || "";
 }
 $("modeSeg").addEventListener("click", (e) => {
   if (e.target.dataset.mode) applyMode(e.target.dataset.mode);
@@ -169,15 +175,103 @@ function showPanel(overStream) {
   $("btnConnect").textContent = overStream ? "应用并重连" : "连接";
   $("btnDisconnect").style.display = overStream ? "block" : "none";
   $("btnClose").style.display = overStream ? "block" : "none";
+  refreshRoleBar();
+}
+
+// 角色开关只在「已连上或正在投射」时才有意义——没连接时点「投射本机」没有对象
+function refreshRoleBar() {
+  const linked = !!sock || sender.isSending();
+  $("roleBar").classList.toggle("hidden", !linked);
+  const projecting = sender.isSending();
+  $("btnProject").style.display = projecting ? "none" : "block";
+  $("btnProjectStop").style.display = projecting ? "block" : "none";
 }
 function hidePanel() {
   panel.style.display = "none";
 }
 
 // ================= 连接 =================
+// 自动模式：并行试直连与中转，先**握手成功**者胜（happy-eyeballs 风格）。
+// 串行「直连超时再试中转」会在直连不可达时让用户干等数秒——这是 ux-model 采纳的建议。
+//
+// ⚠️ 胜出判据必须是「收到对端的协议响应」，不能是「TCP connect 成功」：
+// 本机装了 Mihomo/Clash 这类代理时，连一个根本不可达的地址 connect 也会成功
+// （代理接管了连接），实测会误判成「已直连」然后卡在黑屏。只有对端按协议回了
+// Sender HELLO / RELAY_PAIRED，才证明这条路真的通到了 NetDisplay 对端。
+function connectAuto() {
+  const port = +((config.args && config.args.port) || 47800);
+  const ip = $("ip").value.trim();
+  const [host, portStr] = $("relayServer").value.trim().split(":");
+  const code = $("code").value.trim();
+  const hash = pairHashHex();
+  const tok = $("token").value.trim();
+  setStatus("自动连接：同时尝试直连与中转…");
+
+  let settled = false;
+  const racers = [];
+
+  // 某条路握手成功 → 它胜出，其余全部丢弃，然后把它交给正常会话逻辑
+  const win = (s, kind, firstFrames) => {
+    if (settled) { s.destroy(); return; }
+    settled = true;
+    for (const r of racers) if (r.sock !== s) r.sock.destroy();
+    sock = s;
+    setStatus(kind === "direct" ? `已直连 ${ip}（低延迟）` : `已通过中转 ${host} 连接`);
+    wireSocket();
+    // 竞速期间已经读出来的帧要补回给正式解析器，否则会丢掉 Sender HELLO
+    for (const [t, p] of firstFrames) onFrame(t, p);
+  };
+
+  const race = (s, kind, onOpen) => {
+    const seen = [];
+    racers.push({ sock: s, kind });
+    s.setNoDelay(true);
+    s.on("connect", () => { try { onOpen(s); } catch {} });
+    // 竞速期用临时解析器：只为判断「对端是不是真的 NetDisplay」
+    const parser = new FrameParser((t, p) => {
+      if (settled) return;
+      seen.push([t, Buffer.from(p)]);
+      // 直连：对端会立即发 Sender HELLO；中转：relay 回 RELAY_PAIRED
+      if (t === T.HELLO || t === T.HELLO_ACK || t === T.RELAY_PAIRED) {
+        s.removeAllListeners("data");
+        win(s, kind, seen);
+      } else if (t === T.RELAY_ERROR) {
+        s.destroy(); // 这条路明确不通，让另一条继续跑
+      }
+    });
+    s.on("data", (d) => { try { parser.feed(d); } catch { s.destroy(); } });
+    s.on("error", () => {});
+  };
+
+  if (ip) {
+    race(net.createConnection(port, ip), "direct", (s) => {
+      s.write(buildFrame(T.HELLO, {
+        version: 1, role: "receiver", name: os.hostname(), deviceId, screen: desiredScreen(),
+        codecs: supportedCodecs,
+      }));
+    });
+  }
+  if (host && (/^\d{6}$/.test(code) || hash)) {
+    race(net.createConnection(+portStr || 47700, host), "relay", (s) => {
+      const join = { v: 1, role: "receiver", code: "" };
+      if (tok) join.token = tok;
+      if (/^\d{6}$/.test(code)) join.code = code; else join.pairHash = hash;
+      s.write(buildFrame(T.RELAY_JOIN, join));
+    });
+  }
+  if (!racers.length) return setStatus("请先填写对方地址，或填写中转服务器与配对码", true);
+
+  setTimeout(() => {
+    if (settled) return;
+    for (const r of racers) r.sock.destroy();
+    setStatus("直连和中转都没握手成功——确认对方已在投射，且地址/配对码正确", true);
+  }, 2500);
+}
+
 function connect() {
   // 运行中「应用并重连」：先静默断开，再按当前设置重连
   if (sock) teardown(null, true);
+  if (mode === "auto") return connectAuto();
   if (mode === "direct") {
     const ip = $("ip").value.trim();
     const port = +((config.args && config.args.port) || 47800);
@@ -532,13 +626,6 @@ $("clearPair").onclick = () => {
   setStatus("已清除持久配对，下次连接需输入配对码");
 };
 
-// WS-1/WS-2 发送端入口
-function refreshSendButtons() {
-  const on = sender.isSending();
-  $("btnSend").style.display = on ? "none" : "block";
-  $("btnSendRelay").style.display = on ? "none" : "block";
-  $("btnSendStop").style.display = on ? "block" : "none";
-}
 const sendStatus = (s) => {
   $("sendStatus").textContent = s;
   if (s) console.log("[sender] " + s); // headless 模式转到 stdout，和 setStatus 的 [recv] 对称
@@ -567,22 +654,35 @@ function applySource() {
 $("btnRefreshSources").onclick = refreshSources;
 $("sendSource").onchange = applySource;
 
-$("btnSend").onclick = async () => {
+// 「投射本机」是一个动作，不再让用户选 listen 还是 register ——
+// 走哪条由上面设的「连接方式」决定，这是 10-ux-model 的核心：
+// transport（连接方式）与 role（谁投谁）是正交的，不该塞进同一个按钮。
+$("btnProject").onclick = async () => {
   applySource();
-  await sender.startSender(sendStatus);
-  refreshSendButtons();
+  // 已作为目标连着对方时，先让出：同一对里同一时刻只能有一个来源（ux-model 抢投编排）
+  if (sock) {
+    setStatus("切换中… 正在请对方停止投射");
+    sendControl("stop");
+    manualDisconnect = true; // 这次断开是我们主动切换，不要触发自动重连
+    teardown(null, true);
+    await new Promise((r) => setTimeout(r, 300));
+    manualDisconnect = false;
+  }
+  const useDirect = mode === "direct" || (mode === "auto" && !pairSecret());
+  if (useDirect) {
+    sendStatus("正在等待对方连入…");
+    await sender.startSender(sendStatus);
+  } else {
+    await sender.startSenderRelay(sendStatus, {
+      server: $("relayServer").value.trim(),
+      token: $("token").value.trim() || undefined,
+    });
+  }
+  refreshRoleBar();
 };
-$("btnSendRelay").onclick = async () => {
-  applySource();
-  await sender.startSenderRelay(sendStatus, {
-    server: $("relayServer").value.trim(),
-    token: $("token").value.trim() || undefined,
-  });
-  refreshSendButtons();
-};
-$("btnSendStop").onclick = () => {
+$("btnProjectStop").onclick = () => {
   sender.stopSender();
-  refreshSendButtons();
+  refreshRoleBar();
 };
 
 // v1.4 目标端控制：弹回 / 停止（Mac 收到后会转空闲并发 PROJECTION_STATE{active:false}）
@@ -651,7 +751,7 @@ window.addEventListener("keyup", (e) => {
         sourceList.filter((s) => s.kind === "window").map((s) => `"${s.name}"`).join(", "));
     }
   }
-  if (a.send) { await sender.startSender(sendStatus); refreshSendButtons(); }
+  if (a.send) { await sender.startSender(sendStatus); refreshRoleBar(); }
   else if (a.sendRelay) {
     await sender.startSenderRelay(sendStatus, {
       server: a.server || $("relayServer").value.trim(),
@@ -661,7 +761,7 @@ window.addEventListener("keyup", (e) => {
       secret: a.secret || undefined, // 共享固定配对（联调）
       pairHash: a.pairhash || undefined,
     });
-    refreshSendButtons();
+    refreshRoleBar();
   }
   // 接收端 headless 中转待命（配 --secret/--pairhash，零码零点击）
   if (a.recvRelay) {
@@ -697,7 +797,8 @@ window.addEventListener("keyup", (e) => {
     setTimeout(dump, +a.sendStatsAfter * 1000);
     if (a.sendStatsRepeat) setInterval(dump, +a.sendStatsAfter * 1000);
   }
-  if (a.connect) { applyMode("direct"); $("ip").value = a.connect; connect(); }
+  if (a.autoConnect) { applyMode("auto"); $("ip").value = a.autoConnect; connect(); }
+  else if (a.connect) { applyMode("direct"); $("ip").value = a.connect; connect(); }
   else if (a.relay != null) {
     applyMode("relay");
     $("code").value = a.relay;

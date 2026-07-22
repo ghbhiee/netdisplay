@@ -61,37 +61,41 @@
       font-size: 11px; color: rgba(255,255,255,.4); pointer-events: none; }
     #pairInfo { font-size: 11px; color: #5d9e63; margin-top: 6px; }
     #pairInfo a { color: #6b7c8d; cursor: pointer; margin-left: 8px; text-decoration: underline; }
+    .hintline { font-size: 11px; color: #5a6b7c; margin-top: 5px; }
+    #roleBar hr { border: 0; border-top: 1px solid #22303f; margin: 18px 0 4px; }
     .hidden { display: none !important; }
   </style>
 </head>
 <body>
   <div id="panel">
     <div class="card">
-      <h1>NetDisplay Receiver</h1>
-      <div class="sub">把这台电脑变成 Mac 的第二块屏幕</div>
+      <h1>NetDisplay</h1>
+      <div class="sub">和另一台设备互投屏幕 —— 配对一次，之后随时切换谁投谁</div>
 
-      <label>连接模式</label>
+      <label>连接方式（收发共用，只设一次）</label>
       <div class="seg" id="modeSeg">
-        <button data-mode="direct">直连（USB4 / 局域网）</button>
-        <button data-mode="relay">服务器中转（配对码）</button>
+        <button data-mode="auto">自动</button>
+        <button data-mode="direct">直连</button>
+        <button data-mode="relay">中转</button>
       </div>
+      <div class="hintline" id="modeHint">自动：同时试直连和中转，先通的用哪个</div>
 
       <div id="grpDirect">
-        <label>Mac 地址（USB4 网桥默认 10.77.0.1）</label>
+        <label>对方地址（局域网 IP，USB4 网桥默认 10.77.0.1）</label>
         <input type="text" id="ip" value="10.77.0.1" spellcheck="false" />
       </div>
 
       <div id="grpRelay" class="hidden">
-        <label>Mac 端显示的 6 位配对码</label>
-        <input type="text" id="code" maxlength="6" placeholder="000000" inputmode="numeric" />
-        <label>中转服务器（示例占位，可改成自己的）</label>
+        <label>中转服务器</label>
         <input type="text" id="relayServer" value="15.tokencv.com:47700" spellcheck="false" />
-        <label>访问令牌 token（服务器启用鉴权时必填）</label>
-        <input type="text" id="token" placeholder="留空 = 不发送 token" spellcheck="false" />
-        <div id="pairInfo" class="hidden">已持久配对 ✓ 免输码<a id="clearPair">清除配对</a></div>
+        <label>访问令牌 token</label>
+        <input type="text" id="token" placeholder="服务器启用鉴权时必填" spellcheck="false" />
+        <label>配对码（仅首次配对需要，之后免码）</label>
+        <input type="text" id="code" maxlength="6" placeholder="000000" inputmode="numeric" />
+        <div id="pairInfo" class="hidden">已配对 ✓ 免输码<a id="clearPair">解除配对</a></div>
       </div>
 
-      <label>分辨率 / 缩放（macOS 端 UI 大小）</label>
+      <label>作为目标时的画质（本机被投射时用；对方采纳）</label>
       <div class="row">
         <select id="res">
           <option value="auto">自动（本机屏幕）</option>
@@ -125,34 +129,37 @@
       <label class="chk"><input type="checkbox" id="windowed" />窗口模式（不全屏，1:1 像素显示）</label>
       <label class="chk"><input type="checkbox" id="overlayOn" checked />显示统计浮层（RTT / fps / 丢帧）</label>
 
-      <label>发送端（把本机屏幕/窗口投给对方）</label>
-      <div class="row" style="margin-bottom:6px">
-        <select id="sendSource"><option value="">整个屏幕</option></select>
-        <button id="btnRefreshSources" class="secondary" style="flex:0 0 68px;padding:8px;border-radius:6px;border:1px solid #2a3948">刷新</button>
-      </div>
-      <div class="actions" style="margin-top:6px">
-        <button id="btnSend" class="secondary" style="background:#1b3a2a;color:#9fd7a8">▶ 直连发送 (:47800)</button>
-        <button id="btnSendRelay" class="secondary" style="background:#1b2f3a;color:#9fc2d7">☁ 中转发送</button>
-        <button id="btnSendStop" class="secondary" style="display:none">停止发送</button>
-      </div>
-      <div id="sendStatus" style="font-size:11px;color:#5d9e63;min-height:14px;margin-top:4px"></div>
-
       <div class="actions">
         <button id="btnConnect">连接</button>
         <button id="btnDisconnect">断开</button>
         <button id="btnClose">返回画面</button>
       </div>
       <div id="status"></div>
+
+      <!-- 连接之后才出现：角色开关。连接方式已在上面设过，这里不再区分直连/中转 -->
+      <div id="roleBar" class="hidden">
+        <hr />
+        <label>投射本机（把本机画面投给对方）</label>
+        <div class="row" style="margin-bottom:6px">
+          <select id="sendSource"><option value="">整个屏幕</option></select>
+          <button id="btnRefreshSources" class="secondary" style="flex:0 0 60px;padding:8px;border-radius:6px;border:1px solid #2a3948">刷新</button>
+        </div>
+        <div class="actions" style="margin-top:6px">
+          <button id="btnProject" style="background:#1b3a2a;color:#9fd7a8">● 投射本机</button>
+          <button id="btnProjectStop" class="secondary" style="display:none">■ 停止投射</button>
+        </div>
+        <div id="sendStatus" style="font-size:11px;color:#5d9e63;min-height:14px;margin-top:4px"></div>
+      </div>
     </div>
   </div>
 
   <div id="stage"><canvas id="video"></canvas></div>
   <div id="idle">
     <div class="big">等待投射…</div>
-    <div class="small">连接保持中 · 在 Mac 上开始投射即自动显示</div>
+    <div class="small">连接保持中 · 对方开始投射即自动显示</div>
   </div>
   <div id="toolbar">
-    <button id="btnBounce">⏏ 弹回 Mac</button>
+    <button id="btnBounce">⏏ 弹回对方</button>
     <button id="btnStop">■ 停止投射</button>
     <button id="btnSettings">⚙ 设置</button>
   </div>
