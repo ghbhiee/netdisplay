@@ -13,6 +13,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > - 2026-07-22 v1.1 HELLO_ACK.display 增加**可选 `scale` 字段**（HiDPI 因子）；明确 **Sender 可覆盖 Receiver 请求的分辨率/缩放**，Receiver 一律以 HELLO_ACK.display 为唯一权威尺寸。向后兼容（老 Receiver 忽略 scale 即可）。（Mac 端 Claude）
 > - 2026-07-22 v1.2 HELLO.screen 增加**可选 `bitrateMbps` 字段**（Receiver 期望码率，Mbps 整数）：Sender 可采纳、可用 `--bitrate` 覆盖、也可忽略（老 Sender 的 JSON 解码会跳过未知字段，天然兼容）。用途：Receiver 设置界面里让用户调码率，重连生效。（Windows 端 Claude）
 > - 2026-07-22 v1.3 **codec 协商**（Receiver 端已实现，Sender 待实装，未实装时行为不变）：Receiver HELLO 增加可选顶层 **`codecs`** 数组——按偏好排序的解码能力，取值 `"hevc444"`（HEVC Rext Main 4:4:4）/`"hevc"`（HEVC Main 4:2:0）/`"h264"`。Sender 从中挑选并在 HELLO_ACK 的 `codec` 字段返回（原值 `"h264"` 扩展为可回 `"hevc"`/`"hevc444"`）；VIDEO_FRAME 载荷格式不变（HEVC 同样 Annex-B，关键帧内联 VPS/SPS/PPS）。VIDEO_CONFIG 的 `codec` 同步扩展。老 Sender 忽略 `codecs` 回 `"h264"`，天然兼容。依据：Windows 端实测硬解支持 HEVC Rext 4:4:4（见 91）。（Windows 端 Claude）
+> - 2026-07-23 v1.8 **JSON 兼容性通用规则 + VIDEO_CONFIG 字段必需/可选定明**：§0 加通用规则「接收方必须容忍未知字段与缺失可选字段，不得整条丢弃」（承接 v1.7 那个 bug 的根本预防，适用所有 JSON 消息）；§5 定明 VIDEO_CONFIG 必需=codec/width/height、可选=fps/bitrateMbps（缺省=不变）。Mac 端 fps 也已改可选。（Mac 端 Claude，Windows 端提议）
 > - 2026-07-23 v1.7 **VIDEO_CONFIG.bitrateMbps 明确为可选**：接收端 JSON 模型必须把它设为 optional，否则收到不带该字段的 VIDEO_CONFIG(Windows Sender 不发)会解码失败并静默丢弃，中途 resize 跟不上（Mac 端已踩坑修复；见 §5）。（Mac 端 Claude）
 > - 2026-07-23 v1.6 **codec `"hevc422"`**（承接 v1.3；Windows 实测硬解通过，Mac 编码器待实装）：`codecs`/`HELLO_ACK.codec`/`VIDEO_CONFIG.codec` 新增能力值 **`"hevc422"`** = HEVC Rext **Main 4:2:2 10-bit**（Windows 端 codec string `hev1.4.10.*`）。这是 Mac(M5 VideoToolbox) 硬编能到的最佳色度（**编不了 4:4:4**，见 90）。VIDEO_FRAME 载荷不变（Annex-B，**关键帧内联 VPS+SPS+PPS**，HEVC 三参数集）。协商必须**保留 `h264` 回退**（HEVC 无软解兜底）。偏好序建议 Receiver 上报 `["hevc422","hevc","h264"]`。（Mac 端 Claude）
 > - 2026-07-23 v1.5 **Relay token 认证**（仓库转公开，防公网滥用）：`RELAY_REGISTER`/`RELAY_JOIN` 增加可选 `token` 字段；relay 校验 token（与其配置一致才受理，否则回 `RELAY_ERROR{"reason":"unauthorized"}` 并断开）。**客户端两端把 relay 地址 + token 做成可配置项**（不硬编码进仓库）。relay 未配置 token 时可放行（向后兼容/私网）。（Mac 端 Claude）
@@ -22,6 +23,7 @@ tags: [netdisplay, handoff, protocol, spec]
 
 - 所有多字节整数为**大端序（big-endian）**。
 - 所有 JSON 载荷为 UTF-8 编码、无 BOM。
+- **JSON 兼容性（v1.8，通用规则，适用于所有 JSON 消息 HELLO/HELLO_ACK/VIDEO_CONFIG/PROJECTION_STATE/…）**：接收方**必须容忍未知字段**（忽略）**与缺失的可选字段**（用默认/不变），**不得因为多一个或少一个字段就整条消息解码失败并丢弃**。反例即 2026-07-23 的真 bug：把 VIDEO_CONFIG 的可选字段声明为必需 → 对端不发 → 整条静默丢弃。以后每加新字段（如 hevc422、直连协商）都靠这条原则平滑演进。**推论：每个会改变状态或可能解析失败的分支都要留一行日志**，否则跨端排查只能靠复现和猜测。
 - 所有 TCP 连接必须设置 `TCP_NODELAY`。
 - 端口：Sender 直连监听 **TCP 47800**；调试裸流 **TCP 47801**；Relay **TCP 47700**。
 - `PROTOCOL_VERSION = 1`。HELLO 交换时版本不一致则发 BYE 并断开。
@@ -157,7 +159,7 @@ Sender → Receiver 的 HELLO：
 { "codec": "h264", "width": 2560, "height": 1600, "fps": 60, "bitrateMbps": 40 }
 ```
 
-- `bitrateMbps` **可选**：接收端解码不需要它（宽/高/帧率/codec 才是必需）。**Receiver 的 JSON 模型必须把它设为可选**——否则收到不带该字段的 VIDEO_CONFIG（Windows Sender 不发它）会解码失败并**静默丢弃整条 VIDEO_CONFIG**，中途 resize 就跟不上（Mac 端 2026-07-23 踩过，已修：v1.7）。
+- **字段必需/可选（v1.8 定明）**：**必需** `codec` / `width` / `height`；**可选** `fps` / `bitrateMbps`（缺省表示不变）。发送方发全字段更安全；接收方两个可选字段都必须容忍缺省。
 - Receiver 收到后应**同时**：重置解码器、更新记录的尺寸（统计/canvas）、（有窗口时）跟随 resize，并请求关键帧。只重置解码器而不更新尺寸会画错。
 
 M1/M2 阶段参数固定，可不实现发送方；Receiver 必须能容忍收到它（重置解码器）。

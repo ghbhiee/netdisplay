@@ -150,11 +150,13 @@ struct HelloAck: Codable {
 }
 
 struct VideoConfig: Codable {
+    // Required: codec/width/height. Optional (absent = unchanged): fps/bitrateMbps.
+    // Receivers must tolerate missing optional fields + unknown fields (02 §5, v1.8).
     let codec: String
     let width: Int
     let height: Int
-    let fps: Int
-    let bitrateMbps: Int?   // optional: receivers don't need it, and peers (Windows) omit it
+    let fps: Int?
+    let bitrateMbps: Int?
 }
 
 struct ByeMsg: Codable {

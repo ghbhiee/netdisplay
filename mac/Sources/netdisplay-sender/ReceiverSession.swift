@@ -190,7 +190,7 @@ final class ReceiverSession {
             return
         }
         let newCodec = VideoCodec(rawValue: cfg.codec) ?? chosenCodec
-        Log.info("VIDEO_CONFIG → \(cfg.width)x\(cfg.height)@\(cfg.fps) \(cfg.codec) — resetting decoder + following size")
+        Log.info("VIDEO_CONFIG → \(cfg.width)x\(cfg.height)@\(cfg.fps ?? 0) \(cfg.codec) — resetting decoder + following size")
         chosenCodec = newCodec
         // Follow the new size everywhere: stats field, backpressure state, and the window.
         statLock.lock(); streamW = cfg.width; streamH = cfg.height; statLock.unlock()

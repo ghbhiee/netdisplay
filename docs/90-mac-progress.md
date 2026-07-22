@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **v1.4 四项联调全部 PASS（③单窗口+resize 收工）+ 协议 v1.8 加固**：③最终对账逐字节一致(两侧 width=2236 recv=7=sent=7 keyframes=3 bytes=621619)。承接 VIDEO_CONFIG 那个 bug 的根本预防：VideoConfig 的 fps 也改可选；02 §0 加通用规则「接收方容忍未知字段+缺失可选字段，不得整条丢弃」、§5 定明必需(codec/width/height)/可选(fps/bitrateMbps)。以后加字段(hevc422/直连协商)平滑演进不再重演静默丢弃。构建通过。
+- **下一件大的：直连优化**。我的 Mac LAN IP=192.168.50.119（en0）。已发频道，等 Windows 的内网 IP 看是否同网段可直连(省中转 ~300ms)。
+
 - 🐛✅ **修复 VIDEO_CONFIG 静默丢弃（Windows 证据链定位）**：根因=我的 `VideoConfig` 结构体 `bitrateMbps` 非可选，而 Windows 的 VIDEO_CONFIG 不带该字段 → `JSONDecoder` 解码失败 → guard 静默 return，收到的每条 VIDEO_CONFIG 都被丢、中途 resize 跟不上。Windows 用「我 RECV_STATS 与他 sent 逐项一致(recv=5 keyframes=3 bytes=687568)」证明 TCP 有序下我必然收到了 VIDEO_CONFIG——铁证。修：①bitrateMbps 改可选；②handleVideoConfig 现在 log+更新 streamW/H+重置背压+onResize 回调让窗口跟随+解码失败也打日志(永不再静默)。direct/relay/菜单栏都接了 onResize。02 记 v1.7、§5 补可选说明。构建通过。跨机确认待 Windows 触发一次真·中途 resize。
 
 - ✅ **单窗口投射跨机 PASS + 我的 PROJECTION_STATE 上浮验证**：Win→Mac 投 Notepad 窗口，Mac 收到尺寸 **1866x1216(窗口非整屏)**、codec h264、**label="longlines.txt - Notepad" kind=window**——本轮加的 onProjectionState→窗口标题这条链跨机实测通了。Windows 也修了个真 bug(指定窗口找不到时静默退回整屏 / BYE 不带原因)。resize→VIDEO_CONFIG 待测。
