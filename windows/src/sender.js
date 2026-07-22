@@ -269,7 +269,13 @@ async function startSession(sock, receiverHello, relayMode) {
       spsCache = null; // 新尺寸的参数集会随下一个关键帧重新给出
       width = w; height = h;
       st.width = w; st.height = h; st.resizes = (st.resizes || 0) + 1;
-      sock.write(buildFrame(T.VIDEO_CONFIG, { codec: ack.codec, width: w, height: h, fps }));
+      // 带上 bitrateMbps：协议 §5 的示例含此字段，对端若按示例声明为必需字段，
+      // 少发会导致整条 JSON 解码失败（Mac 端实测就是这样静默吞掉了每条 VIDEO_CONFIG）。
+      // 发全字段对双方都更安全。
+      sock.write(buildFrame(T.VIDEO_CONFIG, {
+        codec: ack.codec, width: w, height: h, fps,
+        bitrateMbps: Math.round(bitrate / 1e6),
+      }));
       forceKey = true; // Receiver 收到 VIDEO_CONFIG 会重置解码器，必须给关键帧
       dbg("resize ->", w, "x", h);
     } finally {
