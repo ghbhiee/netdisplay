@@ -21,8 +21,14 @@ const testArgs = {
   token: arg("token"), // 测试：relay 访问令牌
   testPairSecret: arg("test-pair-secret"), // 测试：预置 pairSecret（base64）
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
+  sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
+  sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
 };
 const isTest = !!testArgs.exitAfter;
+
+// 测试隔离：多实例并跑时各用独立 userData（否则 localStorage 抢锁、写入不落盘）
+const userDataDir = arg("user-data");
+if (userDataDir) app.setPath("userData", userDataDir);
 
 let win = null;
 let tray = null;

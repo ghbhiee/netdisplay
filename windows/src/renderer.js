@@ -500,13 +500,23 @@ $("clearPair").onclick = () => {
   setStatus("已清除持久配对，下次连接需输入配对码");
 };
 
-// WS-1 发送端入口
+// WS-1/WS-2 发送端入口
 function refreshSendButtons() {
-  $("btnSend").style.display = sender.isSending() ? "none" : "block";
-  $("btnSendStop").style.display = sender.isSending() ? "block" : "none";
+  const on = sender.isSending();
+  $("btnSend").style.display = on ? "none" : "block";
+  $("btnSendRelay").style.display = on ? "none" : "block";
+  $("btnSendStop").style.display = on ? "block" : "none";
 }
+const sendStatus = (s) => { $("sendStatus").textContent = s; };
 $("btnSend").onclick = async () => {
-  await sender.startSender((s) => { $("sendStatus").textContent = s; });
+  await sender.startSender(sendStatus);
+  refreshSendButtons();
+};
+$("btnSendRelay").onclick = async () => {
+  await sender.startSenderRelay(sendStatus, {
+    server: $("relayServer").value.trim(),
+    token: $("token").value.trim() || undefined,
+  });
   refreshSendButtons();
 };
 $("btnSendStop").onclick = () => {
@@ -560,7 +570,16 @@ window.addEventListener("keyup", (e) => {
   if (a.windowed) $("windowed").checked = true;
   if (a.testPairSecret) { localStorage.setItem("pairSecret", a.testPairSecret); updatePairInfo(); }
   if (a.token) $("token").value = a.token;
-  if (a.send) { await sender.startSender((s) => { $("sendStatus").textContent = s; }); refreshSendButtons(); }
+  if (a.send) { await sender.startSender(sendStatus); refreshSendButtons(); }
+  else if (a.sendRelay) {
+    await sender.startSenderRelay(sendStatus, {
+      server: a.server || $("relayServer").value.trim(),
+      token: a.token || undefined,
+      fixedCode: a.sendRelayCode || undefined,
+      forceCode: !!a.sendRelayCode,
+    });
+    refreshSendButtons();
+  }
   if (a.autoBounce) setTimeout(() => sendControl("bounceBack"), +a.autoBounce * 1000);
   if (a.connect) { applyMode("direct"); $("ip").value = a.connect; connect(); }
   else if (a.relay != null) {

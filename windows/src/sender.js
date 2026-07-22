@@ -75,7 +75,7 @@ async function captureScreenTrack(fps) {
 }
 
 // ---------- 会话 ----------
-async function startSession(sock, receiverHello) {
+async function startSession(sock, receiverHello, relayMode) {
   const fps = Math.min(60, Math.max(30, receiverHello?.screen?.fps || 60));
   const bitrate = (receiverHello?.screen?.bitrateMbps || 40) * 1e6; // v1.2：采纳 Receiver 期望码率
   const track = await captureScreenTrack(fps);
@@ -89,14 +89,14 @@ async function startSession(sock, receiverHello) {
   const height = first.value.codedHeight & ~1;
 
   // MVP：display = 实际抓取尺寸（忽略 screen 请求的宽高，已在 91 与 Mac 确认）
-  sock.write(
-    buildFrame(T.HELLO_ACK, {
-      version: 1,
-      accepted: true,
-      display: { width, height, fps },
-      codec: "h264", // MVP 固定 h264；codec 协商随 hevc422 一起做（91 已确认）
-    })
-  );
+  const ack = {
+    version: 1,
+    accepted: true,
+    display: { width, height, fps },
+    codec: "h264", // MVP 固定 h264；codec 协商随 hevc422 一起做（91 已确认）
+  };
+  if (relayMode) ack.pairSecret = getPairSecret(); // v1.4 持久配对下发（中转模式）
+  sock.write(buildFrame(T.HELLO_ACK, ack));
   sock.write(buildFrame(T.PROJECTION_STATE, { active: true, label: `${os.hostname()} 屏幕`, sourceKind: "desktop" }));
 
   let forceKey = true; // 首帧必须关键帧（02 §3.1）
@@ -194,12 +194,8 @@ async function startSession(sock, receiverHello) {
   };
 }
 
-// ---------- 对外：启动/停止发送端 ----------
-async function startSender(statusCb) {
-  if (server) return;
-  onStatus = statusCb || (() => {});
-  server = net.createServer((sock) => {
-    if (active) { sock.destroy(); return; } // 单连接：拒绝并发（MVP）
+// ---------- Receiver 连接处理（直连/中转共用） ----------
+function attachReceiverHandler(sock, relayMode) {
     sock.setNoDelay(true);
     onStatus("Receiver 已连入，握手中…");
     sock.write(
@@ -215,7 +211,7 @@ async function startSender(statusCb) {
             return;
           }
           try {
-            active = await startSession(sock, hello);
+            active = await startSession(sock, hello, relayMode);
           } catch (e) {
             onStatus("启动采集失败: " + e.message);
             sock.write(buildFrame(T.BYE, { reason: "capture failed" }));
@@ -246,18 +242,100 @@ async function startSender(statusCb) {
     });
     sock.on("close", () => {
       if (active && active.sock === sock) { active.projectionStop(); active = null; }
-      onStatus("Receiver 已断开，继续监听…");
+      onStatus(relayMode ? "Receiver 已断开" : "Receiver 已断开，继续监听…");
     });
     sock.on("error", () => {});
+}
+
+// ---------- 对外：直连模式（监听 47800） ----------
+async function startSender(statusCb) {
+  if (server) return;
+  onStatus = statusCb || (() => {});
+  server = net.createServer((sock) => {
+    if (active) { sock.destroy(); return; } // 单连接：拒绝并发（MVP）
+    attachReceiverHandler(sock, false);
   });
   server.listen(47800, () => onStatus("发送端就绪：监听 :47800，等待 Receiver 连入"));
   server.on("error", (e) => { onStatus("监听失败: " + e.message); server = null; });
 }
 
+// ---------- 中转模式（WS-2）：REGISTER → PAIRED → 同一会话逻辑 ----------
+// 持久配对（02 §10.1）：Windows 作为 Sender 时生成并持久保存 pairSecret，
+// 中转会话的 HELLO_ACK 下发给 Receiver；首次配对成功后改用 pairHash 免码注册。
+function getPairSecret() {
+  let s = localStorage.getItem("sender.pairSecret");
+  if (!s) {
+    s = nodeCrypto.randomBytes(32).toString("base64");
+    localStorage.setItem("sender.pairSecret", s);
+  }
+  return s;
+}
+const pairHashOfSecret = () =>
+  nodeCrypto.createHash("sha256").update(Buffer.from(getPairSecret(), "base64")).digest("hex");
+
+let relayActive = false; // 中转模式开着（含等待配对/会话中/重连间隙）
+let relayCurSock = null;
+let relayTimer = null;
+
+async function startSenderRelay(statusCb, opts = {}) {
+  if (relayActive || server) return;
+  onStatus = statusCb || (() => {});
+  relayActive = true;
+  const [host, portStr] = (opts.server || "15.tokencv.com:47700").split(":");
+  const port = +portStr || 47700;
+
+  const registerOnce = () => {
+    if (!relayActive) return;
+    const paired = localStorage.getItem("sender.everPaired") === "1" && !opts.forceCode;
+    const code = opts.fixedCode || String(100000 + (nodeCrypto.randomBytes(4).readUInt32BE(0) % 900000));
+    const sock = net.createConnection(port, host, () => {
+      sock.setNoDelay(true);
+      const reg = { v: 1, role: "sender", code: paired ? "" : code };
+      if (paired) reg.pairHash = pairHashOfSecret();
+      if (opts.token) reg.token = opts.token;
+      sock.write(buildFrame(T.RELAY_REGISTER, reg));
+      onStatus(paired ? "已持久配对 · 待命中（免码）" : `等待配对 · 配对码 ${code}`);
+      dbg("relay registered", paired ? "pairHash" : "code " + code);
+    });
+    relayCurSock = sock;
+    const preParser = new FrameParser((type, payload) => {
+      if (type === T.RELAY_PAIRED) {
+        localStorage.setItem("sender.everPaired", "1");
+        opts.forceCode = false; // 固定码只用于首次注册；之后走 pairHash 免码
+        // 残留字节交接（RELAY_PAIRED 和对端 HELLO 可能同 chunk 到达）
+        const remnant = preParser.buf;
+        preParser.buf = Buffer.alloc(0);
+        sock.removeAllListeners("data");
+        attachReceiverHandler(sock, true);
+        if (remnant.length) process.nextTick(() => sock.emit("data", remnant));
+      } else if (type === T.RELAY_ERROR) {
+        const r = JSON.parse(payload.toString()).reason;
+        dbg("RELAY_ERROR:", r);
+        onStatus("中转注册失败: " + r);
+        sock.destroy();
+      }
+    });
+    sock.on("data", (d) => { try { preParser.feed(d); } catch { sock.destroy(); } });
+    sock.on("error", () => {});
+    sock.on("close", () => {
+      if (active && active.sock === sock) { active.projectionStop(); active = null; }
+      if (relayActive) {
+        // 会话结束/断线 → 3s 后重新注册待命（pairHash 房间可替换注册，自愈）
+        onStatus("中转连接断开，3s 后重新注册…");
+        relayTimer = setTimeout(registerOnce, 3000);
+      }
+    });
+  };
+  registerOnce();
+}
+
 function stopSender() {
+  relayActive = false;
+  clearTimeout(relayTimer);
+  if (relayCurSock) { try { relayCurSock.destroy(); } catch {} relayCurSock = null; }
   if (active) { active.stop(); active = null; }
   if (server) { try { server.close(); } catch {} server = null; }
   onStatus("发送端已停止");
 }
 
-module.exports = { startSender, stopSender, isSending: () => !!server };
+module.exports = { startSender, startSenderRelay, stopSender, isSending: () => !!server || relayActive };

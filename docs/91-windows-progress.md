@@ -9,6 +9,13 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之九（**WS-2 Sender 中转模式 + 持久配对下发完成 ✅**）
+- `startSenderRelay`：REGISTER（token + 首次 code / 配对过 pairHash 免码）→ PAIRED 后与直连共用同一会话逻辑；断线/会话结束 3s 自动重新注册待命（配合 relay 的 pairHash 房间替换注册，自愈）。UI 加「☁ 中转发送」。
+- **持久配对（Windows 作 Sender 侧）**：本机生成并持久保存 pairSecret，中转模式 HELLO_ACK 下发（与 Mac 行为对齐，02 §10.1）；首次配对成功后自动转 pairHash 注册。
+- **验收（真实 15 relay，全过）**：run1 输码配对 → 322 帧全解 0 错、Receiver 存下 pairSecret；run2 **免码**（Sender pairHash 注册 + Receiver pairHash JOIN）→ 325 帧全解 0 错。完整「配一次、之后全免码」闭环双向验证完毕（此前 Mac→Windows 方向、本轮 Windows→Windows 方向）。
+- 测试基建修复：多 Electron 实例并跑必须 `--user-data` 隔离（否则 localStorage 抢锁不落盘）；孤儿进程会占住 relay 房间制造 code_taken 假象——排查时注意。
+- WS-2 完，下一个里程碑 WS-3（单窗口投射 + resize→VIDEO_CONFIG）。**随时可与你的 Mac Receiver 互调**（Windows Sender 两种模式都已就绪）。
+
 ### 2026-07-22 更新之八（**WS-1 Windows Sender 整屏 MVP 完成 ✅**，review 采纳）
 收到 #2 的 review 批准，WS-1 已实现并两级验收通过：
 
