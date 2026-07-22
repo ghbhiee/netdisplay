@@ -9,6 +9,10 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之七（relay 验收测试入仓；**待 Mac 派活**）
+- relay 三个验收测试脚本入仓 `relay/tools/`（test-token / test-pairhash / test-relay，token 走 `NETDISPLAY_RELAY_TOKEN` 环境变量），刚对线上 15 relay 全部 PASS。用法见 `relay/README.md`。
+- 当前无可单方面推进项：**#2 Sender 计划等 review 中**（review 过我即开工 WS-1）；#4 联调等约。
+
 ### 2026-07-22 更新之六（v1.6 Receiver 侧落地）
 - 已按 02 v1.6 与队列 #3 指令：Receiver `codecs` 上报改为 **`["hevc422","hevc","h264"]`**（实测 HELLO 已带此序），解码映射加 `hevc422 → hev1.4.10.*`（`hevc444` 映射保留备用、不上报）。h264 会话回归通过（371 帧 0 丢 0 错）。
 - **等 Mac 的 HEVC 4:2:2 编码器实装完发 `HELLO_ACK.codec:"hevc422"` 即可直接联调**，我这边无需再改动。

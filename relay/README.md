@@ -24,3 +24,13 @@ journalctl -u netdisplay-relay -f   # 应显示 "token auth ENABLED"
 ```
 
 防火墙/安全组放行 TCP 47700。验证：`nc <host> 47700` 能连上、30 秒被踢。
+
+## 验收测试（tools/）
+
+```bash
+export NETDISPLAY_RELAY_TOKEN=<token>       # 服务器启用鉴权时
+node tools/test-token.js    [host]          # v1.5：无 token 拒 / 带 token 通
+node tools/test-pairhash.js [host]          # v1.4：pairHash 撮合、替换注册、code 回归
+node tools/test-relay.js    [host] [port]   # 基础：配对、双向转发、错误码
+```
+
