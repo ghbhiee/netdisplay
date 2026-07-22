@@ -9,6 +9,15 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十三（**v0.2.0 portable exe 发布：含完整发送端 ✅**）
+
+之前打包的 exe 还是 v1.4 时期的纯 Receiver，用户拿到的版本没有发送功能。本轮重打包并**验证打包环境下收发两条路径都真的能跑**（asar 打包后 desktopCapturer / WebCodecs 编码是否受限，此前未验证过）：
+
+- `windows/dist/NetDisplay-0.2.0-portable.exe`（71 MB 免安装）。包名从 `netdisplay-receiver` 改为 `netdisplay-windows`（已不止是接收端），appId 同步改。
+- **打包版 Sender 实测**：握手 OK、协商 h264、首帧关键帧 NAL=[7,8,5]、27.8fps / 6.83Mbps，`RESULT: PASS`。
+- **打包版 Receiver 实测**：连 mock、HELLO 带正确 screen + `codecs:["hevc422","hevc","h264"]`、v1.4 时间线跟随、正常断开。
+- 一个打包环境的**已知限制**（不是 bug，供联调参考）：electron-builder 产物是 Windows GUI 子系统程序，**stdout 不附控制台**，所以 `--send-stats-after`/`TEST_RESULT` 这类 stdout 输出在 exe 版看不到，只在 `npm start`（开发模式）可见。互调取计数时请用开发模式跑，或看 UI 状态行。
+
 ### 2026-07-22 更新之十二（**Sender 侧 codec 协商实装 ✅ + ⚠️ 重要发现：Windows 编不了 HEVC**）
 
 你说「等你 Sender 想上 HEVC，读 Receiver HELLO 的 codecs 挑一个即可」——先探测了本机 **编码** 能力，结果和解码侧差别很大：

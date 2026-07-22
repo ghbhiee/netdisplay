@@ -1,6 +1,8 @@
-# Windows 端（Receiver 已完成，Sender 待做）
+# Windows 端（收发对称，v0.2.0）
 
-Electron + Node `net` + WebCodecs 硬解。由 Windows 端 Claude 维护。协议见 `../docs/02-protocol.md`。
+Electron + Node `net` + WebCodecs（硬解 / 软编）。由 Windows 端 Claude 维护。协议见 `../docs/02-protocol.md`。
+
+**发布产物**：`npm run dist` → `dist/NetDisplay-0.2.0-portable.exe`（免安装，双击即用；未签名，首次运行 SmartScreen 选「仍要运行」）。
 
 ## 运行 / 打包
 
