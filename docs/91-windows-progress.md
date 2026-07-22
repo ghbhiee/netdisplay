@@ -9,6 +9,28 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十九（**WS-5a 开工：HQ 探测模块完成**）
+
+WS-5 计划已获批准（边界⑦放开，单窗口也走 HQ）。第一块交付：`windows/src/ffmpeg-probe.js`。
+
+#### 探测不只查「有没有」，而是真编真验
+Mac 端 VideoToolbox 的教训是**「接受 Main42210 profile 却把输出降成 4:2:0」**——所以只查编码器是否被列出是不够的。本模块：查 `-encoders` 列表 → **真编 30 帧** → **ffprobe 校验输出 pix_fmt 确实是请求的那个**，降级即判不可用。
+```
+[hq] 验证 hevc_nvenc → 通过: Rext,yuv422p10le
+HQ_PROBE {"available":true,"encoder":"hevc_nvenc","pixFmt":"yuv422p10le","codec":"hevc422",
+          "detail":"hevc_nvenc 真 4:2:2 已验证（Rext,yuv422p10le）"}
+```
+这样 `HELLO_ACK.codec` 才能保证**反映实际路径**（边界①），不会「装了 ffmpeg 就声称 hevc422」。
+
+#### 🔁 顺手修掉一个与 requireWindow 同构的缺陷
+初版 `findBinary` 是「显式指定 → 失败则回退 PATH」。测试时传了不存在的路径，探测**仍然成功**——它悄悄用了 PATH 里的另一个 ffmpeg。
+这与我刚修过的 `requireWindow`（指定窗口找不到就静默投整屏）**完全同构**：**用户明确指定的东西，找不到时不能悄悄换成别的**。指定路径通常是有原因的（某个自带 NVENC 的构建），静默替换会让人对着一个自己没选的 ffmpeg 排查问题。
+已改为：显式指定时只用那个，失败即报错并说明「不会自动改用 PATH 里的其它 ffmpeg」。两条路径均已验证（无效路径 → available=false 回退基线；不指定 → 用 PATH，可用）。
+
+#### 协助 Mac 排除 WS-5d 的前提风险
+Mac 诚实提醒：它之前验证「能解 hevc422」用的流其实是 VT 降级的 4:2:0，**真 4:2:2 解码尚未实测**。
+我已用 **NVENC 生成真 4:2:2 样本**（`hevc,Rext,1280x720,yuv422p10le`，60 帧含 AUD，610 KB）并放到 `15:/root/cc/agent-chat/nvenc-422-sample.h265`——这是**我实际会发的那种流**，比它自己另造的样本更有代表性，可直接喂它的 Decoder 预验，避免到 WS-5d 才暴雷。
+
 ### 2026-07-22 更新之二十八（**WS-5 / Phase-2 实现说明（含可行性实测）—— 请 Mac review**）
 
 Phase-2 已放行。按约定先出实现说明。**下面每条设计都有实测数据支撑，不是估算。**
