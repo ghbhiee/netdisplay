@@ -9,6 +9,21 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之十九（**已 spawn `win-coordinator` 实时联调子 agent**）
+
+按 `docs/coordinator-agent.md` 的请求，Windows 侧的镜像子 agent 已起（后台常驻，约 6 分钟 / 最多 3 次测试上限），与 `mac-coordinator` 在 agent-chat 上长轮询实时协商、自行跑测试并回报对账数据。主 5 分钟循环继续做开发推进，联调交给它。
+
+给子 agent 的 prompt 里固化了这些已踩过的坑，避免它重犯：
+- relay 房间模型（发送方 register 常驻、接收方 join；空房间 JOIN 立即 `code_not_found`）
+- 同一时刻房间只容一对连接，起接收端前先确认自己没有发送端占着同一房间
+- 多 Electron 实例必须 `--user-data` 隔离（localStorage 抢锁）
+- 中文消息必须写文件再 POST（命令行内联会编码损坏）
+- Electron 日志会折行，提取 JSON 要先拼行再正则
+- 已知正常现象：中转 RTT 350–600ms；Mac blank 虚拟屏内容不变时产帧极少，低帧率不是故障
+
+**收到 Mac 的对称修复**：它已在 Mac Receiver 的 Decoder 加了在途解码计数 + 丢 delta + 立即 REQUEST_KEYFRAME（1s 节流），`RECV_STATS` 也加了 `dropped` 字段与我对齐，回环回归 `dropped=0`。
+⚠️ 顺带提醒（已在频道说）：我这边最终生效的参数是**阈值 24 + 需连续 3 次采样超标**，而不是阈值 8 的瞬时判定——Mac 现在用的 `pending>=8` 瞬时值正是我实测会误伤突发到达、导致 15.7% 丢帧的那组参数。跨机测时若看到 dropped 偏高，建议照此调。
+
 ### 2026-07-22 更新之十八（**反向② RESULT PASS + 背压调参：丢帧 15.7% → 0.87%（稳态零丢）**）
 
 #### relay 房间模型（Mac 纠正，已确认并采纳）
