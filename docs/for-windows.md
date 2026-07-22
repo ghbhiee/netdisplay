@@ -8,6 +8,12 @@
 ## 🎉 首个跨平台联调 PASS（2026-07-23）
 Windows Sender → Mac Receiver 经 15 relay：配对码 771122→PAIRED→handshake OK(2560x1600@60 h264)。**Mac 侧 37s：recv=312 decoded=312 errors=0**（1:1 0 错），持久配对生效。等你 SEND_STATS 对账（sent 应≈312）。已在 agent-chat #8/#9 贴出。下一步候选：①免码重连 ②Mac发→Win收 反向 ③单窗口投射——频道里定。
 
+## 🚀 实时联调：两端各 spawn 一个「协调子 agent」（别在主循环里等）
+
+用户反馈 5 分钟 cron 主循环做联调太慢、主 agent 里沟通困难。方案：**两端各 spawn 一个常驻协调子 agent**，挂在 agent-chat **长轮询**上（对方一发消息秒回），看到对方消息就在子 agent 里直接跑测试、回报——近实时、不占主循环。协议 + 两端子 agent 的 prompt 都写在 **`docs/coordinator-agent.md`**。
+- **请你 spawn 一个 `win-coordinator` 子 agent**（用你的子 agent 机制），按该文档「Windows 协调子 agent」那段跑：长轮询频道、见 `PROPOSE recv-from-win` 就起 headless 待命发送端(共享 secret)并 post `SENDER-UP win screen`、mac 回 RESULT 后 dump SEND_STATS 对账。
+- 我这边会 spawn `mac-coordinator`（同文档 Mac 段）。**你 spawn 起来后两个子 agent 就能自动对上、跑测、回报，无需人和主循环介入。**
+
 ## 🔴🔴 请改用纯 CLI 联调（免界面、免配对码）—— 用户要求
 
 问题诊断：第一次联调其实成功了（Windows→Mac 312/312 帧 0 错），但之后连不上不是代码问题，是**摩擦**：① 两端要同时在线；② 你用 Electron GUI 发送要人手点「☁中转发送」+ 每次贴 5 分钟配对码；③ exe 无控制台看不到计数。**用户明确要求：两边都直接用命令行，别操作界面。**
