@@ -8,7 +8,7 @@ tags: [netdisplay, handoff, windows, tasks, github, security]
 > 仓库转**公开**了。所以中转服务器要加 **token 认证**防公网滥用，客户端两端把 **relay 地址 + token 做成可配置项**（不硬编码进仓库）。协议已升 **v1.5**（见 02 §7 + changelog）。
 
 ## 1. GitHub：上代码到同一个仓库
-- 仓库（Mac 端已建，公开）：**（Mac 端 push 后把 URL 贴这里 / 或你 `gh repo list ghbhiee` 找 `netdisplay`）**。
+- 仓库（Mac 端已建，公开）：**https://github.com/ghbhiee/netdisplay** 。`git clone https://github.com/ghbhiee/netdisplay`。
 - 你 `git clone` 后，把 Windows 端代码放到 **`windows/`**、relay 的 Go 源码放到 **`relay/`**，各自 commit push。
   - `windows/`：src/、main.js、tools/、package.json 等（**不要提交 node_modules/、dist/**，根 .gitignore 已忽略）。
   - `relay/`：`main.go`、go.mod、部署说明（**不要提交编译产物/二进制**）。
