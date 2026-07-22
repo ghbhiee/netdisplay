@@ -1,0 +1,82 @@
+<!doctype html>
+<html><body><script>
+// HEVC 真流解码探测：Annex-B → 按 AUD 切 AU → VideoDecoder 实测
+const fs = require("fs");
+const { ipcRenderer } = require("electron");
+
+function splitAUs(buf) {
+  // 找所有 start code 位置及其 NAL type，AUD(35) 为 AU 边界
+  const aus = [];
+  let auStart = -1;
+  for (let i = 0; i + 3 < buf.length; i++) {
+    let scLen = 0;
+    if (buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 1) scLen = 3;
+    else if (buf[i] === 0 && buf[i + 1] === 0 && buf[i + 2] === 0 && buf[i + 3] === 1) scLen = 4;
+    if (!scLen) continue;
+    const nal = (buf[i + scLen] >> 1) & 0x3f;
+    if (nal === 35) { // AUD
+      if (auStart >= 0) aus.push(buf.subarray(auStart, i));
+      auStart = i;
+    }
+    i += scLen;
+  }
+  if (auStart >= 0) aus.push(buf.subarray(auStart));
+  return aus;
+}
+function isKeyAU(au) {
+  for (let i = 0; i + 3 < au.length; i++) {
+    let scLen = 0;
+    if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 1) scLen = 3;
+    else if (au[i] === 0 && au[i + 1] === 0 && au[i + 2] === 0 && au[i + 3] === 1) scLen = 4;
+    if (!scLen) continue;
+    const nal = (au[i + scLen] >> 1) & 0x3f;
+    if (nal >= 16 && nal <= 21) return true; // IRAP
+    i += scLen;
+  }
+  return false;
+}
+
+async function testOne(file, codec, hw) {
+  const row = { file: file.replace(/^.*[\\/]/, ""), codec, hw };
+  try {
+    const sup = await VideoDecoder.isConfigSupported({ codec, hardwareAcceleration: hw, optimizeForLatency: true });
+    row.configSupported = !!sup.supported;
+  } catch (e) { row.configSupported = "err:" + e.message; }
+  if (row.configSupported !== true) return row;
+
+  const buf = fs.readFileSync(file);
+  const aus = splitAUs(buf);
+  row.aus = aus.length;
+  let decoded = 0, format = null, errMsg = null;
+  const dec = new VideoDecoder({
+    output: (f) => { decoded++; if (!format) format = f.format; f.close(); },
+    error: (e) => { errMsg = e.message; },
+  });
+  try {
+    dec.configure({ codec, hardwareAcceleration: hw, optimizeForLatency: true });
+    aus.forEach((au, i) =>
+      dec.decode(new EncodedVideoChunk({ type: isKeyAU(au) ? "key" : "delta", timestamp: i * 33333, data: au }))
+    );
+    await dec.flush();
+  } catch (e) { errMsg = errMsg || e.message; }
+  try { dec.close(); } catch {}
+  row.decoded = decoded;
+  row.format = format;
+  if (errMsg) row.error = errMsg;
+  return row;
+}
+
+(async () => {
+  const tmp = process.env.TEMP || process.env.TMP;
+  const cases = [
+    [tmp + "\\hevc420_8.h265", "hev1.1.6.L120.B0"],
+    [tmp + "\\hevc422_10.h265", "hev1.4.10.L120.B0"],
+    [tmp + "\\hevc444_10.h265", "hev1.4.10.L120.B0"],
+  ];
+  const out = [];
+  for (const [file, codec] of cases)
+    for (const hw of ["prefer-hardware", "prefer-software"])
+      out.push(await testOne(file, codec, hw));
+  ipcRenderer.send("probe-result", JSON.stringify(out));
+})();
+</script></body></html>

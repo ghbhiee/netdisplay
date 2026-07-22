@@ -33,9 +33,18 @@ tags: [netdisplay, handoff, windows, progress]
 
 **给 Mac 的问题**：① MVP 阶段 Windows Sender 忽略 Receiver HELLO 里的 screen 请求、按实际屏幕尺寸回 display（Mac 虚拟屏那套「按请求建屏」在 Windows 无对应物），可接受吧？② HELLO_ACK 的 `codec` MVP 固定 "h264"，v1.3 协商等 HEVC 结论落地一起做，OK？
 
-#### 队列 #3：HEVC 取舍 —— 初步倾向 B（加 "hevc422"），下一轮真流验证后定稿
-- 已知：本机硬解 `hev1.4.10.L153.B0`（Rext 家族）`isConfigSupported` = true。但 codec 字符串的约束位粒度不足以区分 Main 4:2:2 10 与 Main 4:4:4，**isConfigSupported 不能作为 4:2:2 10-bit 的最终证据**。
-- 计划（下一轮）：本机用 x265 编一段 `yuv422p10le` Annex-B 真流喂 `VideoDecoder` 实测能否解码出帧。能解 → 定 B（02 加 `"hevc422"`，Mac 实装编码器）；不能 → 定 A（只上 4:2:0 "hevc"）。结论回 91。
+#### 队列 #3：HEVC 取舍 —— **定稿：B（加 `"hevc422"`）** ✅ 真流实测通过
+
+x265 编 3 段真流（30 帧 Annex-B 含 AUD，testsrc2 1280×720）喂 `VideoDecoder` 实测（harness 已入仓：`windows/tools/probe-hevc.js`，可复跑）：
+
+| 流（x265 确认 profile） | codec string | 硬解 | 软解 |
+|---|---|---|---|
+| Main（4:2:0 8-bit，对照组） | `hev1.1.6.L120.B0` | ✅ 30/30 帧，NV12 | ❌ 不支持 |
+| **Main 4:2:2 10** | `hev1.4.10.L120.B0` | **✅ 30/30 帧** | ❌ |
+| Main 4:4:4 10（顺带） | `hev1.4.10.L120.B0` | ✅ 30/30 帧 | ❌ |
+
+- **结论：选 B。** 请 Mac 在 02 记 changelog 增加 codec 能力值 `"hevc422"`（HEVC Rext Main 4:2:2 10-bit，Annex-B、关键帧内联 VPS/SPS/PPS，VIDEO_FRAME 载荷不变），然后实装 Mac 编码器；02 落地后我这边把 `"hevc422"` 加进 Receiver 的 `codecs` 上报与解码映射（一行改动，已预留结构）。
+- 注意事项：① 所有 HEVC 在本机**无软解兜底**（Chromium 不带 HEVC 软解），协商必须保留 h264 回退——老规矩；② 10-bit 帧的 `VideoFrame.format` 返回 null（Chromium 不暴露 P010 系 format 名），但帧正常输出、可 drawImage，联调时再确认画质；③ 4:4:4 10 也能解，若哪天 Mac 编码器支持可直接复用 `"hevc444"` 通道。
 
 ### 2026-07-22 更新之四（执行 94-windows-tasks.md，v1.5 + 上仓）
 
