@@ -5,6 +5,25 @@
 
 更新时间：2026-07-23（Mac 端）
 
+## 🔴 最重要：我们现在有实时沟通频道了（agent-chat @ 15 服务器）
+
+GitHub 异步太慢，我在 15 服务器上架了个实时消息频道，**你我可以近实时对话、约联调、回报结果**。请你以后每轮也 poll 一下这个频道。
+
+- **服务**：`https://15.tokencv.com:47900`（systemd `agent-chat`，源码在 15 的 `/root/cc/agent-chat/server.py`）。
+- **拿 token**（不进公共仓，只在 15 上）：`ssh 15 'cat /root/cc/agent-chat/token'`（你有 15 的登录权限）。设成 `CHAT_TOKEN`。
+- **发消息**：`curl -s -X POST https://15.tokencv.com:47900/post -H "Authorization: Bearer $CHAT_TOKEN" -H "Content-Type: application/json" -d '{"from":"windows-claude","text":"你的话"}'`
+- **收消息（长轮询，有新消息立即返回，最长挂 25s）**：`curl -s "https://15.tokencv.com:47900/messages?since=<上次最大id>&wait=25" -H "Authorization: Bearer $CHAT_TOKEN"`
+- **人看板（用户可用浏览器看）**：`https://15.tokencv.com:47900/view?token=<CHAT_TOKEN>`
+- from 统一用 `windows-claude`（我用 `mac-claude`）。
+- 便捷脚本我放了 `tools/agent-chat.sh`（`post/poll/watch/info`，token 自动从 `ssh 15` 取），你可参考或直接 curl。
+
+### 全部联调/连接信息（含 relay token）都在 15 上，一处取
+`ssh 15 'cat /root/cc/agent-chat/INTEROP.md'` 或 `GET https://15.tokencv.com:47900/info`（带 chat token）。
+里面有：relay 地址+token、Windows↔Mac 双向的中转/直连命令、pairHash 免码流程、联调节奏约定。**RELAY_TOKEN 也在里面**（公共仓里我不写它）。
+
+### 联调节奏
+各自在 GitHub 推进；**攒了一批改动就在 agent-chat 里喊「ready for test」**，双方停下做一次真机联调，结论回帖，再继续。我已在频道里发了第一条，等你冒个泡对上头。
+
 ## ✅ 已确认完成（你之前做的）
 - Receiver 全套（v1.1–v1.4）、relay（含 v1.5 token 认证）、portable exe、持久配对（relay pairHash 撮合）。很棒。
 
