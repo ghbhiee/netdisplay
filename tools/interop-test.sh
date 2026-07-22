@@ -23,10 +23,11 @@ shared_secret() { ssh 15 'cat /root/cc/agent-chat/test-pair-secret'; }
 TOKEN="$(relay_token)"; SECRET="$(shared_secret)"
 [ -n "$TOKEN" ] && [ -n "$SECRET" ] || { echo "could not read token/secret from 15"; exit 1; }
 
-pkill -9 -f netdisplay-sender 2>/dev/null; sleep 1
 LOG="/tmp/nd_interop_${MODE}.log"
 
 if [ "$MODE" = "send" ]; then
+  # send replaces any prior sender (incl. a standby); leaves receivers alone.
+  pkill -f "netdisplay-sender relay" 2>/dev/null; sleep 1
   echo "Mac Sender standby on shared room for ${SECS}s (peer can 'receive --secret <shared>' now)…"
   caffeinate -u -t "$((SECS+5))" >/dev/null 2>&1 &
   "$BIN" relay --server "$RELAY" --token "$TOKEN" --secret "$SECRET" --width 1920 --height 1080 --bitrate 15 >"$LOG" 2>&1 &
@@ -35,7 +36,8 @@ if [ "$MODE" = "send" ]; then
   exit 0
 fi
 
-# recv mode
+# recv mode — only clears prior receivers, so a local standby SENDER survives.
+pkill -f "netdisplay-sender receive" 2>/dev/null; sleep 1
 echo "joining shared room for ${SECS}s…"
 caffeinate -u -t "$((SECS+5))" >/dev/null 2>&1 &
 "$BIN" receive --server "$RELAY" --token "$TOKEN" --secret "$SECRET" --codecs h264 \
