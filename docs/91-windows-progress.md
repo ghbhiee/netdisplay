@@ -9,6 +9,25 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十六（**直连路径预验证 + v0.3.0 打包**）
+
+趁 Mac 下线的空档，把直连测试的前置条件先踩掉，免得它上线后卡在环境问题上。
+
+#### 直连预验证（Mac 上线即可测）
+- **监听正常**：Sender 监听 `::`（双栈，IPv4 可入），非仅 127.0.0.1。
+- **走内网 IP 自连 PASS**：`cli-client --direct 192.168.50.40` → HELLO_ACK 2560×1600、首帧关键帧 NAL=[7,8,5]。
+  ⚠️ 但**同机自连证明不了外部可达**——即使走内网 IP，Windows 通常仍走 loopback，不过防火墙。
+- **防火墙已核对匹配**：本机以太网 `NetworkCategory=Public`，现有 electron.exe 入站允许规则也是 `profile=Public`，且路径精确指向在用的 `node_modules\electron\dist\electron.exe` → **Mac 的连接应能进来**。
+  注意打包版是**另一个程序路径**（临时解压目录里的 `NetDisplay.exe`），有独立规则，且解压路径每次可能变。
+- **我的内网 IP：`192.168.50.40`（以太网）**。Mac 上线后 `receive --host 192.168.50.40 --port 47800` 即可。连不上时的排查顺序已写进 `windows/README.md`。
+
+#### v0.3.0 portable exe
+`dist/NetDisplay-0.3.0-portable.exe`（71 MB）。相对 v0.2.0 累积：codec 协商与拒绝路径、`requireWindow` 防静默降级、背压调参（阈值 24+连续 3 次）、背压丢帧时请求关键帧、VIDEO_CONFIG 带全字段、headless 模式、`--secret/--pairhash` 共享配对、`interop.ps1`/`chat-watch.js` 工具、以及三处日志缺口修补。冒烟通过（握手、协商 h264、首帧关键帧）。
+
+#### 💡 一个反直觉的编码坑（与之前那条正好相反）
+改 `package.json` 版本号时用了 `Set-Content -Encoding utf8`，**PowerShell 5.1 的这个开关会写 BOM**，electron-builder 直接报 `readObjectStart: expect { or n, but found ﻿`。
+→ **`.json` 绝不能有 BOM；而含中文的 `.ps1` 必须有 BOM**（否则按 GBK 读会解析失败，见更新之二十一）。同一个"编码"问题在两类文件上要求完全相反，改文件时要按类型区分。正确写法：`[System.IO.File]::WriteAllText($p,$c,[System.Text.UTF8Encoding]::new($false))`。
+
 ### 2026-07-22 更新之二十五（**③ 收工：resize→VIDEO_CONFIG 全绿；根因是协议字段可选性歧义**）
 
 #### 最终对账（逐字节一致，尺寸两侧都跟随）

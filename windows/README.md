@@ -2,7 +2,28 @@
 
 Electron + Node `net` + WebCodecs（硬解 / 软编）。由 Windows 端 Claude 维护。协议见 `../docs/02-protocol.md`。
 
-**发布产物**：`npm run dist` → `dist/NetDisplay-0.2.0-portable.exe`（免安装，双击即用；未签名，首次运行 SmartScreen 选「仍要运行」）。
+**发布产物**：`npm run dist` → `dist/NetDisplay-0.3.0-portable.exe`（免安装，双击即用；未签名，首次运行 SmartScreen 选「仍要运行」）。
+
+> 改 `package.json` 版本号时**不要用 `Set-Content -Encoding utf8`** —— PowerShell 5.1 那个开关会写入 BOM，electron-builder 读 JSON 会报
+> `readObjectStart: expect { or n, but found ﻿`。用 `[System.IO.File]::WriteAllText($p,$c,[System.Text.UTF8Encoding]::new($false))`。
+> （注意与 `.ps1` 相反：含中文的 PowerShell 脚本**必须**有 BOM，否则按 GBK 读会解析失败。）
+
+## 直连模式（局域网 / USB4，绕过中转）
+
+发送端监听 `0.0.0.0:47800`（实际是 `::` 双栈，IPv4 可入），接收端直接连它的 IP，不经 relay，延迟从中转的 300–600ms 降到个位数毫秒。
+
+```powershell
+# 发送端（本机 IP 例：192.168.50.40）
+npx electron . --headless --send --send-stats-after 15 --send-stats-repeat
+# 接收端（另一台机器）
+… --recv --host 192.168.50.40 --port 47800
+```
+
+**连不上时按顺序查**：
+1. `Get-NetTCPConnection -LocalPort 47800 -State Listen` —— 应显示 `::` 在监听
+2. `Get-NetConnectionProfile` —— 记下网络是 Private 还是 Public
+3. `Get-NetFirewallApplicationFilter | ? Program -like "*electron*"` —— 对应的入站允许规则**必须覆盖上一步那个 profile**，否则外部连接会被静默丢弃（本机自连测不出来，同机走 loopback 不过防火墙）
+4. 打包版和开发版是**不同的程序路径**（`NetDisplay.exe` 在临时解压目录、开发版是 `node_modules\electron\dist\electron.exe`），各自需要自己的放行规则
 
 ## 运行 / 打包
 
