@@ -1,4 +1,28 @@
 import Foundation
+import CoreMedia
+
+/// Thread-safe tally for `decode-selftest`.
+final class STCounter {
+    private let lock = NSLock()
+    private var encodedFrames = 0, keyframes = 0, decodedFrames = 0, errors = 0
+    private var lastPts = -1.0, monotonic = true
+    func encoded(_ key: Bool) { lock.lock(); encodedFrames += 1; if key { keyframes += 1 }; lock.unlock() }
+    func decoded(_ pts: Double) {
+        lock.lock(); decodedFrames += 1
+        if pts < lastPts { monotonic = false }; lastPts = pts; lock.unlock()
+    }
+    func error() { lock.lock(); errors += 1; lock.unlock() }
+    var pass: Bool {
+        lock.lock(); defer { lock.unlock() }
+        // Decoded within a few frames of encoded (async drain), no errors, monotonic pts.
+        return errors == 0 && decodedFrames > 0 && decodedFrames >= encodedFrames - 3 && monotonic
+    }
+    func report() {
+        lock.lock(); defer { lock.unlock() }
+        let verdict = (errors == 0 && decodedFrames >= encodedFrames - 3 && decodedFrames > 0 && monotonic) ? "PASS" : "FAIL"
+        Log.info("selftest \(verdict): encoded=\(encodedFrames) (key=\(keyframes)) decoded=\(decodedFrames) errors=\(errors) monotonicPts=\(monotonic)")
+    }
+}
 
 // MARK: - CLI
 
@@ -213,6 +237,42 @@ case "relay":
     installSignalHandler { Log.info("bye"); exit(0) }
     client.start()
     Log.info("relay mode: connecting to \(host):\(port)")
+    dispatchMain()
+
+case "decode-selftest":
+    // Loopback: virtual display → Encoder → Decoder, count decoded frames.
+    // Verifies the receiver decoder against real encoder output (H.264 or HEVC).
+    let w = args.int("width", 1280)
+    let h = args.int("height", 800)
+    let fps = args.int("fps", 60)
+    let seconds = args.int("seconds", 6)
+    let codec = VideoCodec(rawValue: args.str("codec", "h264")) ?? .h264
+    Log.info("decode-selftest: \(w)x\(h) @\(fps) codec=\(codec.wire) for \(seconds)s")
+    guard let pipeline = StreamPipeline(name: "NetDisplayST", pixelWidth: w, pixelHeight: h,
+                                        scale: 1, fps: fps, bitrateBps: 20_000_000,
+                                        deviceSeed: devId, codec: codec) else {
+        Log.error("selftest: pipeline init failed"); exit(1)
+    }
+    let decoder = Decoder(codec: codec)
+    let counter = STCounter()
+    decoder.onDecoded = { _, pts in counter.decoded(CMTimeGetSeconds(pts)) }
+    decoder.onDecodeError = { st in Log.error("selftest decode error: \(st)"); counter.error() }
+    pipeline.onEncoded = { ptsUs, key, annexB in
+        counter.encoded(key)
+        decoder.decode(annexB: annexB, ptsUs: ptsUs)
+    }
+    Task {
+        do { try await pipeline.start() }
+        catch { Log.error("selftest capture start failed: \(error)"); exit(1) }
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + .seconds(seconds)) {
+        pipeline.stop()
+        // Give async decodes a moment to drain.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+            counter.report()
+            exit(counter.pass ? 0 : 1)
+        }
+    }
     dispatchMain()
 
 case "vd-demo":

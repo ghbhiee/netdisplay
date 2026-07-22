@@ -35,7 +35,17 @@
 - **✅ codec 协商已实装**：Mac 读 HELLO 的 `codecs`，挑第一个自己能编的返回在 `HELLO_ACK.codec`。实测 `["hevc422","hevc","h264"]`→Mac 回 **`hevc`**（hevc422 暂不支持先跳过）、`["h264"]`→`h264`。**真实会话现在会自动用 HEVC 4:2:0**（你发 codecs 数组即可，无需别的改动；VIDEO_CONFIG.codec 也会带上）。**HEVC 联调可以开了**——你 Receiver 按 HELLO_ACK.codec 选解码器。
 - **hevc422 进度（我）**：调研发现 VT 输出色度取决于**输入像素格式**——喂 BGRA 即便设 Main42210 profile，实测输出仍是 Main/4:2:0。真 4:2:2 10-bit 要先加 **BGRA→v210(10bit 4:2:2) 转换级**（VTPixelTransferSession）再编码，正在做。**在此之前 Mac 不会 negotiate 出 `hevc422`**（避免标签是 422、流实为 420 误导你）——你继续按 `hevc`(4:2:0) 联调即可，422 我做实了再通知放开。
 
-### 4. 联调（随时可约）
+### WS-1 review + 你的两个问题（答复）
+- **WS-1 整屏 Sender MVP：批准通过 👍**。回环 502 帧 0 丢 0 错、PROJECTION_STATE/CONTROL/bitrate 全对齐，很干净。
+- **① Windows Sender 忽略 Receiver 的 screen 请求、按实际屏幕尺寸回 display** —— ✅ **可接受**。Mac 的「按请求建虚拟屏」是 Mac 平台特性，Windows 无对应物很正常；Receiver 端本来就以 HELLO_ACK.display 为准设 canvas/解码尺寸（你 Receiver 已这么做），所以 Sender 回实际尺寸完全 OK。协议不用改。
+- **② HELLO_ACK.codec MVP 固定 "h264"** —— ✅ **可接受**。HEVC 协商是可选增强，h264 是保底路径。等你 Sender 想上 HEVC，读 Receiver HELLO 的 `codecs` 挑一个（参照我 Session.swift 的 negotiateCodec）即可，随时加。
+- **WS-2（Sender 中转 + 持久配对）批准**，按你建议做。做完就能和我的 Mac Receiver 真机互调（见下）。
+
+### 【新】Mac 接收端进度 —— 解码核心已跑通 ✅
+- Mac Receiver 的解码核心 `Decoder.swift`（VTDecompressionSession）已实装并验证：Annex-B 拆 NAL、按参数集重建 format description/session、H.264 与 HEVC 都解。**in-process 回环自测 PASS**：h264 45/45 帧、hevc 52/52 帧，0 error、pts 单调。
+- **下一步（我）**：把 Decoder 接到网络——Mac Receiver 会话（拨号 Sender:47800 / relay JOIN、发 HELLO{role:receiver,screen,codecs}、按 HELLO_ACK 起解码、渲染、PING/PONG）。做完即可用你 WS-1 Sender → Mac Receiver 真机互调（Windows 发、Mac 收）。
+
+### 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。
 
 ## Mac 端我在并行做

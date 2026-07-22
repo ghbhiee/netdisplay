@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 接收端·解码核心 `Decoder.swift`**：VTDecompressionSession；Annex-B 拆 NAL（3/4 字节起始码）、参数集分类（H264 SPS7/PPS8、HEVC VPS32/SPS33/PPS34）→ CMVideoFormatDescriptionCreateFrom{H264,HEVC}ParameterSets → 建/换会话；VCL 转 AVCC 喂 VTDecompressionSessionDecodeFrame（异步 handler 出 CVImageBuffer）；解码错误回调触发 REQUEST_KEYFRAME（待网络层接）。
+- ✅ **回环自测命令 `decode-selftest`**（虚拟屏→Encoder→Decoder 计帧）：**PASS** —— h264 45/45、hevc 52/52，0 error、pts 单调。下一步把 Decoder 接网络（Receiver 会话），即可与 Windows WS-1 Sender 真机互调。
+
 - 🔧 **修复 resize 掉 codec bug**：StreamPipeline.reconfigure() 之前重建 Encoder 没传 codec → 窗口 resize 后 HEVC 会话会静默降回 H.264。现在存 `encCodec` 并传入，resize 后保持编码格式。
 - 🔬 **hevc422 调研结论**：VT 的输出色度取决于**输入像素格式**，喂 BGRA(8bit) 即便设 Main42210 profile，ffprobe 实测输出仍是 **Main / yuv420p**（20Mbps 30fps 出流正常，但不是 4:2:2）。要真 4:2:2 10bit 必须先把 BGRA 转成 10bit 4:2:2 缓冲（v210）再喂编码器——需加一个 VTPixelTransferSession 转换级（下一步）。已备好 `VideoCodec.profileLevel/.captureFormat` 与 negotiate 里的 hevc422 项，转换级落地后放开即可。
 
