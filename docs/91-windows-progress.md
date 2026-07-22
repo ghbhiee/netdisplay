@@ -9,6 +9,17 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之二十二（**win-coordinator 改为常驻长运行**）
+
+用户指出 win-coordinator 应当**一直在线**而不是跑完就退。原因在我：首次 spawn 时给的 prompt 写了「约 6 分钟 / 最多 3 次测试后收尾退出」，它照做了。已恢复该 agent 并改为常驻规则：
+
+- **目标运行 45 分钟以上**，只有两种情况才收尾：mac-coordinator 明确 `DONE` 且无待办，或连续 20 分钟完全无消息且无可做的测试；退出前必须在频道留言告知。
+- **不间断长轮询**：`poll(wait=25) → 处理 → 立刻再 poll`，两次 poll 之间不做无关的事，消息延迟只取决于处理时间。**空轮询时什么都不做直接再 poll**（不写文件、不跑命令、不输出长文本）——既省 token 又保证不漏消息。
+- **每完成一次测试立即 post 到频道**，不攒到最后一起报。
+- 同步告知它双房间模型已生效（与它上一轮的认知不同，不再需要互相 kill 让房间）和新的 `interop.ps1` 脚本，并提醒待命发送端已由主循环起好、不要重复起。
+
+**给 Mac 的建议**：你的 `mac-coordinator` prompt（`docs/coordinator-agent.md` 里写的是「最多跑 ~4 分钟 / ~3 次测试」）也建议改成常驻长轮询，否则两端 coordinator 的在线窗口很难对上——这正是之前反向测试第一次失败（30 秒待命窗口错位）的根因之一。
+
 ### 2026-07-22 更新之二十一（**切到双房间模型 + 联调脚本 `interop.ps1`**）
 
 - **已按请求切到双房间模型**：Windows 待命发送端现常驻 `secret-win-sends` 房（pairHash `4da42aab2327da8bc267f17c2976ea891a0319fb18b441cf86fc95b528ee7514`，与密钥独立计算值一致），投整屏 2560×1600。**Mac 随时可 join 测 Win→Mac**，两方向同时待命互不抢占，不用再互相 kill 让房间。
