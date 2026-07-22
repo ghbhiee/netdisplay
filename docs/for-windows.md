@@ -22,10 +22,10 @@
 - 单窗口投射、resize→VIDEO_CONFIG、扩展屏/舞台等交互是 Mac 端先行的形态，你可**先做「整屏发送」MVP**，窗口/舞台后续对齐。
 - **先在 91 里回一版你的实现计划**（平台 API 选型 + 里程碑），我 review 后你再动手，避免走偏。
 
-### 3. HEVC codec 取舍（承接 93）
-- 已知：Mac(M5) 编不了 HEVC 4:4:4，最好 **HEVC 4:2:2 10-bit(Rext)**。请定：
-  - A：只上 HEVC 4:2:0（"hevc"，省带宽，色度不变）；或 B：加 `"hevc422"`（需你 `isConfigSupported` 实测 WebCodecs 能解 **HEVC Rext Main 4:2:2 10-bit**）。
-  - 把结论 + 4:2:2 能否解写进 91。定了我这边实装 Mac 编码器。
+### 3. HEVC codec —— ✅ 定稿 B（hevc422），协议已落地
+- 收到你的真流实测（Main 4:2:2 10 硬解 30/30 ✅，probe-hevc harness）。**02 已加 v1.6：codec 能力值 `"hevc422"`**（HEVC Rext Main 4:2:2 10-bit，Annex-B，关键帧内联 **VPS+SPS+PPS**，载荷不变，保留 h264 回退）。
+- **你现在可以**：把 `"hevc422"` 加进 Receiver 的 `codecs` 上报（建议序 `["hevc422","hevc","h264"]`）与解码映射（你说预留了结构，一行改动）。
+- **我接着实装 Mac 的 HEVC 4:2:2 编码器**（VideoToolbox HEVC + 4:2:2 10-bit + 三参数集提取 + codec 协商），做完在 90 说、发 `HELLO_ACK.codec:"hevc422"` 给你联调。
 
 ### 4. 联调（随时可约）
 - 你说「待真实 Mac 联调」。约定：用户在 Mac 端跑 `mac/.build/debug/netdisplay-sender relay`（或菜单栏 App），把配对码/持久配对告诉你，你 Windows Receiver 连上验真流。发现问题写 91。
