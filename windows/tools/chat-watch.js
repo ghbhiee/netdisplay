@@ -48,19 +48,21 @@ function poll(token) {
 (async () => {
   let token;
   try { token = getToken(); }
-  catch (e) { console.log(`[chat-watch] 取 token 失败，退出: ${e.message}`); process.exit(1); }
+  catch (e) { console.error(`[chat-watch] 取 token 失败，退出: ${e.message}`); process.exit(1); }
 
   // 首轮先对齐到当前最大 id，避免把历史消息全喷成事件
   const initial = await poll(token);
   if (initial && initial.length) since = initial[initial.length - 1].id;
-  console.log(`[chat-watch] 已就绪，从 id=${since} 起守望（仅新消息触发唤醒）`);
+  // 诊断信息一律走 stderr：Monitor 只把 stdout 当事件，stderr 进输出文件但不触发唤醒。
+  // 启动日志用 console.log 会白白唤醒 agent 一次——它不是消息，不该打断工作。
+  console.error(`[chat-watch] 已就绪，从 id=${since} 起守望（仅新消息触发唤醒）`);
 
   let failures = 0;
   for (;;) {
     const msgs = await poll(token);
     if (msgs === null) {
       // 瞬时故障：退避重试，连续失败多了才报一次，避免刷屏
-      if (++failures === 5) console.log("[chat-watch] 连续 5 次轮询失败，仍在重试");
+      if (++failures === 5) console.error("[chat-watch] 连续 5 次轮询失败，仍在重试");
       await new Promise((r) => setTimeout(r, Math.min(30000, 2000 * failures)));
       continue;
     }
@@ -68,7 +70,10 @@ function poll(token) {
     for (const m of msgs) {
       since = Math.max(since, m.id);
       if (SELF.includes(m.from)) continue; // 自己发的不唤醒
-      const text = String(m.text || "").replace(/\s+/g, " ").slice(0, 300);
+      // 300 字符太短：对端常把一条完整技术决定发在一条消息里，截断后还得再拉一次全文。
+      // 放宽到 1500 让绝大多数消息一次到位；真超长的才提示去取。
+      const full = String(m.text || "").replace(/\s+/g, " ");
+      const text = full.length > 1500 ? full.slice(0, 1500) + `…（共 ${full.length} 字，全文见 /messages?since=${m.id - 1}）` : full;
       console.log(`[chat#${m.id}] ${m.from}: ${text}`);
     }
   }
