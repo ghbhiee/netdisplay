@@ -1,0 +1,766 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta charset="utf-8">
+<title>NetDisplay 原型 v2</title>
+<style>
+  html,body{margin:0;padding:0}
+  body{font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+  a{color:#3B6FE0;text-decoration:none} a:hover{color:#2C5AC4}
+  [data-theme="light"]{--bg:#E9EBEE;--panel:#FFFFFF;--panel2:#F5F6F8;--text:#1B1E23;--sub:#6E7681;--line:#E2E4E8;--accent:#3B6FE0;--accent-weak:rgba(59,111,224,.10);--recv:#0F9D8C;--recv-weak:rgba(15,157,140,.12);--ok:#1D9E55;--err:#D5453C;--shadow:0 12px 40px rgba(20,30,50,.14)}
+  [data-theme="dark"]{--bg:#141619;--panel:#1F2226;--panel2:#282C31;--text:#E9EBEE;--sub:#98A0A9;--line:#34383E;--accent:#5C88E8;--accent-weak:rgba(92,136,232,.16);--recv:#31BFAD;--recv-weak:rgba(49,191,173,.16);--ok:#3DBE74;--err:#E4655C;--shadow:0 12px 40px rgba(0,0,0,.45)}
+  @keyframes nd-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+  @keyframes nd-drift{0%{background-position:0 0}100%{background-position:120px 60px}}
+</style>
+</helmet>
+<div data-theme="{{ theme }}" style="min-height:100vh;background:var(--bg);display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:center;gap:28px;padding:48px 24px;box-sizing:border-box;color:var(--text)">
+
+  <!-- 主面板窗口 -->
+  <div data-screen-label="主面板" style="width:430px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);overflow:hidden;flex-shrink:0">
+    <!-- 标题栏 -->
+    <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line)">
+      <div style="width:18px;height:18px;border-radius:5px;background:var(--accent);display:flex;align-items:center;justify-content:center;color:#fff;font-size:10px;font-weight:700">N</div>
+      <div style="font-size:13px;font-weight:600">NetDisplay</div>
+      <div style="flex:1"></div>
+      <button onClick="{{ toggleTheme }}" style="font-size:11px;color:var(--sub);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:3px 10px;cursor:pointer" style-hover="color:var(--text)">{{ themeBtnLabel }}</button>
+      <div style="display:flex;gap:14px;color:var(--sub);font-size:12px;margin-left:4px"><span>—</span><span>✕</span></div>
+    </div>
+
+    <div style="padding:16px;display:flex;flex-direction:column;gap:14px">
+
+      <!-- 模式切换 -->
+      <div style="display:flex;background:var(--panel2);border-radius:8px;padding:3px">
+        <button onClick="{{ tabCast }}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:7px 0;border:none;border-radius:6px;cursor:pointer;background:{{ tabCastBg }};color:{{ tabCastColor }};font-weight:600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 13V7"></path><path d="M9 10l3-3 3 3"></path><path d="M8 21h8"></path></svg>投射本机 <span style="color:var(--ok);font-size:9px">{{ castDot }}</span></button>
+        <button onClick="{{ tabRecv }}" style="flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:7px 0;border:none;border-radius:6px;cursor:pointer;background:{{ tabRecvBg }};color:{{ tabRecvColor }};font-weight:600"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 7v6"></path><path d="M9 10l3 3 3-3"></path><path d="M8 21h8"></path></svg>接收显示 <span style="color:var(--ok);font-size:9px">{{ recvDot }}</span></button>
+      </div>
+
+      <sc-if value="{{ onCastTab }}" hint-placeholder-val="{{ true }}">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <sc-if value="{{ isSwitching }}">
+            <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--line);border-radius:8px">
+              <span style="color:var(--accent);animation:nd-pulse 1s infinite">⇄</span>
+              <span style="font-size:13px;color:var(--sub)">切换中…</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ isCasting }}">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--accent);background:var(--accent-weak);border-radius:8px">
+              <span style="font-size:14px;color:var(--accent)">⇡</span>
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:600">正在投射给 {{ peerName }}</div>
+                <div style="font-size:11px;color:var(--sub)">来源：{{ castSourceName }}</div>
+              </div>
+              <button onClick="{{ stopToStandby }}" style="font-size:12px;font-weight:600;color:var(--err);background:none;border:1px solid var(--err);border-radius:6px;padding:5px 12px;cursor:pointer" style-hover="background:var(--err);color:#fff">停止</button>
+            </div>
+          </sc-if>
+          <sc-if value="{{ notCasting }}" hint-placeholder-val="{{ true }}">
+            <div style="font-size:12px;color:var(--sub)">选择投射内容</div>
+            <div style="display:flex;flex-direction:column;gap:5px;max-height:296px;overflow-y:auto;padding-right:2px">
+              <sc-for list="{{ sources }}" as="src" hint-placeholder-count="3">
+                <div onClick="{{ src.onSelect }}" style="display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid {{ src.border }};background:{{ src.bg }};border-radius:7px;cursor:pointer" style-hover="border-color:var(--accent)">
+                  <div style="font-size:13px;width:18px;text-align:center">{{ src.icon }}</div>
+                  <div style="flex:1;font-size:13px">{{ src.name }}</div>
+                  <div style="font-size:11px;color:var(--sub)">{{ src.desc }}</div>
+                  <div style="font-size:12px;color:var(--accent);width:12px">{{ src.check }}</div>
+                </div>
+              </sc-for>
+            </div>
+            <button onClick="{{ startCast }}" style="width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:9px 0;font-size:13px;font-weight:600;color:#fff;background:{{ castBtnBg }};border:none;border-radius:8px;cursor:{{ castBtnCursor }}"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 13V7"></path><path d="M9 10l3-3 3 3"></path></svg>开始投射</button>
+            <div style="font-size:11px;color:var(--sub);text-align:center">把本机画面投给对方当显示器</div>
+          </sc-if>
+        </div>
+      </sc-if>
+
+      <sc-if value="{{ onRecvTab }}">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <sc-if value="{{ isSwitching }}">
+            <div style="display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--line);border-radius:8px">
+              <span style="color:var(--accent);animation:nd-pulse 1s infinite">⇄</span>
+              <span style="font-size:13px;color:var(--sub)">切换中…</span>
+            </div>
+          </sc-if>
+          <sc-if value="{{ isReceiving }}">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--recv);background:var(--recv-weak);border-radius:8px">
+              <span style="font-size:14px;color:var(--recv)">⇣</span>
+              <div style="flex:1">
+                <div style="font-size:13px;font-weight:600">正在接收 {{ peerName }} 的画面</div>
+                <div style="font-size:11px;color:var(--sub)">已在独立窗口中显示</div>
+              </div>
+            </div>
+          </sc-if>
+          <sc-if value="{{ notReceiving }}" hint-placeholder-val="{{ true }}">
+            <div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px">
+              <div style="width:8px;height:8px;border-radius:50%;background:{{ svcDotColor }};animation:{{ svcDotAnim }}"></div>
+              <div style="flex:1">
+                <div style="font-size:13px">{{ recvStatusTitle }}</div>
+                <div style="font-size:11px;color:var(--sub)">{{ recvStatusSub }}</div>
+              </div>
+              <sc-if value="{{ svcWaiting }}">
+                <a href="#" onClick="{{ demoReceive }}" style="font-size:12px">模拟对方投射 ▸</a>
+              </sc-if>
+            </div>
+          </sc-if>
+          <button onClick="{{ recvBtnAction }}" style="width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:9px 0;font-size:13px;font-weight:600;color:{{ recvBtnColor }};background:{{ recvBtnBg }};border:1px solid {{ recvBtnBorder }};border-radius:8px;cursor:pointer;box-sizing:border-box"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 7v6"></path><path d="M9 10l3 3 3-3"></path></svg>{{ recvBtnLabel }}</button>
+          <div style="font-size:11px;color:var(--sub);text-align:center">本机作为对方的扩展显示器</div>
+
+          <!-- 画质设置 -->
+          <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">
+            <div onClick="{{ toggleQuality }}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;background:var(--panel2)">
+              <span style="font-size:11px;color:var(--sub);width:10px">{{ qualityChev }}</span>
+              <div style="font-size:13px;font-weight:600">画质设置</div>
+              <div style="font-size:11px;color:var(--sub)">作为显示器时生效</div>
+            </div>
+            <sc-if value="{{ qualityOpen }}">
+              <div style="padding:12px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line)">
+                <sc-for list="{{ qualityGroups }}" as="g" hint-placeholder-count="4">
+                  <div style="display:flex;align-items:center;gap:10px">
+                    <div style="font-size:12px;color:var(--sub);width:52px;flex-shrink:0">{{ g.label }}</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap">
+                      <sc-for list="{{ g.options }}" as="o" hint-placeholder-count="3">
+                        <button onClick="{{ o.onClick }}" style="font-size:12px;padding:5px 11px;border-radius:6px;cursor:pointer;border:1px solid {{ o.border }};background:{{ o.bg }};color:{{ o.color }}">{{ o.label }}</button>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-for>
+              </div>
+            </sc-if>
+          </div>
+        </div>
+      </sc-if>
+
+      <!-- 已配对设备 -->
+      <div>
+        <div style="display:flex;align-items:center;margin-bottom:8px">
+          <div style="font-size:12px;font-weight:600;color:var(--sub);letter-spacing:.5px">已配对设备</div>
+          <div style="flex:1"></div>
+          <button onClick="{{ openPair }}" style="font-size:12px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0">＋ 添加设备</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <sc-for list="{{ devices }}" as="d" hint-placeholder-count="2">
+            <div onClick="{{ d.onSelect }}" style="display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid {{ d.rowBorder }};border-radius:8px;background:{{ d.rowBg }};cursor:pointer" style-hover="border-color:var(--accent)">
+              <span style="font-size:13px;color:{{ d.radioColor }};line-height:1">{{ d.radio }}</span>
+              <div style="width:7px;height:7px;border-radius:50%;background:{{ d.dotColor }}"></div>
+              <sc-if value="{{ d.renaming }}">
+                <input value="{{ renameVal }}" onChange="{{ onRenameChange }}" onKeyDown="{{ d.onRenameKey }}" autoFocus="{{ true }}" style="flex:1;font-size:13px;padding:4px 8px;border:1px solid var(--accent);border-radius:6px;background:var(--panel2);color:var(--text);outline:none">
+                <button onClick="{{ d.onRenameSave }}" style="font-size:12px;color:var(--accent);background:none;border:none;cursor:pointer">保存</button>
+              </sc-if>
+              <sc-if value="{{ d.normal }}" hint-placeholder-val="{{ true }}">
+                <div style="flex:1">
+                  <div style="font-size:13px">{{ d.name }}</div>
+                  <div style="font-size:11px;color:{{ d.statusColor }}">{{ d.statusLabel }}</div>
+                </div>
+                <sc-if value="{{ d.disconnBtn }}">
+                  <button onClick="{{ d.onDisconnect }}" style="font-size:12px;color:var(--sub);background:none;border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer" style-hover="color:var(--err);border-color:var(--err)">断开</button>
+                </sc-if>
+                <button onClick="{{ d.onRename }}" style="font-size:12px;color:var(--sub);background:none;border:none;cursor:pointer" style-hover="color:var(--text)">重命名</button>
+                <button onClick="{{ d.onUnpair }}" style="font-size:12px;color:var(--sub);background:none;border:none;cursor:pointer" style-hover="color:var(--err)">解除配对</button>
+              </sc-if>
+              <sc-if value="{{ d.confirming }}">
+                <div style="flex:1;font-size:12px;color:var(--err)">确认解除与「{{ d.name }}」的配对？</div>
+                <button onClick="{{ d.onUnpairYes }}" style="font-size:12px;color:#fff;background:var(--err);border:none;border-radius:6px;padding:4px 10px;cursor:pointer">解除</button>
+                <button onClick="{{ d.onUnpairNo }}" style="font-size:12px;color:var(--sub);background:none;border:none;cursor:pointer">取消</button>
+              </sc-if>
+            </div>
+          </sc-for>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--sub)">
+          <span>本机名称：</span>
+          <sc-if value="{{ localEditing }}">
+            <input value="{{ localNameVal }}" onChange="{{ onLocalNameChange }}" onKeyDown="{{ onLocalNameKey }}" autoFocus="{{ true }}" style="font-size:11px;padding:2px 6px;border:1px solid var(--accent);border-radius:5px;background:var(--panel2);color:var(--text);outline:none;width:140px">
+          </sc-if>
+          <sc-if value="{{ localNotEditing }}" hint-placeholder-val="{{ true }}">
+            <span style="color:var(--text)">{{ localName }}</span>
+            <button onClick="{{ editLocalName }}" style="font-size:11px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0">修改</button>
+          </sc-if>
+        </div>
+      </div>
+
+      <!-- 高级设置 -->
+      <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden">
+        <div onClick="{{ toggleAdv }}" style="display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;background:var(--panel2)">
+          <span style="font-size:11px;color:var(--sub);width:10px">{{ advChev }}</span>
+          <div style="font-size:13px;font-weight:600">高级设置</div>
+          <div style="font-size:11px;color:var(--sub)">一般无需改动</div>
+        </div>
+        <sc-if value="{{ advOpen }}">
+          <div style="padding:12px;display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line)">
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="font-size:12px;color:var(--sub);width:80px;flex-shrink:0">中转服务器</div>
+              <input value="{{ relayAddr }}" onChange="{{ onRelayChange }}" style="flex:1;font-size:12px;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--text);outline:none">
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="font-size:12px;color:var(--sub);width:80px;flex-shrink:0">访问 Token</div>
+              <input value="{{ relayToken }}" onChange="{{ onTokenChange }}" type="password" style="flex:1;font-size:12px;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--panel2);color:var(--text);outline:none">
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <div style="font-size:12px;color:var(--sub);width:80px;flex-shrink:0">强制走中转</div>
+              <div onClick="{{ toggleForceRelay }}" style="width:34px;height:19px;border-radius:10px;background:{{ forceRelayBg }};position:relative;cursor:pointer;transition:background .15s">
+                <div style="position:absolute;top:2px;left:{{ forceRelayKnob }};width:15px;height:15px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></div>
+              </div>
+              <div style="font-size:11px;color:var(--sub)">仅在网络禁止直连时开启</div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 接收显示窗口 -->
+  <sc-if value="{{ isReceiving }}">
+    <div data-screen-label="接收窗口" style="width:460px;background:var(--panel);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow);overflow:hidden;flex-shrink:0">
+      <div style="display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--line)">
+        <div style="font-size:12px;font-weight:600">NetDisplay — {{ peerName }} 的画面</div>
+        <div style="flex:1"></div>
+        <div style="display:flex;gap:12px;color:var(--sub);font-size:11px"><span>—</span><span>✕</span></div>
+      </div>
+      <div style="height:270px;background:linear-gradient(135deg,#2A3A5C,#1B2436);background-size:140px 140px;position:relative;display:flex;align-items:center;justify-content:center">
+        <div style="color:rgba(255,255,255,.55);font-size:13px;text-align:center">
+          <div style="font-size:26px;margin-bottom:8px">🖥</div>
+          对方屏幕画面
+        </div>
+        <div style="position:absolute;left:10px;bottom:10px;font-size:11px;color:rgba(255,255,255,.75);background:rgba(0,0,0,.45);border-radius:6px;padding:4px 9px">接收中 · {{ transportLabel }} · {{ latencyLabel }}</div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- 托盘右键菜单 -->
+  <div data-screen-label="托盘菜单" style="width:300px;flex-shrink:0;display:flex;flex-direction:column;align-items:flex-end">
+    <div style="width:246px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);padding:5px;margin-bottom:10px">
+      <div onClick="{{ trayCastClick }}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;opacity:{{ trayCastOpacity }}" style-hover="background:var(--panel2)">
+        <span style="display:flex;color:var(--accent)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 13V7"></path><path d="M9 10l3-3 3 3"></path></svg></span>
+        <div style="flex:1">
+          <div style="font-size:13px">{{ trayCastTitle }}</div>
+          <sc-if value="{{ trayCastSubOn }}"><div style="font-size:10px;color:var(--sub)">{{ trayCastSub }}</div></sc-if>
+        </div>
+        <span style="font-size:11px;color:{{ trayCastActionColor }}">{{ trayCastAction }}</span>
+      </div>
+      <div onClick="{{ trayRecvClick }}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;opacity:{{ trayRecvOpacity }}" style-hover="background:var(--panel2)">
+        <span style="display:flex;color:var(--recv)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 7v6"></path><path d="M9 10l3 3 3-3"></path></svg></span>
+        <div style="flex:1">
+          <div style="font-size:13px">{{ trayRecvTitle }}</div>
+          <sc-if value="{{ trayRecvSubOn }}"><div style="font-size:10px;color:var(--sub)">{{ trayRecvSub }}</div></sc-if>
+        </div>
+        <span style="font-size:11px;color:{{ trayRecvActionColor }}">{{ trayRecvAction }}</span>
+      </div>
+      <div style="height:1px;background:var(--line);margin:5px 4px"></div>
+      <sc-if value="{{ traySrcOn }}">
+      <div style="font-size:10px;color:var(--sub);padding:3px 9px;letter-spacing:.5px">投射内容 · 最近窗口</div>
+      <sc-for list="{{ traySrcs }}" as="ts" hint-placeholder-count="4">
+        <div onClick="{{ ts.onClick }}" style="display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px" style-hover="background:var(--panel2)">
+          <span style="width:13px;color:var(--accent)">{{ ts.mark }}</span>
+          <span style="width:16px;text-align:center">{{ ts.icon }}</span>
+          <span style="flex:1">{{ ts.name }}</span>
+        </div>
+      </sc-for>
+      <div style="position:relative">
+        <div onClick="{{ trayToggleMore }}" style="display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--sub)" style-hover="background:var(--panel2)">
+          <span style="width:13px"></span>
+          <span style="width:16px"></span>
+          <span style="flex:1">更多窗口</span>
+          <span>▸</span>
+        </div>
+        <sc-if value="{{ trayMoreOpen }}">
+          <div style="position:absolute;right:100%;top:0;margin-right:4px;width:170px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);padding:5px;z-index:5">
+            <sc-for list="{{ trayMoreWins }}" as="tm" hint-placeholder-count="3">
+              <div onClick="{{ tm.onClick }}" style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;cursor:pointer;font-size:12px" style-hover="background:var(--panel2)">
+                <span style="width:13px;color:var(--accent)">{{ tm.mark }}</span>
+                <span style="width:16px;text-align:center">{{ tm.icon }}</span>
+                <span style="flex:1">{{ tm.name }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </sc-if>
+      </div>
+      </sc-if>
+      <div style="height:1px;background:var(--line);margin:5px 4px"></div>
+      <div style="font-size:10px;color:var(--sub);padding:3px 9px;letter-spacing:.5px">{{ trayDevHeader }}</div>
+      <sc-for list="{{ trayDevices }}" as="td" hint-placeholder-count="2">
+        <div onClick="{{ td.onClick }}" style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;cursor:pointer;font-size:13px;opacity:{{ td.opacity }}" style-hover="background:var(--panel2)">
+          <span style="width:13px;color:var(--accent);font-size:12px">{{ td.mark }}</span>
+          <span style="width:7px;height:7px;border-radius:50%;background:{{ td.dot }}"></span>
+          <span style="flex:1">{{ td.name }}</span>
+          <span style="font-size:11px;color:{{ td.statusColor }}">{{ td.status }}</span>
+          <sc-if value="{{ td.actionOn }}">
+            <span onClick="{{ td.onAction }}" style="font-size:11px;color:{{ td.actionColor }};cursor:pointer;padding:2px 4px">{{ td.action }}</span>
+          </sc-if>
+        </div>
+      </sc-for>
+      <sc-if value="{{ trayShowAdd }}">
+        <div onClick="{{ openPair }}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--accent)" style-hover="background:var(--panel2)">
+          <span style="width:13px;text-align:center">＋</span><span>添加设备…</span>
+        </div>
+      </sc-if>
+      <div style="height:1px;background:var(--line);margin:5px 4px"></div>
+      <div style="font-size:10px;color:var(--sub);padding:3px 9px;letter-spacing:.5px">显示（作为显示器时）</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 9px">
+        <span style="font-size:11px;color:var(--sub);width:36px;flex-shrink:0">分辨率</span>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <sc-for list="{{ trayResOpts }}" as="tr" hint-placeholder-count="3">
+            <span onClick="{{ tr.onClick }}" style="font-size:10px;padding:3px 7px;border-radius:5px;cursor:pointer;border:1px solid {{ tr.border }};background:{{ tr.bg }};color:{{ tr.color }};white-space:nowrap">{{ tr.label }}</span>
+          </sc-for>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 9px">
+        <span style="font-size:11px;color:var(--sub);width:36px;flex-shrink:0">缩放</span>
+        <div style="display:flex;gap:4px;flex-wrap:wrap">
+          <sc-for list="{{ trayScaleOpts }}" as="tc" hint-placeholder-count="3">
+            <span onClick="{{ tc.onClick }}" style="font-size:10px;padding:3px 7px;border-radius:5px;cursor:pointer;border:1px solid {{ tc.border }};background:{{ tc.bg }};color:{{ tc.color }};white-space:nowrap">{{ tc.label }}</span>
+          </sc-for>
+        </div>
+      </div>
+      <div style="position:relative">
+        <div onClick="{{ trayToggleMoreQ }}" style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--sub)" style-hover="background:var(--panel2)">
+          <span style="width:13px"></span>
+          <span style="flex:1">更多画质…</span>
+          <span style="font-size:10px">{{ trayQualityName }}</span>
+          <span>▸</span>
+        </div>
+        <sc-if value="{{ trayMoreQOpen }}">
+          <div style="position:absolute;right:100%;top:0;margin-right:4px;width:170px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:var(--shadow);padding:5px;z-index:5">
+            <sc-for list="{{ trayQualities }}" as="tq" hint-placeholder-count="3">
+              <div onClick="{{ tq.onClick }}" style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;cursor:pointer;font-size:12px" style-hover="background:var(--panel2)">
+                <span style="width:13px;color:var(--recv)">{{ tq.mark }}</span>
+                <span style="flex:1">{{ tq.name }}</span>
+                <span style="font-size:10px;color:var(--sub)">{{ tq.desc }}</span>
+              </div>
+            </sc-for>
+            <div onClick="{{ trayOpenQualityPanel }}" style="display:flex;align-items:center;gap:6px;padding:6px 9px;border-radius:6px;cursor:pointer;font-size:12px;color:var(--sub)" style-hover="background:var(--panel2)">
+              <span style="width:13px"></span>
+              <span style="flex:1">帧率 / 码率（主面板）…</span>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+      <div onClick="{{ trayRelay }}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:13px" style-hover="background:var(--panel2)">
+        <span style="width:13px;text-align:center;color:var(--sub)">⚙</span><span>中转设置…</span>
+      </div>
+      <div style="height:1px;background:var(--line);margin:5px 4px"></div>
+      <div onClick="{{ trayOpenPanel }}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:13px" style-hover="background:var(--panel2)">
+        <span style="width:13px;text-align:center;color:var(--sub)">▢</span><span>打开主面板</span>
+      </div>
+      <div onClick="{{ trayQuit }}" style="display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:6px;cursor:pointer;font-size:13px;color:var(--sub)" style-hover="background:var(--panel2)">
+        <span style="width:13px;text-align:center">✕</span><span>退出</span>
+      </div>
+    </div>
+    <div style="width:300px;height:40px;background:var(--panel);border:1px solid var(--line);border-radius:8px;display:flex;align-items:center;justify-content:flex-end;gap:10px;padding:0 12px;box-sizing:border-box">
+      <span style="font-size:11px;color:var(--sub)">△</span>
+      <div style="width:20px;height:20px;border-radius:5px;background:var(--accent);color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;box-shadow:0 0 0 2px var(--accent-weak)">N</div>
+      <span style="font-size:11px;color:var(--sub)">14:32</span>
+    </div>
+    <div style="font-size:11px;color:var(--sub);margin-top:8px;align-self:center">Mac 菜单栏 / Windows 托盘图标 — 右键菜单</div>
+  </div>
+
+  <!-- 配对弹窗 -->
+  <sc-if value="{{ pairOpen }}">
+    <div data-screen-label="配对弹窗" onClick="{{ closePair }}" style="position:fixed;inset:0;background:rgba(10,12,16,.45);display:flex;align-items:center;justify-content:center;z-index:50">
+      <div data-theme="{{ theme }}" onClick="{{ stopProp }}" style="width:360px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:18px;color:var(--text)">
+        <div style="display:flex;align-items:center;margin-bottom:14px">
+          <div style="font-size:15px;font-weight:600">添加设备</div>
+          <div style="flex:1"></div>
+          <button onClick="{{ closePair }}" style="font-size:14px;color:var(--sub);background:none;border:none;cursor:pointer">✕</button>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:14px">
+          <div>
+            <div style="font-size:12px;color:var(--sub);margin-bottom:6px">配对码 — 两台电脑输入相同的码</div>
+            <div style="display:flex;gap:8px">
+              <input value="{{ pairInput }}" onChange="{{ onPairInput }}" onKeyDown="{{ onPairKey }}" placeholder="手工输入 6 位数字" maxLength="{{ pairMaxLen }}" style="flex:1;min-width:0;font-size:18px;letter-spacing:3px;text-align:center;padding:9px;border:1px solid {{ pairInputBorder }};border-radius:8px;background:var(--panel2);color:var(--text);outline:none">
+              <button onClick="{{ genPairCode }}" style="font-size:12px;color:var(--accent);background:var(--accent-weak);border:none;border-radius:8px;padding:0 14px;cursor:pointer;white-space:nowrap">随机生成</button>
+            </div>
+            <div style="font-size:11px;color:var(--sub);margin-top:6px">一方随机生成后，另一方输入相同的配对码。</div>
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--sub);margin-bottom:6px">对方地址（可选）</div>
+            <input value="{{ pairAddr }}" onChange="{{ onPairAddr }}" placeholder="可留空，由对方填写" style="width:100%;box-sizing:border-box;font-size:13px;padding:9px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);outline:none">
+            <div style="font-size:11px;color:var(--sub);margin-top:6px">双方都留空时，将通过中转服务器建立连接。</div>
+          </div>
+          <sc-if value="{{ pairErrOn }}">
+            <div style="font-size:12px;color:var(--err);text-align:center">{{ pairErr }}</div>
+          </sc-if>
+          <button onClick="{{ submitPair }}" style="width:100%;padding:10px 0;font-size:14px;font-weight:600;color:#fff;background:var(--accent);border:none;border-radius:8px;cursor:pointer">配对</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- 中转设置弹窗 -->
+  <sc-if value="{{ relayOpen }}">
+    <div data-screen-label="中转设置弹窗" onClick="{{ closeRelay }}" style="position:fixed;inset:0;background:rgba(10,12,16,.45);display:flex;align-items:center;justify-content:center;z-index:50">
+      <div data-theme="{{ theme }}" onClick="{{ stopProp }}" style="width:340px;background:var(--panel);border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);padding:18px;color:var(--text)">
+        <div style="display:flex;align-items:center;margin-bottom:12px">
+          <div style="font-size:15px;font-weight:600">中转设置</div>
+          <div style="flex:1"></div>
+          <button onClick="{{ closeRelay }}" style="font-size:14px;color:var(--sub);background:none;border:none;cursor:pointer">✕</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);border:1px solid var(--line);border-radius:8px;margin-bottom:14px">
+          <div style="width:8px;height:8px;border-radius:50%;background:{{ relayStatusColor }}"></div>
+          <div style="font-size:12px">{{ relayStatusText }}</div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:10px">
+          <div>
+            <div style="font-size:12px;color:var(--sub);margin-bottom:5px">中转服务器</div>
+            <input value="{{ relayAddr }}" onChange="{{ onRelayChange }}" style="width:100%;box-sizing:border-box;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text);outline:none">
+          </div>
+          <div>
+            <div style="font-size:12px;color:var(--sub);margin-bottom:5px">访问 Token</div>
+            <input value="{{ relayToken }}" onChange="{{ onTokenChange }}" type="password" style="width:100%;box-sizing:border-box;font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:7px;background:var(--panel2);color:var(--text);outline:none">
+          </div>
+          <div style="display:flex;align-items:center;gap:10px">
+            <div onClick="{{ toggleForceRelay }}" style="width:34px;height:19px;border-radius:10px;background:{{ forceRelayBg }};position:relative;cursor:pointer;transition:background .15s;flex-shrink:0">
+              <div style="position:absolute;top:2px;left:{{ forceRelayKnob }};width:15px;height:15px;border-radius:50%;background:#fff;transition:left .15s;box-shadow:0 1px 3px rgba(0,0,0,.3)"></div>
+            </div>
+            <div style="font-size:12px">强制走中转</div>
+            <div style="font-size:11px;color:var(--sub)">仅在网络禁止直连时开启</div>
+          </div>
+          <button onClick="{{ saveRelay }}" style="width:100%;padding:9px 0;font-size:13px;font-weight:600;color:#fff;background:var(--accent);border:none;border-radius:8px;cursor:pointer;margin-top:2px">保存</button>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+
+  <!-- 提示 -->
+  <sc-if value="{{ toastOn }}">
+    <div data-theme="{{ theme }}" style="position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--text);color:var(--panel);font-size:13px;padding:9px 18px;border-radius:8px;box-shadow:var(--shadow);z-index:60">{{ toast }}</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;theme&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;light&quot;, &quot;dark&quot;], &quot;default&quot;: &quot;light&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;外观&quot;}, &quot;transport&quot;: {&quot;editor&quot;: &quot;enum&quot;, &quot;options&quot;: [&quot;直连&quot;, &quot;中转&quot;], &quot;default&quot;: &quot;直连&quot;, &quot;tsType&quot;: &quot;string&quot;, &quot;section&quot;: &quot;连接模拟&quot;}}">
+class Component extends DCLogic {
+  state = {
+    theme: null, role: 'standby', tab: 'cast', selectedId: 1, recvSvc: 'off',
+    pickSel: 'screen', castSource: null, traySub: null, trayQuality: '平衡',
+    qualityOpen: false, advOpen: false,
+    pairOpen: false, pairInput: '', pairAddr: '', pairErr: '', relayOpen: false,
+    devices: [
+      { id: 1, name: 'MacBook Pro', online: true, conn: 'on' },
+      { id: 2, name: '台式机-办公室', online: false, conn: 'off' }
+    ],
+    renamingId: null, renameVal: '', confirmId: null,
+    localName: '我的-ThinkPad', localEditing: false, localNameVal: '',
+    quality: { res: '跟随对方', scale: '150%', fps: '60 fps', rate: '自动' },
+    relayAddr: 'relay.netdisplay.io', relayToken: '••••••••', forceRelay: false,
+    toast: ''
+  };
+  t(msg) {
+    clearTimeout(this._toastT);
+    this.setState({ toast: msg });
+    this._toastT = setTimeout(() => this.setState({ toast: '' }), 2600);
+  }
+  go(role, after) {
+    this.setState({ role: 'switching' });
+    clearTimeout(this._roleT);
+    this._roleT = setTimeout(() => { this.setState({ role }); if (after) after(); }, 900);
+  }
+  componentWillUnmount() { clearTimeout(this._toastT); clearTimeout(this._roleT); clearTimeout(this._connT); }
+  renderVals() {
+    const s = this.state;
+    const theme = s.theme ?? (this.props.theme ?? 'light');
+    const transport = this.props.transport ?? '直连';
+    const latency = transport === '直连' ? '3ms' : '310ms';
+    const sel = s.devices.find(d => d.id === s.selectedId) || null;
+    const peerName = sel ? sel.name : '（未选择设备）';
+    const connOn = !!sel && sel.conn === 'on';
+    const connLabelOf = d => d.conn === 'on' ? `已连接 · ${transport} · ${latency}` : d.conn === 'connecting' ? '连接中…' : (d.online ? '未连接' : '离线');
+    const srcList = [
+      { key: 'screen', icon: '🖥', name: '整块屏幕', desc: '作为对方的第二显示器' },
+      { key: 'w1', icon: '▦', name: '演示文稿 — PowerPoint', desc: '程序窗口' },
+      { key: 'w2', icon: '◨', name: '浏览器 — Chrome', desc: '程序窗口' },
+      { key: 'w3', icon: '▤', name: '表格 — Excel', desc: '程序窗口' },
+      { key: 'w4', icon: '◧', name: '代码编辑器 — VS Code', desc: '程序窗口' },
+      { key: 'w5', icon: '◫', name: '聊天 — 微信', desc: '程序窗口' },
+      { key: 'w6', icon: '▧', name: '设计 — Figma', desc: '程序窗口' },
+      { key: 'w7', icon: '▥', name: '笔记 — Obsidian', desc: '程序窗口' },
+      { key: 'w8', icon: '▨', name: '终端 — Terminal', desc: '程序窗口' }
+    ];
+    const moreWins = [
+      { key: 'w9', icon: '▩', name: '照片', desc: '程序窗口' },
+      { key: 'w10', icon: '◪', name: '音乐', desc: '程序窗口' },
+      { key: 'w11', icon: '◩', name: '日历', desc: '程序窗口' }
+    ];
+    const allSrc = srcList.concat(moreWins);
+    this._allSrc = allSrc;
+    const casting = s.role === 'casting';
+    const receiving = s.role === 'receiving';
+    const svcOff = s.recvSvc === 'off';
+    const svcWaiting = s.recvSvc === 'waiting' && !receiving;
+    const curSrcName = (allSrc.find(x => x.key === s.pickSel) || allSrc[0]).name;
+    const qDefs = [
+      { key: 'res', label: '分辨率', opts: ['跟随对方', '1920×1080', '2560×1440'] },
+      { key: 'scale', label: '缩放', opts: ['100%', '150%', '200%'] },
+      { key: 'fps', label: '帧率', opts: ['30 fps', '60 fps'] },
+      { key: 'rate', label: '码率', opts: ['自动', '10 Mbps', '20 Mbps'] }
+    ];
+    return {
+      theme,
+      themeBtnLabel: theme === 'light' ? '◑ 深色' : '◐ 浅色',
+      toggleTheme: () => this.setState({ theme: theme === 'light' ? 'dark' : 'light' }),
+      transportLabel: transport, latencyLabel: latency,
+      svcDotColor: svcOff || casting ? 'var(--sub)' : 'var(--recv)',
+      svcDotAnim: svcWaiting && !casting ? 'nd-pulse 2s infinite' : 'none',
+      recvStatusTitle: casting ? '投射中 — 接收服务不可用' : svcOff ? '接收服务已关闭' : '等待连接中…',
+      recvStatusSub: casting ? '同一时刻只能投射或接收其一' : svcOff ? '开启后对方才能投射到本机' : `以「${s.localName}」待命 — 对方开始投射后自动显示`,
+      svcWaiting: svcWaiting && !casting,
+      recvBtnLabel: casting ? '投射中 — 接收服务不可用' : svcOff ? '开启接收服务' : receiving ? '断开投屏（服务保持开启）' : '关闭接收服务',
+      recvBtnBg: !casting && svcOff ? 'var(--recv)' : 'transparent',
+      recvBtnColor: casting ? 'var(--sub)' : svcOff ? '#fff' : 'var(--recv)',
+      recvBtnBorder: casting ? 'var(--line)' : 'var(--recv)',
+      recvBtnAction: () => this.svcAction(),
+      isCasting: s.role === 'casting', isReceiving: s.role === 'receiving', isSwitching: s.role === 'switching',
+      notCasting: s.role !== 'casting' && s.role !== 'switching',
+      notReceiving: s.role !== 'receiving' && s.role !== 'switching',
+      peerName,
+      castSourceName: s.castSource ? s.castSource.name : '',
+      onCastTab: s.tab === 'cast', onRecvTab: s.tab === 'recv',
+      tabCast: () => this.setState({ tab: 'cast' }),
+      tabRecv: () => this.setState({ tab: 'recv' }),
+      tabCastBg: s.tab === 'cast' ? 'var(--accent-weak)' : 'transparent',
+      tabCastColor: s.tab === 'cast' ? 'var(--accent)' : 'var(--sub)',
+      tabRecvBg: s.tab === 'recv' ? 'var(--recv-weak)' : 'transparent',
+      tabRecvColor: s.tab === 'recv' ? 'var(--recv)' : 'var(--sub)',
+      castDot: s.role === 'casting' ? '●' : '',
+      recvDot: s.role === 'receiving' ? '●' : '',
+      sources: allSrc.map(x => ({
+        icon: x.icon, name: x.name, desc: x.desc,
+        border: s.pickSel === x.key ? 'var(--accent)' : 'var(--line)',
+        bg: s.pickSel === x.key ? 'var(--accent-weak)' : 'var(--panel)',
+        check: s.pickSel === x.key ? '✓' : '',
+        onSelect: () => this.setState({ pickSel: x.key })
+      })),
+      castBtnBg: (sel && sel.online && s.pickSel && !receiving) ? 'var(--accent)' : 'var(--line)',
+      castBtnCursor: (sel && sel.online && s.pickSel && !receiving) ? 'pointer' : 'not-allowed',
+      startCast: () => this.startCasting(),
+      demoReceive: (e) => {
+        e.preventDefault();
+        if (s.recvSvc !== 'waiting') { this.t('请先开启接收服务'); return; }
+        if (casting) { this.t('正在投射，无法接收'); return; }
+        this.setState({ tab: 'recv', devices: s.devices.map(x => sel && x.id === sel.id ? { ...x, conn: 'on' } : x) });
+        this.go('receiving', () => this.t(`${peerName} 开始向本机投射`));
+      },
+      stopToStandby: () => this.go('standby'),
+      devices: s.devices.map(d => ({
+        name: d.name,
+        renaming: s.renamingId === d.id,
+        confirming: s.confirmId === d.id,
+        normal: s.renamingId !== d.id && s.confirmId !== d.id,
+        radio: s.selectedId === d.id ? '◉' : '○',
+        radioColor: s.selectedId === d.id ? 'var(--accent)' : 'var(--sub)',
+        rowBorder: s.selectedId === d.id ? 'var(--accent)' : 'var(--line)',
+        rowBg: s.selectedId === d.id ? 'var(--accent-weak)' : 'var(--panel)',
+        onSelect: () => this.setState({ selectedId: d.id }),
+        dotColor: d.conn === 'on' ? 'var(--ok)' : d.online ? 'var(--accent)' : 'var(--sub)',
+        statusLabel: connLabelOf(d),
+        statusColor: d.conn === 'on' ? 'var(--ok)' : 'var(--sub)',
+        disconnBtn: d.conn === 'on',
+        onDisconnect: (e) => { e.stopPropagation(); this.disconnectDev(d.id); },
+        onRename: (e) => { e.stopPropagation(); this.setState({ renamingId: d.id, renameVal: d.name, confirmId: null }); },
+        onRenameSave: (e) => { e.stopPropagation(); this.saveRename(d.id); },
+        onRenameKey: (e) => { if (e.key === 'Enter') this.saveRename(d.id); if (e.key === 'Escape') this.setState({ renamingId: null }); },
+        onUnpair: (e) => { e.stopPropagation(); this.setState({ confirmId: d.id, renamingId: null }); },
+        onUnpairYes: (e) => { e.stopPropagation(); this.setState({ devices: s.devices.filter(x => x.id !== d.id), confirmId: null }); this.t(`已解除与「${d.name}」的配对`); },
+        onUnpairNo: (e) => { e.stopPropagation(); this.setState({ confirmId: null }); }
+      })),
+      renameVal: s.renameVal,
+      onRenameChange: (e) => this.setState({ renameVal: e.target.value }),
+      localName: s.localName, localEditing: s.localEditing, localNotEditing: !s.localEditing,
+      localNameVal: s.localNameVal,
+      editLocalName: () => this.setState({ localEditing: true, localNameVal: s.localName }),
+      onLocalNameChange: (e) => this.setState({ localNameVal: e.target.value }),
+      onLocalNameKey: (e) => {
+        if (e.key === 'Enter') this.setState({ localName: s.localNameVal.trim() || s.localName, localEditing: false });
+        if (e.key === 'Escape') this.setState({ localEditing: false });
+      },
+      qualityOpen: s.qualityOpen, advOpen: s.advOpen,
+      qualityChev: s.qualityOpen ? '▾' : '▸', advChev: s.advOpen ? '▾' : '▸',
+      toggleQuality: () => this.setState({ qualityOpen: !s.qualityOpen }),
+      toggleAdv: () => this.setState({ advOpen: !s.advOpen }),
+      qualityGroups: qDefs.map(g => ({
+        label: g.label,
+        options: g.opts.map(o => {
+          const active = s.quality[g.key] === o;
+          return {
+            label: o,
+            border: active ? 'var(--recv)' : 'var(--line)',
+            bg: active ? 'var(--recv-weak)' : 'var(--panel)',
+            color: active ? 'var(--recv)' : 'var(--sub)',
+            onClick: () => this.setState({ quality: { ...s.quality, [g.key]: o } })
+          };
+        })
+      })),
+      relayAddr: s.relayAddr, relayToken: s.relayToken,
+      onRelayChange: (e) => this.setState({ relayAddr: e.target.value }),
+      onTokenChange: (e) => this.setState({ relayToken: e.target.value }),
+      forceRelayBg: s.forceRelay ? 'var(--accent)' : 'var(--line)',
+      forceRelayKnob: s.forceRelay ? '17px' : '2px',
+      toggleForceRelay: () => { this.setState({ forceRelay: !s.forceRelay }); this.t(s.forceRelay ? '已关闭「强制走中转」' : '已开启「强制走中转」，重连后生效'); },
+      trayCastTitle: casting ? `投射中 · ${s.castSource ? s.castSource.name : curSrcName}` : '投射',
+      trayCastSubOn: casting,
+      trayCastSub: casting ? `目标：${peerName} · ${transport} · ${latency}` : '',
+      trayCastAction: receiving ? '接收中不可用' : casting ? '断开' : '开始 ▸',
+      trayCastActionColor: casting ? 'var(--err)' : receiving ? 'var(--sub)' : 'var(--accent)',
+      trayCastOpacity: receiving ? '.45' : '1',
+      trayCastClick: () => {
+        if (receiving || s.role === 'switching') { this.t('接收中，投射不可用'); return; }
+        if (casting) { this.go('standby', () => this.t('已断开投射')); return; }
+        this.startCasting();
+      },
+      trayRecvTitle: receiving ? '接收投屏中' : svcOff ? '启动接收服务' : '接收服务 · 等待连接',
+      trayRecvSubOn: receiving,
+      trayRecvSub: receiving ? `来源：${peerName} · ${transport} · ${latency}` : '',
+      trayRecvAction: casting ? '投射中不可用' : receiving ? '断开' : svcOff ? '' : '关闭',
+      trayRecvActionColor: receiving ? 'var(--err)' : 'var(--sub)',
+      trayRecvOpacity: casting ? '.45' : '1',
+      trayRecvClick: () => this.svcAction(),
+      traySrcs: srcList.map(x => ({
+        icon: x.icon, name: x.name, mark: s.pickSel === x.key ? '✓' : '',
+        onClick: () => { this.setState({ pickSel: x.key }); this.t(`投射内容已选择「${x.name}」（会被记住）`); }
+      })),
+      trayMoreOpen: s.traySub === 'more',
+      trayToggleMore: () => this.setState({ traySub: s.traySub === 'more' ? null : 'more' }),
+      trayMoreWins: moreWins.map(x => ({
+        icon: x.icon, name: x.name, mark: s.pickSel === x.key ? '✓' : '',
+        onClick: () => { this.setState({ pickSel: x.key, traySub: null }); this.t(`投射内容已选择「${x.name}」（会被记住）`); }
+      })),
+      traySrcOn: !!sel && sel.conn === 'on' && !receiving,
+      trayDevHeader: svcOff ? '投射目标 · 已配对设备' : receiving ? '接收中 · 已配对设备' : '等待接收 · 已配对设备',
+      trayDevices: s.devices.map(d => ({
+        name: d.name,
+        mark: s.selectedId === d.id ? '◉' : '○',
+        dot: d.conn === 'on' ? 'var(--ok)' : d.online ? 'var(--accent)' : 'var(--sub)',
+        status: d.conn === 'on' ? (casting ? '投射中' : receiving ? '接收中' : '已连接') : d.online ? '在线' : '离线',
+        statusColor: d.conn === 'on' ? 'var(--ok)' : 'var(--sub)',
+        opacity: (casting || receiving) && s.selectedId !== d.id ? '.45' : '1',
+        actionOn: svcOff && d.online && !(casting && d.conn !== 'on'),
+        action: d.conn === 'on' ? '断开' : '连接',
+        actionColor: d.conn === 'on' ? 'var(--err)' : 'var(--accent)',
+        onAction: (e) => {
+          e.stopPropagation();
+          if (d.conn === 'on') { this.disconnectDev(d.id); return; }
+          if (casting) { this.t('投射中，无法连接其他设备'); return; }
+          this.connectDev(d.id);
+        },
+        onClick: () => {
+          if (casting || receiving) { this.t('投射/接收进行中，无法切换设备'); return; }
+          this.setState({ selectedId: d.id });
+        }
+      })),
+      trayShowAdd: s.devices.length === 0,
+      trayQualities: [
+        { name: '流畅优先', desc: '30fps · 低码率', q: { fps: '30 fps', rate: '自动' } },
+        { name: '平衡', desc: '60fps · 自动', q: { fps: '60 fps', rate: '自动' } },
+        { name: '清晰优先', desc: '60fps · 20Mbps', q: { fps: '60 fps', rate: '20 Mbps' } }
+      ].map(p => ({
+        name: p.name, desc: p.desc, mark: s.trayQuality === p.name ? '✓' : '',
+        onClick: () => { this.setState({ trayQuality: p.name, quality: { ...s.quality, ...p.q } }); this.t(`画质已设为「${p.name}」`); }
+      })),
+      trayResOpts: qDefs[0].opts.map(o => ({
+        label: o,
+        border: s.quality.res === o ? 'var(--recv)' : 'var(--line)',
+        bg: s.quality.res === o ? 'var(--recv-weak)' : 'transparent',
+        color: s.quality.res === o ? 'var(--recv)' : 'var(--sub)',
+        onClick: () => this.setState({ quality: { ...s.quality, res: o } })
+      })),
+      trayScaleOpts: qDefs[1].opts.map(o => ({
+        label: o,
+        border: s.quality.scale === o ? 'var(--recv)' : 'var(--line)',
+        bg: s.quality.scale === o ? 'var(--recv-weak)' : 'transparent',
+        color: s.quality.scale === o ? 'var(--recv)' : 'var(--sub)',
+        onClick: () => this.setState({ quality: { ...s.quality, scale: o } })
+      })),
+      trayQualityName: s.trayQuality,
+      trayMoreQOpen: s.traySub === 'moreq',
+      trayToggleMoreQ: () => this.setState({ traySub: s.traySub === 'moreq' ? null : 'moreq' }),
+      trayOpenQualityPanel: () => { this.setState({ tab: 'recv', qualityOpen: true, traySub: null }); this.t('已在主面板展开画质设置'); },
+      trayRelay: () => this.setState({ relayOpen: true, traySub: null }),
+      relayOpen: s.relayOpen,
+      closeRelay: () => this.setState({ relayOpen: false }),
+      saveRelay: () => { this.setState({ relayOpen: false }); this.t('中转设置已保存'); },
+      relayStatusText: s.relayAddr ? `中转服务可用 · ${s.relayAddr} · 约 310ms` : '未设置中转服务器',
+      relayStatusColor: s.relayAddr ? 'var(--ok)' : 'var(--sub)',
+      trayOpenPanel: () => this.t('已打开主面板（见左侧）'),
+      trayQuit: () => this.t('演示：退出应用'),
+      pairOpen: s.pairOpen,
+      openPair: () => this.setState({ pairOpen: true, pairInput: '', pairAddr: '', pairErr: '', traySub: null }),
+      closePair: () => this.setState({ pairOpen: false }),
+      stopProp: (e) => e.stopPropagation(),
+      genPairCode: () => {
+        const n = String(Math.floor(100000 + Math.random() * 900000));
+        this.setState({ pairInput: n.slice(0, 3) + ' ' + n.slice(3), pairErr: '' });
+      },
+      pairAddr: s.pairAddr,
+      onPairAddr: (e) => this.setState({ pairAddr: e.target.value }),
+      pairInput: s.pairInput, pairMaxLen: 7,
+      onPairInput: (e) => this.setState({ pairInput: e.target.value.replace(/[^0-9 ]/g, ''), pairErr: '' }),
+      onPairKey: (e) => { if (e.key === 'Enter') this.submitPair(); },
+      pairErr: s.pairErr, pairErrOn: !!s.pairErr,
+      pairInputBorder: s.pairErr ? 'var(--err)' : 'var(--line)',
+      submitPair: () => this.submitPair()
+    };
+  }
+  saveRename(id) {
+    const name = this.state.renameVal.trim();
+    this.setState({
+      devices: this.state.devices.map(d => d.id === id && name ? { ...d, name } : d),
+      renamingId: null
+    });
+  }
+  submitPair() {
+    const code = this.state.pairInput.replace(/\s/g, '');
+    if (code.length !== 6) {
+      this.setState({ pairErr: '配对码错误，请核对后重试（应为 6 位数字）' });
+      return;
+    }
+    const id = Date.now();
+    const addr = this.state.pairAddr.trim();
+    this.setState({
+      devices: [...this.state.devices, { id, name: 'Mac mini', online: true, conn: 'off' }],
+      selectedId: id,
+      pairOpen: false
+    });
+    this.t(addr ? `配对成功，已添加「Mac mini」（${addr}）` : '配对成功，已添加「Mac mini」（将通过中转连接）');
+  }
+  svcAction() {
+    const s = this.state;
+    if (s.role === 'casting' || s.role === 'switching') { this.t('正在投射，接收服务不可用'); return; }
+    if (s.recvSvc === 'off') { this.setState({ recvSvc: 'waiting' }); this.t('接收服务已开启，等待对方投射'); return; }
+    if (s.role === 'receiving') { this.setState({ role: 'standby' }); this.t('已断开投屏，接收服务保持开启'); return; }
+    this.setState({ recvSvc: 'off' }); this.t('接收服务已关闭');
+  }
+  startCasting() {
+    const s = this.state;
+    const sel = s.devices.find(d => d.id === s.selectedId);
+    if (!sel) { this.t('请先选择投射目标设备'); return; }
+    if (!sel.online) { this.t('对方离线，无法投射'); return; }
+    if (s.role === 'receiving') { this.t('正在接收投屏，请先断开'); return; }
+    const src = (this._allSrc || []).find(x => x.key === s.pickSel) || { name: '整块屏幕' };
+    this.setState({
+      castSource: src,
+      devices: s.devices.map(x => x.id === sel.id ? { ...x, conn: 'on' } : { ...x, conn: 'off' })
+    });
+    this.go('casting', () => this.t(`正在投射给 ${sel.name}`));
+  }
+  connectDev(id) {
+    const d = this.state.devices.find(x => x.id === id);
+    if (!d || !d.online) { this.t('对方离线，无法连接'); return; }
+    this.setState({ selectedId: id, devices: this.state.devices.map(x => x.id === id ? { ...x, conn: 'connecting' } : { ...x, conn: 'off' }) });
+    clearTimeout(this._connT);
+    this._connT = setTimeout(() => { this.setDev(id, { conn: 'on' }); this.t(`已连接到 ${d.name}`); }, 1200);
+  }
+  disconnectDev(id) {
+    const d = this.state.devices.find(x => x.id === id);
+    this.setDev(id, { conn: 'off' });
+    if (this.state.selectedId === id && this.state.role !== 'standby') this.setState({ role: 'standby' });
+    this.t(`已断开与 ${d ? d.name : ''} 的连接`);
+  }
+  setDev(id, patch) {
+    this.setState({ devices: this.state.devices.map(x => x.id === id ? { ...x, ...patch } : x) });
+  }
+}
+</script>
+</body>
+</html>

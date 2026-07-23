@@ -356,6 +356,13 @@ function connect() {
   // 同时用我的长期配对码在中转注册，对方用哪种方式都能连上。
   if (mode === "listen") return startListening();
 
+  // 切到「我去连接对方」时，先停掉自己的待命——否则会在服务器上留一个没人用的
+  // 注册，用户看不见也不知道，还会占着自己的配对码房间。
+  if (sender.isSending()) {
+    sender.stopSender();
+    refreshRoleBar();
+  }
+
   // 连接模式：填了什么就试什么；两个都填就并行竞速（先握手成功的胜出）
   const ip = $("ip").value.trim();
   const code = $("code").value.trim();
