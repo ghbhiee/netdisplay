@@ -15,6 +15,12 @@ final class ReceiverRelayClient {
     /// Explicit pairHash (from a shared --secret/--pairhash) that pins the relay
     /// room deterministically for CLI-only tests — overrides the stored pairing.
     private let pairHashOverride: String?
+    /// Plain 6-digit code to retry with if a pairHash JOIN hits `code_not_found`
+    /// (handoff period: this new end joins by pairHash, but the peer is still an
+    /// old build registered under the plain code). Mirrors Windows #106. Once both
+    /// ends are new this path is never taken.
+    private let fallbackCode: String?
+    private var usingFallback = false
     private let name: String
     private let deviceId: String
     private let screen: HelloReceiver.Screen
@@ -41,12 +47,14 @@ final class ReceiverRelayClient {
     var statsRepeat = true
 
     init(host: String, port: UInt16, token: String?, code: String?, pairHashOverride: String? = nil,
+         fallbackCode: String? = nil,
          name: String, deviceId: String, screen: HelloReceiver.Screen, codecs: [String]) {
         self.host = host
         self.port = port
         self.token = token
         self.code = code
         self.pairHashOverride = pairHashOverride
+        self.fallbackCode = fallbackCode
         self.name = name
         self.deviceId = deviceId
         self.screen = screen
@@ -60,8 +68,12 @@ final class ReceiverRelayClient {
         relayParser = FrameParser()
         session = nil
 
-        let pairHash = pairHashOverride ?? PairStore.currentPairHash(slot: "receiver")
-        if pairHash == nil && (code == nil || code!.isEmpty) {
+        let storedHash = pairHashOverride ?? PairStore.currentPairHash(slot: "receiver")
+        // After a code_not_found, retry by plain code (peer is still an old build).
+        let joinHash: String? = usingFallback ? nil : storedHash
+        let joinCode: String = usingFallback ? (fallbackCode ?? code ?? "")
+                                             : (storedHash == nil ? (code ?? "") : "")
+        if joinHash == nil && joinCode.isEmpty {
             Log.error("relay-receive: no pairing code and no stored pairing — pass --code <6-digit>")
             exit(2)
         }
@@ -74,14 +86,14 @@ final class ReceiverRelayClient {
         c.start { [weak self] state in
             guard let self else { return }
             if case .ready = state {
-                let join = RelayJoin(v: 1, role: "receiver", code: self.code ?? "",
-                                     pairHash: pairHash, token: self.token)
+                let join = RelayJoin(v: 1, role: "receiver", code: joinCode,
+                                     pairHash: joinHash, token: self.token)
                 c.send(Wire.encodeJSON(.relayJoin, join))
                 self.backoff = 1
-                if pairHash != nil {
+                if joinHash != nil {
                     Log.info("relay-receive: JOIN with pairHash (code-free), waiting to pair")
                 } else {
-                    Log.info("relay-receive: JOIN with code \(self.code ?? "?"), waiting to pair")
+                    Log.info("relay-receive: JOIN with code \(joinCode)\(self.usingFallback ? " (fallback)" : ""), waiting to pair")
                 }
             }
         }
@@ -121,6 +133,16 @@ final class ReceiverRelayClient {
             rs.attach(conn: conn, leftover: leftover)
         case .relayError:
             let reason = (try? JSONDecoder().decode(RelayError.self, from: frame.payload))?.reason ?? "?"
+            // Handoff fallback: pairHash room empty but peer may be an old build
+            // registered under the plain code — retry by code once (Windows #106).
+            if reason == "code_not_found", let fb = fallbackCode, !fb.isEmpty, !usingFallback {
+                usingFallback = true
+                backoff = 0.5   // snappy single retry, not the usual backoff
+                Log.info("relay-receive: pairHash room empty → falling back to plain code \(fb)")
+                conn?.close()
+                scheduleReconnect()   // self-close won't fire onClose, so reconnect explicitly
+                return
+            }
             Log.error("relay-receive: RELAY_ERROR \(reason)"); conn?.close()
         default:
             break
