@@ -29,6 +29,7 @@ const testArgs = {
   token: arg("token"), // 测试：relay 访问令牌
   testPairSecret: arg("test-pair-secret"), // 测试：预置 pairSecret（base64）
   pairCode: arg("pair-code"), // 测试：按 6 位码建一条配对设备并选中，走真实 UI 路径
+  showTray: argv.includes("--show-tray") ? "1" : null, // 测试：启动后自动弹出托盘菜单（否则只能手点图标，没法自动核对）
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
   sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
   sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
@@ -197,6 +198,10 @@ app.whenReady().then(() => {
   tray.on("click", () => (trayWin.isVisible() ? hideTrayWin() : showTrayWin()));
   tray.on("right-click", () => (trayWin.isVisible() ? hideTrayWin() : showTrayWin()));
   tray.on("double-click", () => showPanel());
+
+  // 托盘菜单平时只能手点图标才出得来，自动化里核对不了。给个测试口子，
+  // 好把「main.js 的定位/尺寸」和「tray.js 的渲染」放在一起验。
+  if (testArgs.showTray) setTimeout(showTrayWin, 3500);
 });
 
 // ================= IPC 中转 =================
