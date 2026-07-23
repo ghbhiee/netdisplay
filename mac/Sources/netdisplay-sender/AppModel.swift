@@ -81,6 +81,13 @@ final class AppModel {
         changed()
         return true
     }
+    /// UI convenience: start casting and auto-settle after the 0.9s 切换中… beat.
+    /// (The pure startCasting/finishSwitchToCasting stay separate for testing.)
+    func beginCast() {
+        guard startCasting() else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in self?.finishSwitchToCasting() }
+    }
+
     /// Called when the switching/connecting settle timer fires (UI drives the 0.9s).
     func finishSwitchToCasting() {
         guard role == .switching, let d = selected else { return }

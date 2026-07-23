@@ -419,6 +419,23 @@ case "role-selftest":
     Log.info("role-selftest \(rok && persistOK ? "PASS" : "FAIL") (persist=\(persistOK))")
     exit(rok && persistOK ? 0 : 1)
 
+case "traymenu-dump":
+    // Verify tray menu structure for a couple of states (no GUI needed).
+    func dump(_ label: String, configure: (AppModel) -> Void) {
+        let m = AppModel()
+        m.devices = [PairedDevice(deviceId: "peer-1", secret: "s1", name: "LEGION-Y7000P")]
+        m.selectedSecret = "s1"
+        configure(m)
+        let tray = TrayMenu(model: m); tray.appList = ["Safari", "Xcode"]
+        tray.menuNeedsUpdate(tray.menu)
+        Log.info("── \(label) ──")
+        for it in tray.menu.items { Log.info(it.isSeparatorItem ? "  —" : "  \(it.state == .on ? "✓ " : "")\(it.title)\(it.isEnabled ? "" : " (disabled)")") }
+    }
+    dump("待命", configure: { _ in })
+    dump("投射中", configure: { $0.startCasting(); $0.finishSwitchToCasting() })
+    dump("接收服务等待", configure: { $0.startRecvService() })
+    exit(0)
+
 case "relay-health":
     // Probe relay reachability + token via the self-pair trick (TUN-proof).
     let server = args.str("server", "15.tokencv.com:47700")

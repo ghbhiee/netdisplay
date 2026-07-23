@@ -14,6 +14,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var config = AppConfig.load()
     private var statusItem: NSStatusItem!
     private var panel: MainPanelWindow!
+    private var tray: TrayMenu!
 
     // Receive side
     private var receiver: ReceiverRelayClient?
@@ -37,12 +38,16 @@ final class AppController: NSObject, NSApplicationDelegate {
         installEditMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "NetDisplay")
-        statusItem.button?.action = #selector(openPanel)
-        statusItem.button?.target = self
 
         panel = MainPanelWindow(model: model)
         panel.onAddDevice = { [weak self] in self?.addDevice() }
         panel.onRelaySettings = { [weak self] in self?.editRelaySettings() }
+
+        tray = TrayMenu(model: model)
+        tray.onAddDevice = { [weak self] in self?.addDevice() }
+        tray.onRelaySettings = { [weak self] in self?.editRelaySettings() }
+        tray.onOpenPanel = { [weak self] in self?.panel.show() }
+        statusItem.menu = tray.menu   // click the icon → the four-section menu
 
         wireModel()
         refreshAppList()
@@ -139,11 +144,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func refreshAppList() {
         Task {
             let apps = await WindowPicker.projectableApps()
-            await MainActor.run { self.panel.appList = apps }
+            await MainActor.run { self.panel.appList = apps; self.tray.appList = apps }
         }
     }
-
-    @objc private func openPanel() { panel.show() }
 
     /// Accessory apps have no main menu, so Cmd+C/V don't reach dialog fields.
     private func installEditMenu() {

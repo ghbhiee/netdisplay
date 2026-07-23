@@ -462,11 +462,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
 
     @objc private func tapCastTab() { onCastTab = true; rebuild() }
     @objc private func tapRecvTab() { onCastTab = false; rebuild() }
-    @objc private func tapStartCast() {
-        guard model.startCasting() else { return }
-        // UI drives the 0.9s switching settle (design).
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) { [weak self] in self?.model.finishSwitchToCasting() }
-    }
+    @objc private func tapStartCast() { model.beginCast() }
     @objc private func tapStopCast() { model.stopCasting() }
     @objc private func tapRecvButton() {
         switch (model.role, model.recvSvc) {
