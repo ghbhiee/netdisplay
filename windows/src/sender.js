@@ -8,6 +8,8 @@ const os = require("os");
 const nodeCrypto = require("crypto");
 const { ipcRenderer } = require("electron");
 const { T, buildFrame, FrameParser, buildVideoPayload } = require("./protocol");
+const { probeHQ } = require("./ffmpeg-probe");
+const { startCapture, parseSpsSize } = require("./ffmpeg-capture");
 
 const DEVICE_ID_KEY = "sender.deviceId";
 const deviceId = () => {
@@ -20,6 +22,7 @@ let server = null;
 let active = null; // 当前会话 {sock, stop()}
 let onStatus = () => {};
 let stats = null; // 最近一次会话的发送统计（会话结束后保留，供互调对账）
+let sessionOpts = {}; // 启动时传入的选项（HQ 开关、ffmpeg 路径等）
 const dbg = (...a) => console.log("[sender]", ...a); // --enable-logging 时可见
 
 // ---------- Annex-B 工具 ----------
@@ -65,10 +68,27 @@ const ENC_CODEC = {
   hevc422: { codec: "hev1.4.10.L120.B0", annexb: (c) => ({ ...c, hevc: { format: "annexb" } }) },
 };
 let encodable = null; // 本机可编能力，首次探测后缓存
+let hqInfo = null; // WS-5：ffmpeg HQ 路径探测结果（null=尚未探测）
+let webCodecsCaps = []; // WebCodecs 单独能编的（用于判断某 codec 是否只能靠 HQ）
 
-async function detectEncodable() {
+async function detectEncodable(hqEnabled, ffmpegPath) {
   if (encodable) return encodable;
   const out = [];
+
+  // WS-5：HQ（ffmpeg + 硬件 HEVC 4:2:2）优先——它是 WebCodecs 编不出来的能力。
+  // 探测里已包含「真编真验色度」，所以这里拿到 available 就意味着能出真 4:2:2。
+  if (hqEnabled !== false) {
+    try {
+      hqInfo = await probeHQ(ffmpegPath || null, dbg);
+      if (hqInfo.available && hqInfo.codec) out.push(hqInfo.codec);
+    } catch (e) {
+      dbg("HQ 探测异常，忽略并回退基线:", e.message);
+      hqInfo = null;
+    }
+  }
+
+  // WebCodecs 基线：零依赖、支持窗口模式，永远保留（边界①）
+  webCodecsCaps = [];
   for (const name of ["hevc422", "hevc", "h264"]) {
     const e = ENC_CODEC[name];
     for (const hw of ["prefer-hardware", "no-preference"]) {
@@ -78,14 +98,24 @@ async function detectEncodable() {
           framerate: 30, latencyMode: "realtime", hardwareAcceleration: hw,
         });
         const r = await VideoEncoder.isConfigSupported(cfg);
-        if (r.supported) { out.push(name); break; }
+        if (r.supported) { webCodecsCaps.push(name); break; }
       } catch {}
     }
   }
+  for (const name of webCodecsCaps) if (!out.includes(name)) out.push(name);
+
   encodable = out;
-  dbg("encodable codecs:", out.join(",") || "(none)");
+  dbg("encodable codecs:", out.join(",") || "(none)",
+    `| WebCodecs: ${webCodecsCaps.join(",") || "无"}`,
+    `| HQ: ${hqInfo && hqInfo.available ? hqInfo.encoder : "不可用"}`);
   return out;
 }
+
+// 这次协商出的 codec 是否**只有** HQ 路径能编 → 决定走 ffmpeg 还是 WebCodecs。
+// 注意判据是「WebCodecs 编不了」而非「HQ 可用」：两者都能编时优先用零依赖的基线，
+// 保持行为稳定（边界①：HQ 是增强，不是默认替换）。
+const needsHQ = (codecName) =>
+  !!(hqInfo && hqInfo.available && hqInfo.codec === codecName && !webCodecsCaps.includes(codecName));
 
 // 从 Receiver 的偏好序里挑第一个本机能编的（对齐 Mac Session.swift 的 negotiateCodec）
 function negotiateCodec(receiverCodecs) {
@@ -138,12 +168,103 @@ async function captureTrack(fps) {
   return { track: stream.getVideoTracks()[0], src };
 }
 
+// ---------- HQ 会话（WS-5：ffmpeg + 硬件 HEVC 4:2:2）----------
+// 与 WebCodecs 会话并列，协议行为完全一致，只是帧的来源换成 ffmpeg 子进程。
+async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
+  const src = source || { kind: "desktop", name: os.hostname() + " 屏幕" };
+  // ffmpeg 路径下尺寸由采集器决定，首帧到达前不知道——先用 0 占位，拿到 SPS 前不发 ACK
+  let announced = false;
+  let stopped = false;
+
+  stats = {
+    startedAt: Date.now(), width: 0, height: 0, fps, codec: codecName,
+    relayMode: !!relayMode, encoderAccel: `ffmpeg:${hqInfo.encoder}`, path: "hq",
+    captured: 0, dropped: 0, sent: 0, keyframes: 0, bytes: 0,
+    encodeErrors: 0, keyframeRequests: 0, pings: 0,
+    lastSecond: { at: Date.now(), sent: 0, bytes: 0, fps: 0, mbps: 0 },
+  };
+  const st = stats;
+
+  const cap = startCapture({
+    ffmpeg: hqInfo.ffmpeg, encoder: hqInfo.encoder, pixFmt: hqInfo.pixFmt,
+    source: src, fps, bitrateMbps: Math.round(bitrate / 1e6), gopSeconds: 2,
+    onFrame(au, isKey, ptsUs) {
+      if (stopped || sock.destroyed) return;
+      // 首帧必须是关键帧（协议 §3.1）；ffmpeg 首个 AU 就是 IDR，非关键帧一律丢弃直到关键帧
+      if (!announced) {
+        if (!isKey) { st.dropped++; return; }
+        // 尺寸只能从流里的 SPS 拿：ffmpeg 抓到多大取决于屏幕/窗口，事先不知道。
+        // 解析失败就没法给对端正确的 display，宁可失败也不要发错尺寸让对端黑屏。
+        const size = parseSpsSize(au);
+        if (!size) {
+          st.encodeErrors++;
+          if (!sock.destroyed) sock.write(buildFrame(T.BYE, { reason: "hq: cannot parse SPS size" }));
+          try { sock.destroy(); } catch {}
+          return;
+        }
+        st.width = size.width; st.height = size.height;
+        announced = true;
+        const ack = {
+          version: 1, accepted: true,
+          display: { width: size.width, height: size.height, fps },
+          codec: codecName,
+        };
+        if (relayMode) ack.pairSecret = getPairSecret();
+        sock.write(buildFrame(T.HELLO_ACK, ack));
+        sock.write(buildFrame(T.PROJECTION_STATE, {
+          active: true,
+          label: src.kind === "window" ? src.name : `${os.hostname()} 屏幕`,
+          sourceKind: src.kind,
+        }));
+      }
+      st.captured++;
+      sock.write(buildFrame(T.VIDEO_FRAME, buildVideoPayload(ptsUs, isKey, au)));
+      st.sent++; st.bytes += au.length;
+      if (isKey) st.keyframes++;
+    },
+    onError(msg) {
+      st.encodeErrors++;
+      dbg("HQ 采集失败:", msg);
+      onStatus("HQ 采集失败: " + String(msg).split("\n")[0]);
+      if (!sock.destroyed) sock.write(buildFrame(T.BYE, { reason: "hq capture failed: " + String(msg).split("\n")[0] }));
+      try { sock.destroy(); } catch {}
+    },
+    onLog: dbg,
+  });
+
+  const statTimer = setInterval(() => {
+    if (stopped) return;
+    const now = Date.now();
+    const dt = (now - st.lastSecond.at) / 1000;
+    if (dt > 0) {
+      st.lastSecond.fps = +((st.sent - st.lastSecond.sent) / dt).toFixed(1);
+      st.lastSecond.mbps = +(((st.bytes - st.lastSecond.bytes) * 8) / dt / 1e6).toFixed(2);
+    }
+    st.lastSecond.at = now; st.lastSecond.sent = st.sent; st.lastSecond.bytes = st.bytes;
+    onStatus(`发送中 [HQ ${hqInfo.encoder}] ${codecName} · ${st.lastSecond.fps}fps ${st.lastSecond.mbps}Mbps · 已发 ${st.sent} 帧(关键 ${st.keyframes})`);
+  }, 1000);
+
+  return {
+    sock,
+    requestKeyframe() { st.keyframeRequests++; cap.requestKeyframe(); },
+    projectionStop() {
+      if (stopped) return;
+      stopped = true;
+      clearInterval(statTimer);
+      cap.stop();
+      if (!sock.destroyed) sock.write(buildFrame(T.PROJECTION_STATE, { active: false }));
+      onStatus("已停止投射（连接保持）");
+    },
+    stop() { this.projectionStop(); try { sock.destroy(); } catch {} },
+  };
+}
+
 // ---------- 会话 ----------
 async function startSession(sock, receiverHello, relayMode) {
   const fps = Math.min(60, Math.max(30, receiverHello?.screen?.fps || 60));
   const bitrate = (receiverHello?.screen?.bitrateMbps || 40) * 1e6; // v1.2：采纳 Receiver 期望码率
-  // v1.3/v1.6：按 Receiver 的 codecs 偏好序挑本机能编的
-  await detectEncodable();
+  // v1.3/v1.6：按 Receiver 的 codecs 偏好序挑本机能编的（含 WS-5 的 ffmpeg HQ 路径）
+  await detectEncodable(sessionOpts.hq !== false, sessionOpts.ffmpegPath);
   const codecName = negotiateCodec(receiverHello?.codecs);
   if (!codecName) {
     sock.write(buildFrame(T.HELLO_ACK, {
@@ -152,6 +273,12 @@ async function startSession(sock, receiverHello, relayMode) {
     }));
     sock.write(buildFrame(T.BYE, { reason: "no common codec" }));
     throw new Error("no common codec with receiver");
+  }
+
+  // WS-5：协商出的 codec 只有 ffmpeg 能编（如 hevc422）→ 走 HQ 管线
+  dbg(`协商结果 codec=${codecName}，路径=${needsHQ(codecName) ? "HQ(ffmpeg)" : "基线(WebCodecs)"}`);
+  if (needsHQ(codecName)) {
+    return startHQSession(sock, { fps, bitrate, codecName, relayMode });
   }
 
   const { track, src } = await captureTrack(fps);

@@ -9,6 +9,29 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之三十二（**WS-5a 收官：HQ 路径接入 codec 协商，端到端跑通**）
+
+#### 分流规则
+`detectEncodable` 现在把 ffmpeg HQ 与 WebCodecs 两套能力合并上报，会话按协商结果分流：
+- 判据是「**WebCodecs 编不了这个 codec**」而非「HQ 可用」——两者都能编时优先零依赖基线，保持行为稳定（边界①：HQ 是增强不是默认替换）。
+- 实测能力：`encodable: hevc422,h264 | WebCodecs: h264 | HQ: hevc_nvenc`。
+
+#### 端到端验证（本机回环）
+| 对端上报 codecs | 协商结果 | 实际路径 | 结果 |
+|---|---|---|---|
+| `h264` | h264 | 基线 WebCodecs | HELLO_ACK 正常 ✓ |
+| `hevc422,h264` | **hevc422** | **HQ ffmpeg/NVENC** | 60fps、5.4Mbps、149→390 帧连续、关键帧周期正确 ✓ |
+
+`HELLO_ACK` 回 `{"codec":"hevc422","display":{"width":2560,"height":1600,"fps":60}}`，尺寸正确。
+
+#### 🐛 途中修的一个必现问题：HQ 路径的尺寸从哪来
+WebCodecs 路径的尺寸来自 `VideoFrame.codedWidth`，但 ffmpeg 路径**只有流里才有**——抓到多大取决于屏幕/窗口，事先不知道。初版给 `display` 填了 0，对端会按 0×0 配解码器直接黑屏。
+**解法：从 HEVC SPS 解析尺寸**。实现时踩到一个坑：`pic_height_in_luma_samples` 是 **CTU 对齐后的编码尺寸**——1280×720 的流解出来是 **1280×736**，必须再减去 `conformance_window` 的裁剪量才是真实显示尺寸（4:2:2 时水平 sub=2、垂直 sub=1）。用已知样本验证：修正前 `1280x736 ✗`，修正后 `1280x720 ✓`。
+解析失败时**宁可发 BYE 也不发错尺寸**——发 0 或错值只会让对端黑屏且无从排查。
+
+#### 另一个诊断教训
+第一次测 HQ 报 FAIL，我差点当成功能缺陷。实际是 **HQ 探测要真编 30 帧验证色度，首次握手比 5 秒的测试窗口慢**。加长测试窗口后即通过。**探测型功能要把「首次调用耗时」计入测试超时**，否则会把慢当成坏。
+
 ### 2026-07-22 更新之三十一（**按 10-ux-model 重构 Windows UI + 逮到代理环境下的误判 bug**）
 
 #### 重构内容（对齐 UX SoT）

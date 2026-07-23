@@ -25,6 +25,57 @@ function forEachNal(buf, cb) {
   }
 }
 
+// 从 HEVC SPS 里解出编码尺寸。HELLO_ACK 必须带真实 width/height（对端据此配解码器
+// 和 canvas），而 ffmpeg 路径下这个尺寸只有流里才有——ddagrab/gdigrab 抓到多大取决于
+// 屏幕/窗口，我们并不预先知道。
+function parseSpsSize(au) {
+  let sps = null;
+  forEachNal(au, (t, i, sc) => {
+    if (t === 33) { sps = au.subarray(i + sc + 2); return false; } // 跳过 2 字节 NAL 头
+  });
+  if (!sps) return null;
+  try {
+    // 去除防竞争字节（0x000003 → 0x0000）后再按位读，否则字段会错位
+    const rbsp = [];
+    for (let i = 0; i < sps.length; i++) {
+      if (i >= 2 && sps[i] === 3 && sps[i - 1] === 0 && sps[i - 2] === 0) continue;
+      rbsp.push(sps[i]);
+    }
+    let bitPos = 0;
+    const u = (n) => { let v = 0; for (let k = 0; k < n; k++) { v = (v << 1) | ((rbsp[bitPos >> 3] >> (7 - (bitPos & 7))) & 1); bitPos++; } return v; };
+    const ue = () => { let z = 0; while (u(1) === 0 && z < 32) z++; return z ? ((1 << z) - 1) + u(z) : 0; };
+
+    u(4);                                  // sps_video_parameter_set_id
+    const maxSubLayers = u(3);             // sps_max_sub_layers_minus1
+    u(1);                                  // sps_temporal_id_nesting_flag
+    // profile_tier_level
+    u(8); u(32); u(4); bitPos += 44;       // general_profile/compat/flags
+    u(8);                                  // general_level_idc
+    const subPresent = [];
+    for (let i = 0; i < maxSubLayers; i++) subPresent.push([u(1), u(1)]);
+    if (maxSubLayers > 0) for (let i = maxSubLayers; i < 8; i++) u(2);
+    for (const [p, l] of subPresent) {
+      if (p) { u(8); u(32); u(4); bitPos += 44; }
+      if (l) u(8);
+    }
+    ue();                                  // sps_seq_parameter_set_id
+    const chroma = ue();                   // chroma_format_idc
+    if (chroma === 3) u(1);                // separate_colour_plane_flag
+    let w = ue(), h = ue();                // pic_width/height_in_luma_samples（CTU 对齐后的编码尺寸）
+
+    // conformance window：编码尺寸按 CTU 向上取整，真实显示尺寸要减掉裁剪量。
+    // 实测 1280x720 的流里 pic_height=736，不减这段会把 736 报给对端。
+    if (u(1)) {                            // conformance_window_flag
+      const subW = chroma === 1 || chroma === 2 ? 2 : 1; // 4:2:0/4:2:2 水平 2 倍
+      const subH = chroma === 1 ? 2 : 1;                 // 仅 4:2:0 垂直 2 倍
+      const left = ue(), right = ue(), top = ue(), bottom = ue();
+      w -= subW * (left + right);
+      h -= subH * (top + bottom);
+    }
+    return w > 0 && h > 0 ? { width: w, height: h } : null;
+  } catch { return null; }
+}
+
 const isKeyAU = (au) => {
   let key = false;
   forEachNal(au, (t) => {
@@ -140,4 +191,4 @@ function startCapture(o) {
   };
 }
 
-module.exports = { startCapture, isKeyAU, forEachNal };
+module.exports = { startCapture, isKeyAU, forEachNal, parseSpsSize };
