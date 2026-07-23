@@ -425,6 +425,38 @@ case "paircode-selftest":
     Log.info("paircode-selftest \(ok ? "PASS" : "FAIL")")
     exit(ok ? 0 : 1)
 
+case "appmodel-selftest":
+    // Exercise the presentation state machine transitions + mutual exclusion.
+    var mok = true
+    func mcheck(_ c: Bool, _ w: String) { if !c { mok = false; Log.error("appmodel FAIL: \(w)") } else { Log.info("appmodel ok: \(w)") } }
+    let m = AppModel()
+    var castStarted = 0, recvStarted = 0
+    m.onStartCasting = { _, _ in castStarted += 1 }
+    m.onStartRecvService = { recvStarted += 1 }
+    m.devices = [PairedDevice(deviceId: "peer-1", secret: "s1", name: "Win-PC")]
+    mcheck(m.role == .standby && m.recvSvc == .off, "initial standby/off")
+    mcheck(m.startCasting() == false, "cast blocked with no selection")
+    m.selectedSecret = "s1"
+    mcheck(m.canCast, "canCast once selected")
+    mcheck(m.startCasting() == true && m.role == .switching, "startCasting → switching")
+    m.finishSwitchToCasting()
+    mcheck(m.role == .casting && castStarted == 1, "switch → casting + hook fired")
+    m.startRecvService()   // mutex: should be ignored while casting
+    mcheck(m.recvSvc == .off && recvStarted == 0, "recv service blocked while casting")
+    m.stopCasting()
+    mcheck(m.role == .standby, "stopCasting → standby")
+    m.startRecvService()
+    mcheck(m.recvSvc == .waiting && recvStarted == 1, "recv service → waiting")
+    mcheck(m.startCasting() == false, "cast blocked while recv waiting (mutex)")
+    m.receiveStarted()
+    mcheck(m.role == .receiving, "incoming → receiving")
+    m.receiveStopped()
+    mcheck(m.role == .standby && m.recvSvc == .waiting, "receive stop keeps service waiting")
+    m.receiveStarted(); m.connectionDropped()
+    mcheck(m.role == .standby, "connectionDropped forces standby")
+    Log.info("appmodel-selftest \(mok ? "PASS" : "FAIL")")
+    exit(mok ? 0 : 1)
+
 case "device-selftest":
     // Exercise the PairedDevice/DeviceStore model: pair-from-code, pending→known
     // promotion, alias-wins display, rename, persistence roundtrip, remove.
