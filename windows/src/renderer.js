@@ -238,8 +238,9 @@ function uiState() {
       addr: prefs.relayServer,
       token: prefs.token,
       forceRelay: !!prefs.forceRelay,
-      status: prefs.relayServer && prefs.token ? "ok" : "unset",
-      rttMs: currentTransport === "relay" ? lastRttMs : null,
+      status: relayHealth.status, // 实测结果，不是「输入框填了没」
+      rttMs: relayHealth.rttMs,
+      message: relayHealth.message,
     },
     localName,
     peerName: peerName || deviceLabel(selectedDevice()),
@@ -360,8 +361,12 @@ async function handleCmd(m) {
       setPref("relayServer", m.addr);
       setPref("token", m.token);
       setPref("forceRelay", !!m.forceRelay);
+      relayHealth = { status: "unset", rttMs: null, message: "正在检测…" };
       pushState();
-      return toast("中转设置已保存");
+      probeRelay(); // 改完立刻重测，别让界面继续显示上一套设置的结论
+      return toast("中转设置已保存，正在检测可用性…");
+    case "probe-relay":
+      return probeRelay();
     case "local-name":
       localName = (m.name || "").trim() || os.hostname();
       localStorage.setItem("localName", localName);
@@ -601,6 +606,83 @@ function dialPeer(d) {
     sock.write(buildFrame(T.RELAY_JOIN, join));
   });
   wireSocket();
+}
+
+// ===== 中转服务健康探测 =====
+// 以前这里是 `status: 地址 && token ? "ok" : "unset"` —— 那只是在检查两个输入框
+// 非空，却对用户说「中转服务可用」。没连过服务器就报可用，是在撒谎。
+//
+// 判据必须是**对端按协议应答**：用一个随机 64hex 房间自己和自己配一次对
+// （一条连接 register、另一条 join），只有真正的 NetDisplay relay 会回
+// RELAY_PAIRED。光看 TCP connect 成功不作数——Mihomo/Clash 的 TUN 透明代理下，
+// 连一个根本不存在的地址 connect 也会成功，连接升级那次已经栽过一回了。
+let relayHealth = { status: "unset", rttMs: null, message: null };
+let relayProbing = false;
+
+// 联调/测试跑批时跳过探测：多开两条 relay 连接会干扰对账，也会让 room 计数变脏
+const isCliRun = (a) =>
+  !!(a.exitAfter || a.send || a.sendRelay || a.recvRelay || a.relay != null || a.connect || a.autoConnect);
+
+function probeRelay() {
+  const addr = (prefs.relayServer || "").trim();
+  if (!addr) { relayHealth = { status: "unset", rttMs: null, message: null }; return pushState(); }
+  if (relayProbing) return;
+  relayProbing = true;
+
+  const [host, portStr] = addr.split(":");
+  const port = +portStr || 47700;
+  const room = nodeCrypto.randomBytes(32).toString("hex"); // 随机房间，不会撞上真会话
+  const tok = (prefs.token || "").trim();
+  const t0 = performance.now();
+  const socks = [];
+  let done = false;
+
+  const finish = (status, message) => {
+    if (done) return;
+    done = true;
+    relayProbing = false;
+    clearTimeout(timer);
+    for (const s of socks) { try { s.destroy(); } catch {} }
+    relayHealth = {
+      status,
+      rttMs: status === "ok" ? Math.round(performance.now() - t0) : null,
+      message,
+    };
+    console.log(`[recv] 中转探测 ${addr} → ${status}${relayHealth.rttMs != null ? " " + relayHealth.rttMs + "ms" : ""}${message ? " (" + message + ")" : ""}`);
+    pushState();
+  };
+
+  const timer = setTimeout(
+    () => finish("error", `连不上 ${addr} —— 检查地址，或确认这台机器能访问外网`),
+    5000
+  );
+
+  const open = (type, payload) => {
+    const s = net.createConnection(port, host, () => {
+      s.setNoDelay(true);
+      s.write(buildFrame(type, payload));
+    });
+    const parser = new FrameParser((t, pl) => {
+      if (t === T.RELAY_PAIRED) finish("ok", null);
+      else if (t === T.RELAY_ERROR) {
+        let reason = "";
+        try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
+        finish("error", reason === "unauthorized"
+          ? "访问 Token 不正确 —— 到中转设置里核对"
+          : `服务器拒绝：${reason || "未知原因"}`);
+      }
+    });
+    s.on("data", (d) => { try { parser.feed(d); } catch {} });
+    s.on("error", (e) => finish("error", `连不上 ${addr}（${e.code || e.message}）`));
+    socks.push(s);
+    return s;
+  };
+
+  const base = { v: 1, code: "", pairHash: room };
+  if (tok) base.token = tok;
+  open(T.RELAY_REGISTER, { ...base, role: "sender" });
+  // 稍等一下再 join：房间得先建起来，否则会拿到 code_not_found 而误判成服务器有问题
+  setTimeout(() => { if (!done) open(T.RELAY_JOIN, { ...base, role: "receiver" }); }, 250);
 }
 
 // ===== CLI 联调入口 =====
@@ -1157,6 +1239,18 @@ window.addEventListener("keyup", (e) => {
   if (a.server) setPref("relayServer", a.server);
   await refreshSources();
   pushState();
+  // --probe-relay：只测中转、打印结论、退出。单独开这个口子是因为 isCliRun 会在
+  // 联调跑批时跳过探测，而 --exit-after 正属于跑批——照那样写，验证探测的测试
+  // 恰好碰不到被测的代码。这个坑我刚提醒过 Mac，自己转头就踩了一次。
+  if (a.probeRelay) {
+    probeRelay();
+    setTimeout(() => {
+      console.log("PROBE_RESULT " + JSON.stringify(relayHealth));
+      ipcRenderer.send("test-result", JSON.stringify(relayHealth));
+    }, 7000);
+    return;
+  }
+  if (!isCliRun(a)) probeRelay(); // 联调跑批时别多开两条连接干扰计数
   // 测试：--send-window <名字子串> 选中匹配的窗口作为投射源
   if (a.sendWindow) {
     sender.requireWindow(a.sendWindow); // 声明后不允许悄悄退回整屏

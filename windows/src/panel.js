@@ -396,6 +396,9 @@ function renderModals() {
 
 function relayStatusText() {
   if (!S.relay.addr) return "未设置中转服务器";
+  // 引擎探测出的具体原因优先：「Token 不正确」和「连不上」要用户做的事完全不同，
+  // 混成一句「检查地址和 Token」等于让他两样都试一遍。
+  if (S.relay.message) return S.relay.message;
   if (S.relay.status === "error") return "中转服务连不上 · " + S.relay.addr + " — 检查地址和 Token";
   if (S.relay.status === "ok") {
     return "中转服务可用 · " + S.relay.addr + (typeof S.relay.rttMs === "number" ? " · 约 " + S.relay.rttMs + "ms" : "");

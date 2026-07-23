@@ -30,6 +30,7 @@ const testArgs = {
   testPairSecret: arg("test-pair-secret"), // 测试：预置 pairSecret（base64）
   pairCode: arg("pair-code"), // 测试：按 6 位码建一条配对设备并选中，走真实 UI 路径
   showTray: argv.includes("--show-tray") ? "1" : null, // 测试：启动后自动弹出托盘菜单（否则只能手点图标，没法自动核对）
+  probeRelay: argv.includes("--probe-relay") ? "1" : null, // 测试：只做一次中转健康探测，打印结论后退出
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
   sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
   sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
@@ -103,7 +104,7 @@ function createEngine() {
   // headless：把 renderer 的日志转到主进程 stdout，无需 --enable-logging
   if (isHeadless) {
     engineWin.webContents.on("console-message", (_e, _lvl, message) => {
-      if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE/.test(message)) console.log(message);
+      if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE|^PROBE_RESULT/.test(message)) console.log(message);
     });
   }
 }
