@@ -419,6 +419,20 @@ case "role-selftest":
     Log.info("role-selftest \(rok && persistOK ? "PASS" : "FAIL") (persist=\(persistOK))")
     exit(rok && persistOK ? 0 : 1)
 
+case "relay-health":
+    // Probe relay reachability + token via the self-pair trick (TUN-proof).
+    let server = args.str("server", "15.tokencv.com:47700")
+    RelayHealth.check(server: server, token: args.flags["token"]) { st in
+        switch st {
+        case .ok(let ms): Log.info("relay-health: OK (\(ms)ms) — reachable + token accepted")
+        case .unauthorized: Log.info("relay-health: UNAUTHORIZED — token rejected")
+        case .unreachable: Log.info("relay-health: UNREACHABLE — no RELAY_PAIRED within timeout")
+        default: Log.info("relay-health: \(st)")
+        }
+        exit(0)
+    }
+    dispatchMain()
+
 case "paircode-selftest":
     // Verify §3.7 pairing-code→room derivation is byte-identical to Windows.
     let ok = PairCode.selftest()

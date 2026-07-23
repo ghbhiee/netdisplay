@@ -8,8 +8,9 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var onCastTab = true
     private var qualityOpen = false
-    private var advancedOpen = false
     var appList: [String] = []
+    /// Live relay health, shown on the 中转设置 button (set by AppController).
+    var relayStatus: RelayHealth.Status = .unknown { didSet { DispatchQueue.main.async { [weak self] in self?.rebuild() } } }
     /// Called when the user asks to pair a new device (＋ 添加设备).
     var onAddDevice: (() -> Void)?
     /// Called when the user opens 中转设置.
@@ -26,12 +27,10 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     func show() {
         if window == nil {
             let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: W, height: 560),
-                             styleMask: [.titled, .closable, .miniaturizable, .fullSizeContentView],
+                             styleMask: [.titled, .closable, .miniaturizable],
                              backing: .buffered, defer: false)
-            w.titidy()
-            w.title = "NetDisplay"
-            w.titlebarAppearsTransparent = true
-            w.titleVisibility = .hidden
+            w.title = "NetDisplay"          // name lives in the native title bar now
+            w.titleVisibility = .visible
             w.isReleasedWhenClosed = false
             w.delegate = self
             w.backgroundColor = Theme.panel
@@ -57,18 +56,11 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         body.addArrangedSubview(modeSwitch())
         body.addArrangedSubview(onCastTab ? castPage() : recvPage())
         body.addArrangedSubview(devicesSection())
-        body.addArrangedSubview(advancedSection())
+        body.addArrangedSubview(bottomRow())   // 中转设置 + 主题, side by side
 
-        let title = titleBar()
-        root.addSubview(title)
         root.addSubview(body)
-        title.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            title.topAnchor.constraint(equalTo: root.topAnchor),
-            title.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            title.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            title.heightAnchor.constraint(equalToConstant: 39),
-            body.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 16),
+            body.topAnchor.constraint(equalTo: root.topAnchor, constant: 16),
             body.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 16),
             body.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -16),
             body.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor, constant: -16),
@@ -86,50 +78,39 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
             root.widthAnchor.constraint(equalToConstant: W),
         ])
         root.layoutSubtreeIfNeeded()
-        let h = body.fittingSize.height + 39 + 16 + 16
-        window.setContentSize(NSSize(width: W, height: min(720, max(360, h))))
+        let h = body.fittingSize.height + 16 + 16
+        window.setContentSize(NSSize(width: W, height: min(720, max(320, h))))
     }
 
-    // MARK: - Title bar
+    // MARK: - Bottom row (中转设置 + 主题)
 
-    private func titleBar() -> NSView {
-        let bar = RoundedView(fill: Theme.panel, radius: 0)
-        let logo = RoundedView(fill: Theme.accent, radius: 5)
-        logo.translatesAutoresizingMaskIntoConstraints = false
-        logo.widthAnchor.constraint(equalToConstant: 18).isActive = true
-        logo.heightAnchor.constraint(equalToConstant: 18).isActive = true
-        let n = UI.label("N", size: 10, weight: .bold, color: .white, align: .center)
-        n.translatesAutoresizingMaskIntoConstraints = false
-        logo.addSubview(n)
-        NSLayoutConstraint.activate([n.centerXAnchor.constraint(equalTo: logo.centerXAnchor),
-                                     n.centerYAnchor.constraint(equalTo: logo.centerYAnchor)])
-        let name = UI.label("NetDisplay", size: 13, weight: .semibold)
-        let themeBtn = UI.button(themeLabel(), fill: Theme.panel2, textColor: Theme.sub, border: Theme.line,
-                                 radius: 6, size: 11, weight: .regular, target: self, action: #selector(toggleTheme))
+    private func bottomRow() -> NSView {
+        let (label, fg, border) = relayButtonStyle()
+        let relayBtn = UI.button(label, fill: .clear, textColor: fg, border: border, radius: 6,
+                                 size: 12, weight: .regular, target: self, action: #selector(tapRelaySettings))
+        relayBtn.translatesAutoresizingMaskIntoConstraints = false
+        relayBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
+
+        let themeBtn = UI.button("◐ 主题", fill: Theme.panel2, textColor: Theme.sub, border: Theme.line,
+                                 radius: 6, size: 12, weight: .regular, target: self, action: #selector(toggleTheme))
         themeBtn.translatesAutoresizingMaskIntoConstraints = false
-        themeBtn.heightAnchor.constraint(equalToConstant: 22).isActive = true
-        themeBtn.widthAnchor.constraint(greaterThanOrEqualToConstant: 64).isActive = true
+        themeBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        themeBtn.widthAnchor.constraint(equalToConstant: 72).isActive = true
 
-        let spacer = NSView()
-        let row = UI.hstack([logo, name, spacer, themeBtn], spacing: 10)
-        row.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(row)
-        NSLayoutConstraint.activate([
-            row.leadingAnchor.constraint(equalTo: bar.leadingAnchor, constant: 14),
-            row.trailingAnchor.constraint(equalTo: bar.trailingAnchor, constant: -14),
-            row.centerYAnchor.constraint(equalTo: bar.centerYAnchor),
-        ])
-        // bottom hairline
-        let line = RoundedView(fill: Theme.line, radius: 0)
-        line.translatesAutoresizingMaskIntoConstraints = false
-        bar.addSubview(line)
-        NSLayoutConstraint.activate([
-            line.leadingAnchor.constraint(equalTo: bar.leadingAnchor),
-            line.trailingAnchor.constraint(equalTo: bar.trailingAnchor),
-            line.bottomAnchor.constraint(equalTo: bar.bottomAnchor),
-            line.heightAnchor.constraint(equalToConstant: 1),
-        ])
-        return bar
+        let row = UI.hstack([relayBtn, themeBtn], spacing: 8)
+        relayBtn.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return wrapFull(row)
+    }
+
+    /// Label + colours for the 中转设置 button, reflecting live relay health.
+    private func relayButtonStyle() -> (String, NSColor, NSColor) {
+        switch relayStatus {
+        case .unknown:      return ("中转设置", Theme.sub, Theme.line)
+        case .checking:     return ("中转设置 · 检测中…", Theme.sub, Theme.line)
+        case .ok(let ms):   return ("中转 · 可用 \(ms)ms", Theme.ok, Theme.ok)
+        case .unauthorized: return ("中转 · token 错误", Theme.err, Theme.err)
+        case .unreachable:  return ("中转 · 连不上", Theme.err, Theme.err)
+        }
     }
 
     // MARK: - Mode switch (segmented)
@@ -379,30 +360,6 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         return fullWidthView(row)
     }
 
-    // MARK: - Advanced
-
-    private func advancedSection() -> NSView {
-        let box = RoundedView(fill: nil, stroke: Theme.line, radius: 8)
-        let head = RoundedView(fill: Theme.panel2, radius: 0)
-        let chev = UI.label(advancedOpen ? "▾" : "▸", size: 11, color: Theme.sub)
-        let title = UI.label("高级设置", size: 13, weight: .semibold)
-        let hrow = UI.hstack([chev, title, NSView()], spacing: 8)
-        embed(hrow, in: head, padX: 12, padY: 10)
-        let click = ClickCatcher { [weak self] in self?.advancedOpen.toggle(); self?.rebuild() }
-        head.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false; pin(click, to: head)
-        let col = UI.vstack([head], spacing: 0)
-        if advancedOpen {
-            let btn = UI.button("打开中转设置…", fill: .clear, textColor: Theme.accent, border: Theme.line,
-                                radius: 6, size: 12, weight: .regular, target: self, action: #selector(tapRelaySettings))
-            btn.translatesAutoresizingMaskIntoConstraints = false
-            btn.heightAnchor.constraint(equalToConstant: 28).isActive = true
-            let pad = wrapPadded(UI.vstack([btn], spacing: 8), x: 12, y: 12, topLine: true)
-            col.addArrangedSubview(pad)
-        }
-        embed(col, in: box, pad: 0)
-        return fullWidthView(box)
-    }
-
     // MARK: - Small shared pieces
 
     private func statusStrip(icon: String, iconColor: NSColor, title: String, titleColor: NSColor,
@@ -500,7 +457,6 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         return "整块屏幕"
     }
     private func localName() -> String { Host.current().localizedName ?? "本机" }
-    private func themeLabel() -> String { "◑ 主题" }
 
     // MARK: - Actions
 

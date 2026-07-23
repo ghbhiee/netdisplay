@@ -47,6 +47,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         wireModel()
         refreshAppList()
         panel.show()
+        checkRelay()
+    }
+
+    /// Probe the relay (reachability + token) and reflect it on the 中转设置 button.
+    private func checkRelay() {
+        guard !config.relayServer.isEmpty else { panel.relayStatus = .unknown; return }
+        panel.relayStatus = .checking
+        RelayHealth.check(server: config.relayServer,
+                          token: config.relayToken.isEmpty ? nil : config.relayToken) { [weak self] st in
+            self?.panel.relayStatus = st
+        }
     }
 
     // MARK: - Model → real sender/receiver
@@ -120,6 +131,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard let newCfg = RelaySettingsDialog.run(config: config) else { return }
         config = newCfg
         sender.update(newCfg)
+        checkRelay()   // re-probe with the new server/token
     }
 
     // MARK: - Sources / menu bar
