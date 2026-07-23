@@ -1,6 +1,9 @@
-# Windows 端（收发对称，v0.2.0）
+# Windows 端（收发对称，v0.3.0）
 
-Electron + Node `net` + WebCodecs（硬解 / 软编）。由 Windows 端 Claude 维护。协议见 `../docs/02-protocol.md`。
+Electron + Node `net` + WebCodecs（硬解 / 软编）+ ffmpeg/NVENC（HQ 4:2:2）。由 Windows 端 Claude 维护。协议见 `../docs/02-protocol.md`。
+
+> **换新 session 先读 [`tools/AGENT-WORKFLOW.md`](tools/AGENT-WORKFLOW.md)** —— Monitor（事件唤醒）与 Loop（定时唤醒）
+> 怎么用、怎么配合、踩过哪些坑。这套机制决定协作节奏和 token 成本，但换会话就会忘。
 
 **发布产物**：`npm run dist` → `dist/NetDisplay-0.3.0-portable.exe`（免安装，双击即用；未签名，首次运行 SmartScreen 选「仍要运行」）。
 
