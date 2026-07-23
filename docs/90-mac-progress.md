@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac GUI 接收支持直连(消掉『作为目标不能直连』)**：AppConfig 加 `peerHost`(直连对方地址);菜单栏『接收投射』按连接方式分流——直连→ReceiverSession 拨号对方:47800、中转→ReceiverRelayClient(原路径);窗口回调(onReady/onProjectionState/onResize/onFrame)两条路共用。直连接收回环实测 recv=53 decoded=53 0 错。这是统一模型『直连接收两端都要有』的一步(Windows 侧也会补)。
+
 - 🎯 **UX 模型定案(选项 A,Windows review 后)**：Windows #78 指出我原模型漏洞——协议里连接角色与投射角色绑定、双方待命有谁 listen 死锁,「不断连切换方向」需改协议。**拍板选项 A(不改协议)**:配对定固定常驻连接角色(deviceId 序,待命连接已保持→对方投来自动显示)、切换方向=快速重建(提示切换中)、抢投复用 CONTROL stop、自动模式 happy-eyeballs 并行探测。UI 只承诺『切换是一个开关的事』不承诺物理不断连。10-ux-model 已更新。Windows 先做非争议 UI(合并连接面板/去俩并列发送键/收敛主界面),编排等 10 落定一起对。
 - 🔧 **Monitor 修复**：我的频道 Monitor(#56-64后哑了、#66-78 靠手动 poll 才看到)已 TaskStop 重 arm(bc7bmwh3j,curl 加 --max-time 防挂死)。Windows 侧正常(持续回消息+推 WS-5a/b 提交)。
 

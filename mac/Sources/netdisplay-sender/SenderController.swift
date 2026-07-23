@@ -30,6 +30,7 @@ struct AppConfig: Codable, Equatable {
     var relayServer = "15.tokencv.com:47700"  // user-configurable in settings
     var relayToken = ""                        // public-relay auth token (set in settings)
     var listenPort = 47800
+    var peerHost = ""          // direct mode: the other machine's address (used when this Mac receives directly)
     // nil width/height = adopt the receiver's reported resolution.
     var width: Int? = nil
     var height: Int? = nil

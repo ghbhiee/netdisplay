@@ -1,6 +1,7 @@
 import AppKit
 import CoreGraphics
 import CoreVideo
+import CoreMedia
 
 /// A status-bar (menu-bar) app wrapping the sender, with live-editable config.
 /// Runs as an accessory app (no Dock icon).
@@ -13,7 +14,8 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     private var appList: [String] = []
 
     // Receive mode (this Mac as a target screen) — the symmetric-app half.
-    private var receiver: ReceiverRelayClient?
+    private var receiver: ReceiverRelayClient?       // relay receive
+    private var receiverDirect: ReceiverSession?     // direct receive (dial peer :47800)
     private var receiverWindow: ReceiverWindow?
     private var receiving = false
 
@@ -290,56 +292,81 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         let cfg = controller.config
         let alert = NSAlert()
         alert.messageText = "接收投射（本机作目标屏）"
-        alert.informativeText = "连中转 \(cfg.relayServer)，输入发送端显示的 6 位配对码。已持久配对可留空。"
-        let codeField = NSTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
-        codeField.placeholderString = "6 位配对码（已配对可留空）"
-        alert.accessoryView = codeField
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
+        if cfg.mode == .direct {
+            alert.informativeText = "直连模式：拨号对方地址（端口 :\(cfg.listenPort)）。"
+            field.stringValue = cfg.peerHost
+            field.placeholderString = "对方地址，如 10.77.0.2 或 192.168.x.x"
+        } else {
+            alert.informativeText = "中转 \(cfg.relayServer)：输入发送端显示的 6 位配对码；已持久配对可留空。"
+            field.placeholderString = "6 位配对码（已配对可留空）"
+        }
+        alert.accessoryView = field
         alert.addButton(withTitle: "开始接收")
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        startReceiving(code: codeField.stringValue.trimmingCharacters(in: .whitespaces))
+        let input = field.stringValue.trimmingCharacters(in: .whitespaces)
+        if cfg.mode == .direct {
+            guard !input.isEmpty else { return }
+            mutate { $0.peerHost = input }   // remember the peer address
+            startReceiving(directHost: input, code: "")
+        } else {
+            startReceiving(directHost: nil, code: input)
+        }
     }
 
-    private func startReceiving(code: String) {
+    /// Report this Mac's main-display pixel size + the codecs it can decode.
+    private func receiverScreen() -> HelloReceiver.Screen {
         let cfg = controller.config
-        let parts = cfg.relayServer.split(separator: ":")
-        let host = String(parts.first ?? "15.tokencv.com")
-        let port = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
-        // Report this Mac's main-display pixel size + the codecs it can decode.
-        let screen = HelloReceiver.Screen(
+        return HelloReceiver.Screen(
             width: Int(CGDisplayPixelsWide(CGMainDisplayID())),
             height: Int(CGDisplayPixelsHigh(CGMainDisplayID())),
             scale: 1, fps: cfg.fps, bitrateMbps: cfg.bitrateAuto ? nil : cfg.bitrateMbps)
+    }
+
+    private func startReceiving(directHost: String?, code: String) {
+        let cfg = controller.config
+        let screen = receiverScreen()
+        let codecs = ["hevc422", "hevc", "h264"]
         let win = ReceiverWindow()
-        let client = ReceiverRelayClient(
-            host: host, port: port,
-            token: cfg.relayToken.isEmpty ? nil : cfg.relayToken,
-            code: code.isEmpty ? nil : code,
-            name: senderName, deviceId: deviceId, screen: screen,
-            codecs: ["hevc422", "hevc", "h264"])
-        client.onReady = { display, codec in
-            guard let d = display else { return }
+        // Window wiring shared by both transports.
+        let onReady: (HelloAck.Display?, VideoCodec) -> Void = { d, c in
+            guard let d = d else { return }
             win.configure(width: d.width, height: d.height,
-                          title: "NetDisplay 接收 — \(d.width)×\(d.height) \(codec.wire)")
+                          title: "NetDisplay 接收 — \(d.width)×\(d.height) \(c.wire)")
         }
-        client.onProjectionState = { active, label, kind in
-            win.setLabel(active ? (label ?? kind) : "等待投射…")
+        let onProj: (Bool, String?, String?) -> Void = { a, l, k in win.setLabel(a ? (l ?? k) : "等待投射…") }
+        let onResize: (Int, Int) -> Void = { w, h in win.configure(width: w, height: h, title: "NetDisplay 接收 — \(w)×\(h)") }
+        let onFrame: (CVImageBuffer, CMTime) -> Void = { img, _ in win.present(img) }
+
+        if let host = directHost {
+            let s = ReceiverSession(host: host, port: UInt16(cfg.listenPort),
+                                    name: senderName, deviceId: deviceId, screen: screen, codecs: codecs)
+            s.onReady = onReady; s.onProjectionState = onProj; s.onResize = onResize; s.onFrame = onFrame
+            s.onClosed = { [weak self] in DispatchQueue.main.async { self?.stopReceiving() } }
+            receiverDirect = s
+            s.start()
+        } else {
+            let parts = cfg.relayServer.split(separator: ":")
+            let rhost = String(parts.first ?? "15.tokencv.com")
+            let rport = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
+            let client = ReceiverRelayClient(host: rhost, port: rport,
+                                             token: cfg.relayToken.isEmpty ? nil : cfg.relayToken,
+                                             code: code.isEmpty ? nil : code,
+                                             name: senderName, deviceId: deviceId, screen: screen, codecs: codecs)
+            client.onReady = onReady; client.onProjectionState = onProj; client.onResize = onResize; client.onFrame = onFrame
+            receiver = client
+            client.start()
         }
-        client.onResize = { w, h in
-            win.configure(width: w, height: h, title: "NetDisplay 接收 — \(w)×\(h)")
-        }
-        client.onFrame = { image, _ in win.present(image) }
         receiverWindow = win
-        receiver = client
         receiving = true
-        client.start()
         rebuildMenu()
     }
 
     @objc private func stopReceiving() {
-        receiver?.stop()
-        receiver = nil
+        receiver?.stop(); receiver = nil
+        receiverDirect?.close(); receiverDirect = nil
         receiverWindow = nil
         receiving = false
         rebuildMenu()
