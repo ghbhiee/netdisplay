@@ -77,55 +77,63 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         let cfg = controller.config
         let menu = NSMenu()
 
-        let status = NSMenuItem(title: controller.state.short, action: nil, keyEquivalent: "")
+        // Role-aware status header (待命 / 投射出去 / 接收显示) — the unified control.
+        let roleStatus: String
+        if receiving {
+            roleStatus = "◀ 接收中（本机作目标屏，显示对方画面）"
+        } else if controller.running {
+            roleStatus = "▶ 投射中：\(cfg.windowApp ?? "整个桌面") → 对方"
+        } else {
+            roleStatus = "○ 待命 · 已就绪"
+        }
+        let status = NSMenuItem(title: roleStatus, action: nil, keyEquivalent: "")
         status.isEnabled = false
         menu.addItem(status)
-
+        let detail = NSMenuItem(title: "　" + controller.state.short, action: nil, keyEquivalent: "")
+        detail.isEnabled = false
+        menu.addItem(detail)
         // Relay pairing code — prominent + copyable.
-        if cfg.mode == .relay, case .waitingForPeer(let code) = controller.state {
+        if cfg.mode != .direct, case .waitingForPeer(let code) = controller.state {
             let codeItem = NSMenuItem(title: "配对码：\(code)（点按复制）", action: #selector(copyCode), keyEquivalent: "")
             codeItem.target = self
             menu.addItem(codeItem)
         }
         menu.addItem(.separator())
 
-        let toggle = NSMenuItem(title: controller.running ? "停止投送" : "开始投送",
-                                action: #selector(toggleStartStop), keyEquivalent: "s")
-        toggle.target = self
-        menu.addItem(toggle)
-
-        // Receive mode: this Mac acts as a target screen (symmetric app).
-        let recv = NSMenuItem(title: receiving ? "停止接收投射" : "接收投射（本机作目标屏）…",
-                              action: receiving ? #selector(stopReceiving) : #selector(startReceivingPrompt),
-                              keyEquivalent: "r")
-        recv.target = self
-        menu.addItem(recv)
-        menu.addItem(.separator())
-
-        // Projection source: whole desktop vs a single window
-        let srcMenu = NSMenu()
-        let desktop = choice("整个桌面（扩展屏）", checked: cfg.windowApp == nil, action: #selector(setDesktopSource))
-        srcMenu.addItem(desktop)
-        if !appList.isEmpty { srcMenu.addItem(.separator()) }
+        // 投射本机 ▸ ：投射源 + 开始/停止，收敛成一个控件（不再散落的 toggle + 独立投射源）。
+        let projMenu = NSMenu()
+        projMenu.addItem(sectionHeader("投射源"))
+        projMenu.addItem(choice("整个桌面（扩展屏）", checked: cfg.windowApp == nil, action: #selector(setDesktopSource)))
         for app in appList {
             let it = choice(app, checked: cfg.windowApp == app, action: #selector(setWindowSource(_:)))
             it.representedObject = app
-            srcMenu.addItem(it)
+            projMenu.addItem(it)
         }
-        srcMenu.addItem(.separator())
         let refresh = NSMenuItem(title: "刷新窗口列表", action: #selector(refreshApps), keyEquivalent: "")
         refresh.target = self
-        srcMenu.addItem(refresh)
-        let srcItem = NSMenuItem(title: "投射源：" + (cfg.windowApp ?? "整个桌面"), action: nil, keyEquivalent: "")
-        srcItem.submenu = srcMenu
-        menu.addItem(srcItem)
+        projMenu.addItem(refresh)
         if cfg.windowApp != nil {
             let st = NSMenuItem(title: "移到扩展屏（窗口离开主屏，需辅助功能权限）",
                                 action: #selector(toggleStage), keyEquivalent: "")
             st.target = self
             st.state = cfg.stage ? .on : .off
-            menu.addItem(st)
+            projMenu.addItem(st)
         }
+        projMenu.addItem(.separator())
+        let startStop = NSMenuItem(title: controller.running ? "■ 停止投射" : "▶ 开始投射（源：\(cfg.windowApp ?? "整屏")）",
+                                   action: #selector(toggleStartStop), keyEquivalent: "s")
+        startStop.target = self
+        projMenu.addItem(startStop)
+        let projItem = NSMenuItem(title: "投射本机（把本机投给对方）▸", action: nil, keyEquivalent: "")
+        projItem.submenu = projMenu
+        menu.addItem(projItem)
+
+        // 接收投射（本机作目标屏，显示对方画面）
+        let recv = NSMenuItem(title: receiving ? "■ 停止接收" : "接收投射（本机作目标屏，显示对方画面）…",
+                              action: receiving ? #selector(stopReceiving) : #selector(startReceivingPrompt),
+                              keyEquivalent: "r")
+        recv.target = self
+        menu.addItem(recv)
         menu.addItem(.separator())
 
         // Connection — one consolidated settings dialog (方式 + 地址/中转/token).
