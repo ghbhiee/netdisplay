@@ -77,6 +77,13 @@ enum UI {
     }
 }
 
+/// Tiny @objc target so an NSButton can run a Swift closure (e.g. 随机生成).
+final class GenCodeTarget: NSObject {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func fire() { action() }
+}
+
 /// NSButton that keeps its layer fill on redraw and runs a target/action.
 final class ClosureButton: NSButton {
     var fillColor: NSColor? { didSet { layer?.backgroundColor = fillColor?.cgColor } }

@@ -69,6 +69,9 @@ final class SenderController {
 
     private var relay: RelayClient?
     private var server: SessionServer?
+    /// Redesign: when set, the sender registers on the relay under this device
+    /// room (derived from the paired device's secret) instead of a plain code.
+    var roomPairHash: String?
 
     var onState: ((SenderState) -> Void)?
     private(set) var state: SenderState = .stopped {
@@ -99,7 +102,11 @@ final class SenderController {
                                 override: config.override, prioritizeQuality: config.quality,
                                 windowApp: config.windowApp, bitrateExplicit: !config.bitrateAuto,
                                 stage: config.stage)
-            r.fixedCode = config.pairCode.trimmingCharacters(in: .whitespaces)   // stable code from settings
+            if let room = roomPairHash, !room.isEmpty {
+                r.pairHashOverride = room   // redesign: register under the paired device's room
+            } else {
+                r.fixedCode = config.pairCode.trimmingCharacters(in: .whitespaces)   // legacy stable code
+            }
             r.onState = { [weak self] st in self?.state = st }
             relay = r
             state = .connecting

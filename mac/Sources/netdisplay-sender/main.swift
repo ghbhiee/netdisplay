@@ -146,7 +146,7 @@ let devId = deviceId()
 // No subcommand (e.g. double-clicked) or `app` → run the menu-bar app.
 let rawArgs = Array(CommandLine.arguments.dropFirst())
 if rawArgs.isEmpty || rawArgs.first == "app" {
-    MenuBarApp(senderName: name, deviceId: devId).run() // runs NSApplication; never returns
+    AppController(senderName: name, deviceId: devId).run() // runs NSApplication; never returns
     exit(0)
 }
 
