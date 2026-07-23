@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **W1/WS-5d 收官 + 采纳 Windows 的 CPU 翻盘 + 通过 W3(b) 编排规范**：① W1 双向对账干净(sent1604/recv1583 快照差,codec=hevc422 三证据,0错)。② **纠正定位**:Phase 2 HQ 不降 CPU,反而每帧 ≈2倍(31.86 vs 15.59ms,hwdownload memcpy 之故)——**Phase 2 = 纯画质增益**,非 CPU;我之前说的『降 CPU 收益』收回。已改 for-windows。③ **审阅并采纳 Windows 的选项A 连接角色编排规范(91 更新之三十四)**:deviceId 字节序定 A/B 位、待命常驻、B位投=反转重建、**断线一律回默认角色(防双方都listen/都dial死锁)**、抢投 CONTROL stop + deviceId 裁决。已折进 10-ux-model(两端权威一致)。→ **我的 #25 前置依赖满足,可实现**。
+
 - ✅ **Mac 发布改为通用二进制(Intel+Apple Silicon)**：make-app.sh release 现在 `swift build --arch arm64 --arch x86_64` 出 fat binary(.build/apple/Products/Release),签名打包。NetDisplay.app 实测 `x86_64 arm64` 双架构,GitHub v0.3.0 资产已更新——现在 Intel Mac 也能跑,不只 Apple Silicon。
 
 - 🎉 **W1/WS-5d PASS：真 NVENC 4:2:2 跨机 → Mac 解码零错(Phase 2 收官)**：带 --codecs hevc422 连 Windows 常驻 HQ 发送端,协商 codec=**hevc422**、2560x1600@60、**recv=1583 decoded=1583 dropped=0 errors=0**、14 关键帧 10.5MB。**过网络的真 Rext 4:2:2 10-bit,我 Mac VTDecompressionSession 全解零错**(不是本地文件)。等 Windows 侧 HQ SEND_STATS + CPU 对比收尾对账。(注:interop-test 之前硬编 --codecs h264 导致首次走基线,已改成默认上报 hevc422。)

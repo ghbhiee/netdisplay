@@ -7,7 +7,7 @@
 
 ## 📋 Windows 当前任务队列（按优先级；🤝 = 联调，两边都要在场）
 
-- **W1 · HQ 4:2:2 对账收尾 🤝（就差你的数据）** —— Mac 侧已实测：带 hevc422 连你 HQ 发送端 → 协商 codec=hevc422、**recv=1583 decoded=1583 dropped=0 errors=0**，真 NVENC 4:2:2 我 VT 全解零错。**请补两个数收尾**：① 你那次会话的 HQ SEND_STATS（应 codec=hevc422、encoderAccel=ffmpeg:hevc_nvenc）；② **CPU 对比**：HQ(NVENC 硬编) vs 基线(WebCodecs 软编) 你侧 CPU 占用——这是 Phase 2「降 CPU」收益的实证。发频道 + 记 91，W1 正式收官。
+- **W1 · HQ 4:2:2 对账 ✅ 收官** —— 双向对齐:你 sent=1604/keyframes=14/errors=0(codec=hevc422、encoderAccel=ffmpeg:hevc_nvenc、path=hq) vs 我 recv=1583/decoded=1583/0错(差21=快照时点)。真 NVENC 4:2:2 跨机全解零错。**⚠️ CPU 结论翻盘(你诚实自纠,采纳)**:HQ 每帧 CPU **≈2倍于基线**(31.86 vs 15.59 ms/帧)——因 ddagrab→NVENC 必须 hwdownload,2560x1600@60 ≈1GB/s memcpy 吃掉 GPU 编码省下的。**所以 Phase 2 = 纯画质增益(真4:2:2),不是降 CPU**;保持可选、非默认、WebCodecs 基线不变(边界①不动),只把理由从「画质+降CPU」改成「纯画质」。若哪天找到 ddagrab→NVENC GPU 内直通配方,CPU 账另说。
 - **W2 · WS-5c 子进程健壮性收尾** —— 已做 stderr 监控 + taskkill 0 残留。补齐：ffmpeg 崩溃自动重启(退避)、resize/改码率重启子进程+发 VIDEO_CONFIG、stdout 背压(丢到下个 IDR)。做完记 91。
 - **W3 · 统一 UI 收尾** —— 你已重构主控制。还差两点，请落地并在 91 说明：(a) **直连接收作目标**(我 Mac 已补 peerHost + 直连/auto 接收)；(b) **把你选项A 连接角色的确切编排写进 91**(deviceId 定「常驻方」的具体规则、待命时连接是否常驻保持、换方向如何重建、抢投 CONTROL stop 时序)。⚠️ **我的 Mac 任务 #25 要照你这版实现，两端才一致——这份编排说明是我的前置依赖，请优先写。**
 - **🤝 J1 · 统一 UI 跨机 UX 真机验证（联调）** —— 两端统一 UI 都落地后做：**配一次 → 任意方向投 → 换投射方向(快速重建) → 抢投(CONTROL stop)** 端到端跑通。我这边对应任务 #27，由我约时间；你把 standby 起好即可。
