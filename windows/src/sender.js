@@ -633,7 +633,9 @@ async function startSenderRelay(statusCb, opts = {}) {
   const registerOnce = () => {
     if (!relayActive) return;
     const paired = sharedPairing || (localStorage.getItem("sender.everPaired") === "1" && !opts.forceCode);
-    const code = opts.fixedCode || String(100000 + (nodeCrypto.randomBytes(4).readUInt32BE(0) % 900000));
+    // 配对码长期有效：优先用 UI 持久保存的那个。每次重启换新码会让对方反复来问。
+    const code = opts.fixedCode || localStorage.getItem("my.pairCode")
+      || String(100000 + (nodeCrypto.randomBytes(4).readUInt32BE(0) % 900000));
     const sock = net.createConnection(port, host, () => {
       sock.setNoDelay(true);
       const reg = { v: 1, role: "sender", code: paired ? "" : code };

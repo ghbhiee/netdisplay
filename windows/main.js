@@ -57,6 +57,7 @@ app.whenReady().then(() => {
   win = new BrowserWindow({
     width: 1440,
     height: 900,
+    icon: path.join(__dirname, "assets", "icon.png"),
     show: !isHeadless, // headless：窗口存在（renderer 需要 WebCodecs）但不显示
     backgroundColor: "#0b0f14",
     autoHideMenuBar: true,
@@ -86,21 +87,82 @@ app.whenReady().then(() => {
   if (!isTest && !isHeadless) {
     const icon = nativeImage.createFromPath(path.join(__dirname, "assets", "tray.png"));
     tray = new Tray(icon);
-    tray.setToolTip("NetDisplay Receiver");
-    tray.setContextMenu(
-      Menu.buildFromTemplate([
-        { label: "显示窗口", click: () => { win.show(); win.focus(); } },
-        { type: "separator" },
-        { label: "退出", click: () => { quitting = true; app.quit(); } },
-      ])
-    );
+    tray.setToolTip("NetDisplay");
+    buildTrayMenu();
     tray.on("double-click", () => { win.show(); win.focus(); });
   }
 });
 
+// 托盘菜单：对标 Mac 菜单栏——不只是「显示/退出」，常用参数要能直接切，
+// 不必先把主窗口叫出来。状态由 renderer 通过 tray-state 推上来。
+let trayState = { connected: false, projecting: false, res: "auto", scale: "1", fps: "60",
+  sources: [], source: "", code: "------" };
+
+function buildTrayMenu() {
+  if (!tray) return;
+  const send = (ch, v) => win && !win.isDestroyed() && win.webContents.send(ch, v);
+  const radio = (label, checked, click) => ({ label, type: "radio", checked, click });
+
+  const t = Menu.buildFromTemplate([
+    { label: trayState.connected ? (trayState.projecting ? "● 正在投射本机" : "○ 已连接 · 等待投射") : "未连接",
+      enabled: false },
+    { type: "separator" },
+    trayState.projecting
+      ? { label: "停止投射", click: () => send("tray-cmd", { cmd: "stop-project" }) }
+      : { label: "开始投射本机", enabled: trayState.connected, click: () => send("tray-cmd", { cmd: "start-project" }) },
+    { label: "投射源", enabled: trayState.sources.length > 0, submenu:
+      [{ label: "整个屏幕", type: "radio", checked: !trayState.source,
+         click: () => send("tray-cmd", { cmd: "set-source", value: "" }) }].concat(
+        trayState.sources.map((s) => ({
+          label: s.name.length > 36 ? s.name.slice(0, 34) + "…" : s.name,
+          type: "radio", checked: trayState.source === s.id,
+          click: () => send("tray-cmd", { cmd: "set-source", value: s.id }),
+        }))) },
+    { type: "separator" },
+    { label: "分辨率", submenu: ["auto", "3840x2400", "2560x1600", "1920x1200", "1280x800"].map((v) =>
+        radio(v === "auto" ? "跟随本机屏幕" : v.replace("x", " × "), trayState.res === v,
+          () => send("tray-cmd", { cmd: "set", key: "res", value: v }))) },
+    { label: "缩放", submenu: [["1", "1x（画面大）"], ["2", "2x（字大清晰）"]].map(([v, l]) =>
+        radio(l, trayState.scale === v, () => send("tray-cmd", { cmd: "set", key: "scale", value: v }))) },
+    { label: "帧率", submenu: [["60", "60 fps"], ["30", "30 fps"]].map(([v, l]) =>
+        radio(l, trayState.fps === v, () => send("tray-cmd", { cmd: "set", key: "fps", value: v }))) },
+    { type: "separator" },
+    { label: `我的配对码：${trayState.code}`, click: () => {
+        require("electron").clipboard.writeText(trayState.code); } },
+    { label: "打开主界面", click: () => { win.show(); win.focus(); } },
+    { type: "separator" },
+    { label: "退出", click: () => { quitting = true; app.quit(); } },
+  ]);
+  tray.setContextMenu(t);
+  tray.setToolTip(trayState.projecting ? "NetDisplay · 正在投射" :
+    trayState.connected ? "NetDisplay · 已连接" : "NetDisplay");
+}
+
+ipcMain.on("tray-state", (_e, s) => {
+  trayState = { ...trayState, ...s };
+  buildTrayMenu();
+});
+
+// 本机局域网 IP：监听模式要显示给对方，让对方能直连
+function lanIp() {
+  const nets = require("os").networkInterfaces();
+  const cands = [];
+  for (const [name, addrs] of Object.entries(nets)) {
+    for (const a of addrs || []) {
+      if (a.family !== "IPv4" || a.internal) continue;
+      // 虚拟网卡（VPN/代理/虚拟机）常年在列，但对方多半连不上，排到最后
+      const virt = /vEthernet|VMware|VirtualBox|Loopback|Hyper-V|Mihomo|TAP|Clash/i.test(name);
+      cands.push({ ip: a.address, virt });
+    }
+  }
+  cands.sort((x, y) => x.virt - y.virt);
+  return cands.length ? cands[0].ip : null;
+}
+
 ipcMain.handle("config", () => {
   const d = screen.getPrimaryDisplay();
   return {
+    lanIp: lanIp(),
     screen: {
       width: Math.round(d.size.width * d.scaleFactor),
       height: Math.round(d.size.height * d.scaleFactor),

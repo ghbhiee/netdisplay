@@ -22,6 +22,7 @@
     "files": ["main.js", "src/**", "assets/**", "package.json"],
     "win": {
       "target": ["portable"],
+      "icon": "assets/icon.png",
       "artifactName": "NetDisplay-${version}-portable.exe"
     }
   }

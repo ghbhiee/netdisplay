@@ -107,7 +107,8 @@ const deviceId =
 // ================= 设置（全部持久化） =================
 const FIELDS = ["ip", "code", "relayServer", "token", "res", "scale", "fps", "bitrate", "customW", "customH"];
 const CHECKS = ["windowed", "overlayOn"];
-let mode = localStorage.getItem("pref.mode") || "auto"; // ux-model：默认自动，用户不必先懂直连/中转
+// 默认「等对方连我」——它不需要用户填任何东西就能开始，是零输入的起点
+let mode = localStorage.getItem("pref.mode") || "listen";
 
 function loadPrefs() {
   for (const id of FIELDS) {
@@ -125,22 +126,48 @@ function loadPrefs() {
   syncCustomVisibility();
 }
 
+// 用户只需回答一个问题：**我等对方连我，还是我去连对方**。
+// 「直连 vs 中转」不再是要选的模式——填了地址就试直连、填了配对码就试中转，
+// 两个都填就并行竞速。这样「自动」这个需要理解的概念自然消失了。
 function applyMode(m) {
   mode = m;
   localStorage.setItem("pref.mode", m);
-  for (const b of $("modeSeg").children) b.classList.toggle("on", b.dataset.mode === m);
-  // 自动模式两组字段都要填（并行探测哪条通用哪条）
-  $("grpDirect").classList.toggle("hidden", m === "relay");
-  $("grpRelay").classList.toggle("hidden", m === "direct");
-  $("modeHint").textContent = {
-    auto: "自动：同时试直连和中转，先通的用哪个",
-    direct: "直连：同一局域网或 USB4 网桥，延迟最低",
-    relay: "中转：跨网络可用，无需公网 IP 或端口转发",
-  }[m] || "";
+  $("gListen").classList.toggle("on", m === "listen");
+  $("gConnect").classList.toggle("on", m === "connect");
 }
-$("modeSeg").addEventListener("click", (e) => {
-  if (e.target.dataset.mode) applyMode(e.target.dataset.mode);
-});
+for (const g of [$("gListen"), $("gConnect")]) {
+  g.querySelector(".head").addEventListener("click", () => applyMode(g.dataset.mode));
+}
+
+// 我的配对码：长期有效、持久保存（用户明确要求「配对码可以是长期有效的」）。
+// 每次重启换新码会让对方反复来问，体验很差。
+function myPairCode() {
+  let c = localStorage.getItem("my.pairCode");
+  if (!/^\d{6}$/.test(c || "")) {
+    c = String(100000 + (nodeCrypto.randomBytes(4).readUInt32BE(0) % 900000));
+    localStorage.setItem("my.pairCode", c);
+  }
+  return c;
+}
+function refreshListenInfo() {
+  $("myCode").textContent = myPairCode();
+  const ip = (config && config.lanIp) || "获取中…";
+  $("myAddr").textContent = ip === "获取中…" ? ip : `${ip}:47800`;
+}
+$("btnNewCode").onclick = () => {
+  localStorage.removeItem("my.pairCode");
+  refreshListenInfo();
+  setStatus("已换新配对码，需要把新码告诉对方");
+};
+$("btnCopyAddr").onclick = () => {
+  navigator.clipboard.writeText($("myAddr").textContent).then(
+    () => setStatus("地址已复制"), () => setStatus("复制失败", true));
+};
+$("btnAdv").onclick = () => {
+  const a = $("adv");
+  a.classList.toggle("hidden");
+  $("btnAdv").textContent = a.classList.contains("hidden") ? "高级设置 ▾" : "高级设置 ▴";
+};
 
 function syncCustomVisibility() {
   $("grpCustom").classList.toggle("hidden", $("res").value !== "custom");
@@ -187,7 +214,42 @@ function refreshRoleBar() {
   const projecting = sender.isSending();
   $("btnProject").style.display = projecting ? "none" : "block";
   $("btnProjectStop").style.display = projecting ? "block" : "none";
+  pushTrayState();
 }
+
+// 把状态推给托盘，让菜单能显示当前值并高亮选中项
+function pushTrayState() {
+  try {
+    ipcRenderer.send("tray-state", {
+      connected: !!sock || sender.isSending(),
+      projecting: sender.isSending(),
+      res: $("res").value, scale: $("scale").value, fps: $("fps").value,
+      sources: sourceList.filter((s) => s.kind === "window").map((s) => ({ id: s.id, name: s.name })),
+      source: $("sendSource").value,
+      code: myPairCode(),
+    });
+  } catch {}
+}
+
+// 托盘菜单里改参数 → 等同于在主界面改（含持久化与重连生效）
+ipcRenderer.on("tray-cmd", (_e, m) => {
+  if (m.cmd === "set") {
+    $(m.key).value = m.value;
+    localStorage.setItem("pref." + m.key, m.value);
+    if (m.key === "res") syncCustomVisibility();
+    pushTrayState();
+    // 画质是「作为目标时」的请求，改了要重连才生效（HELLO.screen 在握手时发）
+    if (sock) { setStatus("画质已改，正在重连生效…"); connect(); }
+  } else if (m.cmd === "set-source") {
+    $("sendSource").value = m.value;
+    applySource();
+    pushTrayState();
+  } else if (m.cmd === "start-project") {
+    $("btnProject").click();
+  } else if (m.cmd === "stop-project") {
+    $("btnProjectStop").click();
+  }
+});
 function hidePanel() {
   panel.style.display = "none";
 }
@@ -270,12 +332,37 @@ function connectAuto() {
   }, 2500);
 }
 
+// 监听模式：同时开两条入口等对方来连——47800 供局域网直连，中转用长期配对码注册。
+// 用户不必选「直连还是中转」，对方用哪种都能连上。
+async function startListening() {
+  setStatus("正在待命，等对方连接…");
+  await sender.startSender(sendStatus); // 监听 47800
+  const server = $("relayServer").value.trim();
+  if (server) {
+    await sender.startSenderRelay(sendStatus, {
+      server, token: $("token").value.trim() || undefined,
+      fixedCode: myPairCode(), forceCode: !pairSecret(), // 已配对则走 pairHash 免码
+    });
+  }
+  refreshRoleBar();
+  setStatus(`待命中 · 配对码 ${myPairCode()} · 或直连 ${$("myAddr").textContent}`);
+}
+
 function connect() {
   // 运行中「应用并重连」：先静默断开，再按当前设置重连
   if (sock) teardown(null, true);
-  if (mode === "auto") return connectAuto();
-  if (mode === "direct") {
-    const ip = $("ip").value.trim();
+
+  // 监听模式：本机待命等对方来连。两条路同时开着——监听 47800 供局域网直连，
+  // 同时用我的长期配对码在中转注册，对方用哪种方式都能连上。
+  if (mode === "listen") return startListening();
+
+  // 连接模式：填了什么就试什么；两个都填就并行竞速（先握手成功的胜出）
+  const ip = $("ip").value.trim();
+  const code = $("code").value.trim();
+  const hasCode = /^\d{6}$/.test(code) || !!pairHashHex();
+  if (ip && hasCode) return connectAuto();
+  if (!ip && !hasCode) return setStatus("请填写对方的配对码，或它的局域网地址", true);
+  if (ip) {
     const port = +((config.args && config.args.port) || 47800);
     setStatus(`连接 ${ip}:${port} …`);
     sock = net.createConnection(port, ip, () => {
@@ -764,7 +851,9 @@ window.addEventListener("keyup", (e) => {
 (async () => {
   config = await ipcRenderer.invoke("config");
   loadPrefs();
+  refreshListenInfo();
   updatePairInfo();
+  pushTrayState();
   await detectCodecs();
   const a = config.args || {};
   if (a.res) $("res").value = a.res;
