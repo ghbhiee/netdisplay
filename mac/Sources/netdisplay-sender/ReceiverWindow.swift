@@ -5,12 +5,16 @@ import QuartzCore
 /// A borderless-titled window that displays decoded frames. Each frame is
 /// converted to a CGImage and set as the content view's layer contents (GPU
 /// composited). Sizing follows the stream's display dimensions.
-final class ReceiverWindow {
+final class ReceiverWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var imageLayer: CALayer?
     private let renderer = FrameRenderer()
     private var configured = false
     private var baseTitle = "NetDisplay"
+    /// Called (on main) when the user closes the window — so receiving can stop.
+    var onClose: (() -> Void)?
+
+    func windowWillClose(_ notification: Notification) { onClose?() }
 
     /// Update the window title suffix from PROJECTION_STATE (which source / paused).
     func setLabel(_ text: String?) {
@@ -38,6 +42,7 @@ final class ReceiverWindow {
                     backing: .buffered, defer: false)
                 win.title = title
                 win.isReleasedWhenClosed = false
+                win.delegate = self   // windowWillClose → onClose
                 let view = NSView(frame: NSRect(x: 0, y: 0, width: winW, height: winH))
                 view.wantsLayer = true
                 view.layer?.backgroundColor = NSColor.black.cgColor

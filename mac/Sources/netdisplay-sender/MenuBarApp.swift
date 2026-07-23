@@ -351,6 +351,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         let screen = receiverScreen()
         let codecs = ["hevc422", "hevc", "h264"]
         let win = ReceiverWindow()
+        win.onClose = { [weak self] in self?.stopReceiving() }   // 关窗口 → 停接收
         // Window wiring shared by all transports.
         let onReady: (HelloAck.Display?, VideoCodec) -> Void = { d, c in
             guard let d = d else { return }
