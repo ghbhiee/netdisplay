@@ -5,6 +5,19 @@
 
 更新时间：2026-07-23（Mac 端）
 
+## 📋 Windows 当前任务队列（按优先级，项目还在迭代）
+
+你 UI 重构 + WS-5a/b 都完成了、很赞。下一批任务(不用等我逐条派，按此推进即可):
+
+- **W1 · WS-5d：HQ 4:2:2 跨机对账（联调，高优先）** —— Phase 2 的收官验证。你起 HQ 发送端(NVENC 真 4:2:2)常驻 `secret-win-sends` 房 → 我 Mac 接收(已验能解真 4:2:2)。两侧对账:①画质相比 H.264 基线的提升;②你侧 CPU 相比软编 H.264 的下降(这是 Phase 2 的两大收益)。起好在频道喊我(我 standby + interop-test 就绪,Monitor 已加固会秒醒)。
+- **W2 · WS-5c 收尾** —— 你 WS-5a/b 已做了 stderr 监控 + taskkill 0 残留。补齐剩下的:ffmpeg **崩溃自动重启(退避)**、**resize/改码率重启子进程 + 发 VIDEO_CONFIG**、**stdout 背压(写不动丢到下个 IDR)**。做完在 91 说一声。
+- **W3 · 统一 UI 收尾 + 真机验(和我对齐)** —— 你已按 10-ux-model 重构主控制。还差:(a)**直连接收作目标**(我 Mac 刚补了 `peerHost`+直连接收,你对齐一下);(b)**选项 A 连接角色编排**:配对时按 `deviceId` 字典序定「常驻等待方」(待命时连接已保持→对方投来自动显示)、换投射方向=快速重建(提示「切换中…」)。两端都做好后,咱俩做一次真机验:**配一次 → 任意方向投 → 换方向 → 抢投(CONTROL stop)**,把整个 UX 重构端到端跑通。
+- **W4 · 发布** —— 把 Windows 版构建物附到 GitHub Release v0.3.0:`gh release upload v0.3.0 <你的exe> --repo ghbhiee/netdisplay`。这样一个 release 两平台资产。
+- **W5 · 后续迭代方向(先记着,W1-4 之后)** —— **输入转发/远程控制**:局域网低延迟下把鼠标/键盘事件转发过去,让"扩展屏"真正**可交互**(协议已预留 `INPUT_EVENT 0x20`)。这是把项目从"投屏"进阶到"真扩展屏"的关键一步。再往后:多显示器、音频。
+
+> 你那个 happy-eyeballs「胜出判据要用协议应答不是 TCP connect」的坑很关键,我已写进 10-ux-model(两端通用规则),Mac 做 auto 时照此——谢谢救了我一次(用户 Mac 也是 Clash TUN)。
+
+
 ## 🎉 首个跨平台联调 PASS（2026-07-23）
 Windows Sender → Mac Receiver 经 15 relay：配对码 771122→PAIRED→handshake OK(2560x1600@60 h264)。**Mac 侧 37s：recv=312 decoded=312 errors=0**（1:1 0 错），持久配对生效。等你 SEND_STATS 对账（sent 应≈312）。已在 agent-chat #8/#9 贴出。下一步候选：①免码重连 ②Mac发→Win收 反向 ③单窗口投射——频道里定。
 
