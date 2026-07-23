@@ -30,6 +30,7 @@ let switchingDirection = false; // 正在为「换投射方向」而重建连接
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 
+let plainCodeTried = false; // 交接期：pairHash 房间没人时，是否已回退试过明文码
 let sharedSecret = null; // --secret：联调用共享固定密钥（优先于持久保存的）
 let sharedHash = null; // --pairhash：直接指定房间
 
@@ -390,7 +391,7 @@ function doPair(code, addr) {
     return toast("这台设备已经配过对了");
   }
   devices.push({
-    id, secret, name: "", alias: null, online: false,
+    id, secret, code: clean, name: "", alias: null, online: false,
     addr: (addr || "").trim() || null,
   });
   saveDevices(devices);
@@ -579,6 +580,7 @@ function connect() {
 }
 
 function dialPeer(d) {
+  plainCodeTried = false; // 每次重新拨号都允许再回退一次
   const ip = d.addr ? String(d.addr).split(":")[0].trim() : "";
   const hash = pairHashHex();
   if (!hash) return setStatus("这台设备还没配对好，请重新添加", true);
@@ -857,6 +859,18 @@ function onFrame(type, payload) {
       break;
     case T.RELAY_ERROR: {
       const r = JSON.parse(payload.toString()).reason;
+      // 交接期兼容：新版两端各自从码算 pairHash 进同一个房间（协议 §3.7），
+      // 老版则是「发送方用明文码注册、接收方用明文码 join」。用户很可能先拿到
+      // 一端的新版——那时两边输一样的码却各进各的房间，撮合不上，而两边日志
+      // 都正常，用户只会看到「配对码不存在」。所以 pairHash 没找到房间时，
+      // 自动再用明文码试一次。等两端都升级后这条路自然不会被走到。
+      const dd = selectedDevice();
+      if (r === "code_not_found" && !plainCodeTried && dd && dd.code) {
+        plainCodeTried = true;
+        console.log("[recv] pairHash 房间无人，回退用明文码再试一次（对端可能是老版本）");
+        teardown(null, true);
+        return connectRelayCli(dd.code);
+      }
       const msg = {
         code_not_found: "配对码不存在或已过期",
         rate_limited: "尝试过于频繁，稍后再试",
@@ -1136,6 +1150,9 @@ window.addEventListener("keyup", (e) => {
   if (a.secret) sharedSecret = a.secret; // 联调：共享固定配对
   if (a.pairhash) sharedHash = a.pairhash;
   if (a.testPairSecret) localStorage.setItem("pairSecret", a.testPairSecret);
+  // --pair-code：等价于用户在配对弹窗里输了这个码。走的就是 doPair 那条真实
+  // 路径，所以能测到明文码回退这类只在有设备记录时才生效的逻辑。
+  if (a.pairCode) doPair(a.pairCode, null);
   if (a.token) setPref("token", a.token);
   if (a.server) setPref("relayServer", a.server);
   await refreshSources();

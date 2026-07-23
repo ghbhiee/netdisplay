@@ -190,6 +190,13 @@ secret = "8cDzqhqQD4xqw4fFnmsXG4r70M7mLv64gPR7rAmajfo="
 > 首次配对成功后 Sender 仍会在 HELLO_ACK 里下发 `pairSecret`（§3.4），两端持久保存，
 > 之后免码重连。码只是**第一次**把双方引到同一个房间的手段。
 
+**交接期兼容（建议两端都做）**：用户多半会先升级一端。那时两边输一样的码却各进各的
+房间——新端在 pairHash 房、老端在明文 code 房——撮合不上，而**两边日志都正常**，用户
+只看到「配对码不存在」。所以新端 JOIN 用 pairHash 收到 `code_not_found` 时，应当**自动
+再用明文码试一次**再报错。等两端都升级后这条回退路径自然不会被走到。Windows 端已实现
+（`renderer.js` 的 `RELAY_ERROR` 分支，实测老端明文码注册 → 新端回退命中 → 握手 →
+升级直连，755 帧 0 错）。
+
 ## 4. VIDEO_FRAME（0x10）payload 格式
 
 ```

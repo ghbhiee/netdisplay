@@ -28,6 +28,7 @@ const testArgs = {
   autoBounce: arg("auto-bounce"), // 测试：N 秒后自动发 CONTROL bounceBack
   token: arg("token"), // 测试：relay 访问令牌
   testPairSecret: arg("test-pair-secret"), // 测试：预置 pairSecret（base64）
+  pairCode: arg("pair-code"), // 测试：按 6 位码建一条配对设备并选中，走真实 UI 路径
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
   sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
   sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
