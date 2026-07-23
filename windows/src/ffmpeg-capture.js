@@ -143,7 +143,14 @@ function startCapture(o) {
       const au = acc.subarray(offs[k], offs[k + 1]);
       if (au.length === 0) continue;
       sawFrame = true;
-      o.onFrame(au, isKeyAU(au), Math.round((frameNo++ * 1e6) / fps));
+      try {
+        o.onFrame(au, isKeyAU(au), Math.round((frameNo++ * 1e6) / fps));
+      } catch (e) {
+        // 回调抛异常不能静默吞掉：实测一个 ReferenceError 会让每帧都失败，
+        // 表现成「协商成功但一帧不发」，从外部完全看不出原因。
+        o.onError(`onFrame 回调异常: ${e.message}\n${(e.stack || "").split("\n")[1] || ""}`);
+        return;
+      }
     }
     acc = acc.subarray(offs[offs.length - 1]); // 保留最后一个未完成的 AU
   });
@@ -165,11 +172,14 @@ function startCapture(o) {
 
   proc.on("close", (code) => {
     if (stopped) return;
-    // 非主动停止的退出一律视为异常，把 stderr 尾部带出去便于定位
-    const why = sawFrame
-      ? `ffmpeg 退出（code=${code}），已产出过帧`
-      : `ffmpeg 未产出任何帧就退出（code=${code}）`;
-    o.onError(`${why}\n${stderrTail.trim().split("\n").slice(-3).join("\n")}`);
+    const tail = stderrTail.trim().split("\n").slice(-3).join("\n");
+    // 从没产出过帧 = 配置/权限/源不存在这类问题，重启多少次都一样，直接上报
+    if (!sawFrame) {
+      o.onError(`ffmpeg 未产出任何帧就退出（code=${code}）\n${tail}`);
+      return;
+    }
+    // 产出过帧后崩溃 = 多半是瞬时故障（设备被抢占、驱动重置），值得重启
+    o.onCrash ? o.onCrash(`ffmpeg 中途退出（code=${code}）`, tail) : o.onError(`ffmpeg 退出（code=${code}）\n${tail}`);
   });
 
   return {

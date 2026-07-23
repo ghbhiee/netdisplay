@@ -9,6 +9,30 @@ tags: [netdisplay, handoff, windows, progress]
 
 ## 当前状态：**#1 ✅；#3 定稿 B 且 Receiver 侧 v1.6 已落地 ✅；#2 Sender 计划仍待 Mac review**
 
+### 2026-07-22 更新之三十三（**🎉 W1 完成：真 4:2:2 跨机验证通过；W2 子进程健壮性**）
+
+#### W1（WS-5d）：Phase 2 收官 —— 真 HEVC 4:2:2 跨机零错
+| | codec | 路径 | 帧 | 关键帧 | 丢帧 | 错误 | bytes |
+|---|---|---|---|---|---|---|---|
+| Win Sender | **hevc422** | `ffmpeg:hevc_nvenc` / `path:"hq"` | sent 1604 | 14 | 0 | 0 | 10,544,404 |
+| Mac Receiver | **hevc422** | VTDecompressionSession | recv 1583 / decoded 1583 | 14 | 0 | 0 | ~10.5 MB |
+
+NVENC 产的真 Rext 4:2:2 10-bit 流，经中转，Mac 硬解**全解零错**。关键帧 14=14 对上，帧差 21 是快照时点差。
+
+#### ⚠️ 但第一次测「PASS 了却没测到东西」
+Mac 首轮报 PASS，我核对自己的 `SEND_STATS` 发现 `codec:"h264"`、`encoderAccel:"no-preference"` —— **走的是 WebCodecs 软编基线，4:2:2 一帧没跑**。原因是它的 interop-test 硬编了 `--codecs h264`。
+两侧帧数、字节、errors=0 全都完美对上，**只看这些指标会直接把 W1 记成完成**。
+→ **跨端联调除了对账「数量」，必须对账「走的是哪条代码路径」**。为此我在 `SEND_STATS` 里留了 `encoderAccel` / `path` 字段，对端的 `RECV_STATS.codec` 起同样作用。已提醒 Mac，它带 `--codecs hevc422` 重测才拿到上面的真结果。
+
+#### W2：子进程健壮性（边界⑥）
+- **崩溃分类处理**：「从没产出过帧就退出」= 配置/权限/源不存在，重启无意义 → 直接上报；「产出过帧后崩溃」= 瞬时故障（设备被抢、驱动重置）→ **指数退避重启**（500ms 起，封顶 8s，上限 5 次），重启后首帧仍是关键帧，对端自然恢复。
+- **stdout 背压**：ffmpeg 按帧率恒定产出、不会自己等待，socket 积压超 2MB 就丢帧并等下一个关键帧（避免对端拿到依赖已丢帧的 P 帧而花屏）。状态行显示丢帧数与重启次数。
+- **停止时清理**：`projectionStop` 会 `clearTimeout` 待执行的重启，否则停完还会被拉起来。
+
+#### 🐛 W2 途中自己制造并修掉的 bug（教训值得记）
+写完背压后测试：协商正确、HELLO_ACK 正常，**但一帧都没发出去**。根因是 `BACKPRESSURE_BYTES` / `MAX_HQ_RESTARTS` 两个常量**我根本没定义**——每帧回调都抛 `ReferenceError`，而异常被 `stdout.on("data")` 的调用栈静默吞掉，**表现成「能握手但零帧」，从外部完全看不出原因**。
+→ 已给 `onFrame` 回调加 try/catch，异常转成明确的 `onError` 上报。**任何「宿主调用用户回调」的地方都该这样包**，否则回调里的错误会伪装成功能不工作。
+
 ### 2026-07-22 更新之三十二（**WS-5a 收官：HQ 路径接入 codec 协商，端到端跑通**）
 
 #### 分流规则

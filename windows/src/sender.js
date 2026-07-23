@@ -169,12 +169,18 @@ async function captureTrack(fps) {
 }
 
 // ---------- HQ 会话（WS-5：ffmpeg + 硬件 HEVC 4:2:2）----------
+// socket 待发字节超过此值即判定网络跟不上，开始丢帧（约 2 个 2560x1600 关键帧的量）
+const BACKPRESSURE_BYTES = 2 * 1024 * 1024;
+const MAX_HQ_RESTARTS = 5; // 连续崩溃重启上限，超过则放弃并断会话
+
 // 与 WebCodecs 会话并列，协议行为完全一致，只是帧的来源换成 ffmpeg 子进程。
 async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
   const src = source || { kind: "desktop", name: os.hostname() + " 屏幕" };
-  // ffmpeg 路径下尺寸由采集器决定，首帧到达前不知道——先用 0 占位，拿到 SPS 前不发 ACK
+  // ffmpeg 路径下尺寸由采集器决定，首帧到达前不知道——拿到 SPS 才发 ACK
   let announced = false;
   let stopped = false;
+  let waitingKeyAfterDrop = false; // 背压丢帧后等下一个关键帧再恢复
+  let restartTimer = null;
 
   stats = {
     startedAt: Date.now(), width: 0, height: 0, fps, codec: codecName,
@@ -185,7 +191,7 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
   };
   const st = stats;
 
-  const cap = startCapture({
+  const spawnCapture = () => startCapture({
     ffmpeg: hqInfo.ffmpeg, encoder: hqInfo.encoder, pixFmt: hqInfo.pixFmt,
     source: src, fps, bitrateMbps: Math.round(bitrate / 1e6), gopSeconds: 2,
     onFrame(au, isKey, ptsUs) {
@@ -218,9 +224,43 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
         }));
       }
       st.captured++;
+
+      // 背压（边界⑥）：ffmpeg 按帧率恒定产出，不会像 WebCodecs 那样自己等待。
+      // socket 积压时必须主动丢帧，否则内存无限涨、延迟越拖越大。丢到下个关键帧为止，
+      // 避免对端拿到依赖已丢帧的 P 帧而花屏。
+      if (waitingKeyAfterDrop && !isKey) { st.dropped++; return; }
+      if (sock.writableLength > BACKPRESSURE_BYTES && !isKey) {
+        st.dropped++;
+        waitingKeyAfterDrop = true;
+        dbg(`背压丢帧：socket 积压 ${Math.round(sock.writableLength / 1024)}KB，等下一个关键帧`);
+        return;
+      }
+      waitingKeyAfterDrop = false;
+
       sock.write(buildFrame(T.VIDEO_FRAME, buildVideoPayload(ptsUs, isKey, au)));
       st.sent++; st.bytes += au.length;
       if (isKey) st.keyframes++;
+    },
+    // 产出过帧后崩溃：多半是瞬时故障（设备被抢、驱动重置），退避重启而不是断会话
+    onCrash(msg, tail) {
+      if (stopped || sock.destroyed) return;
+      st.encodeErrors++;
+      st.restarts = (st.restarts || 0) + 1;
+      if (st.restarts > MAX_HQ_RESTARTS) {
+        dbg(`HQ 重启已达上限 ${MAX_HQ_RESTARTS} 次，放弃：${msg}`);
+        onStatus(`HQ 采集反复失败（${st.restarts} 次），已停止`);
+        if (!sock.destroyed) sock.write(buildFrame(T.BYE, { reason: "hq capture repeatedly failed" }));
+        try { sock.destroy(); } catch {}
+        return;
+      }
+      const delay = Math.min(8000, 500 * 2 ** (st.restarts - 1)); // 指数退避
+      dbg(`${msg} → ${delay}ms 后第 ${st.restarts} 次重启\n${tail}`);
+      onStatus(`采集中断，${Math.round(delay / 1000)}s 后重连…（第 ${st.restarts} 次）`);
+      restartTimer = setTimeout(() => {
+        if (stopped || sock.destroyed) return;
+        waitingKeyAfterDrop = false;
+        cap = spawnCapture(); // 重启后首帧仍是关键帧，对端能自然恢复
+      }, delay);
     },
     onError(msg) {
       st.encodeErrors++;
@@ -231,6 +271,7 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
     },
     onLog: dbg,
   });
+  let cap = spawnCapture();
 
   const statTimer = setInterval(() => {
     if (stopped) return;
@@ -241,7 +282,9 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
       st.lastSecond.mbps = +(((st.bytes - st.lastSecond.bytes) * 8) / dt / 1e6).toFixed(2);
     }
     st.lastSecond.at = now; st.lastSecond.sent = st.sent; st.lastSecond.bytes = st.bytes;
-    onStatus(`发送中 [HQ ${hqInfo.encoder}] ${codecName} · ${st.lastSecond.fps}fps ${st.lastSecond.mbps}Mbps · 已发 ${st.sent} 帧(关键 ${st.keyframes})`);
+    const extra = st.restarts ? ` · 重启 ${st.restarts}` : "";
+    const drop = st.dropped ? ` 丢 ${st.dropped}` : "";
+    onStatus(`发送中 [HQ ${hqInfo.encoder}] ${codecName} · ${st.lastSecond.fps}fps ${st.lastSecond.mbps}Mbps · 已发 ${st.sent} 帧(关键 ${st.keyframes})${drop}${extra}`);
   }, 1000);
 
   return {
@@ -251,6 +294,7 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
       if (stopped) return;
       stopped = true;
       clearInterval(statTimer);
+      clearTimeout(restartTimer); // 停止时可能正好在等重启，别让它之后又拉起来
       cap.stop();
       if (!sock.destroyed) sock.write(buildFrame(T.PROJECTION_STATE, { active: false }));
       onStatus("已停止投射（连接保持）");
