@@ -56,8 +56,9 @@ final class TrayMenu: NSObject, NSMenuDelegate {
         default: menu.addItem(item("启动接收服务", #selector(startRecvSvc)))
         }
 
-        // ── 第二节：投射内容（选中设备、未在接收时）──
-        if model.role != .receiving, model.selected != nil {
+        // ── 第二节：投射内容（仅投射模式：接收服务关闭、未在接收、已选设备）──
+        // 开启接收服务后隐藏投射内容（屏幕/程序），与投射互斥。
+        if model.recvSvc == .off, model.role != .receiving, model.selected != nil {
             menu.addItem(.separator())
             menu.addItem(header("投射内容 · 最近窗口"))
             menu.addItem(item("整块屏幕", #selector(pickSource), checked: model.source.isScreen, obj: "@screen"))
