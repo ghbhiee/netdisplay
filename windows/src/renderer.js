@@ -395,17 +395,88 @@ function connect() {
   wireSocket();
 }
 
+function helloPayload() {
+  return {
+    version: 1,
+    role: "receiver",
+    name: os.hostname(),
+    deviceId,
+    screen: desiredScreen(),
+    codecs: supportedCodecs, // v1.3：解码能力（偏好序），老 Sender 忽略
+    lanAddrs: (config && config.lanAddrs) || [], // v1.9：供对端尝试连接升级
+  };
+}
 function sendHello() {
-  sock.write(
-    buildFrame(T.HELLO, {
-      version: 1,
-      role: "receiver",
-      name: os.hostname(),
-      deviceId,
-      screen: desiredScreen(),
-      codecs: supportedCodecs, // v1.3：解码能力（偏好序），老 Sender 忽略
-    })
-  );
+  sock.write(buildFrame(T.HELLO, helloPayload()));
+}
+
+// ===== v1.9 §3.5 连接升级：中转 → 直连 =====
+// transport 是程序探测出的状态，不是用户选项。走中转连上后，在后台悄悄试直连，
+// 通了就无感切过去。**只在待命时做**——投射中切链路会让画面中断。
+let currentTransport = "relay"; // "relay" | "direct"
+let upgradeTried = false;
+let upgradeHandshakePending = false; // 切到直连后正在等对端重发 HELLO_ACK
+
+function tryUpgradeToDirect(peerLanAddrs) {
+  const why = currentTransport === "direct" ? "已是直连"
+    : upgradeTried ? "本次会话已试过"
+    : !Array.isArray(peerLanAddrs) || !peerLanAddrs.length ? "对端没给 lanAddrs"
+    // 判「投射中」要看是否真在收帧，不能只看 projActive：它初值为 true（为兼容
+    // 不发 PROJECTION_STATE 的老 Sender），握手阶段一律为真，会把升级全挡掉。
+    : (projActive && stats.total.recv > 0) ? "正在投射中（MVP 不切链路）" : null;
+  if (why) { console.log(`[recv] 跳过直连升级：${why}`); return; }
+  upgradeTried = true;
+  console.log(`[recv] 尝试直连升级 → ${peerLanAddrs.join(", ")}`);
+
+  const relaySock = sock;
+  const probes = [];
+  let done = false;
+
+  const finish = (winner, addr) => {
+    if (done) { winner && winner.destroy(); return; }
+    done = true;
+    for (const p of probes) if (p !== winner) p.destroy();
+    if (!winner) {
+      console.log("[recv] 直连升级未成功，继续走中转");
+      return;
+    }
+    // 切换：新 socket 接管，旧的中转连接拆掉
+    console.log(`[recv] ✅ 已升级到直连 ${addr}（原中转连接关闭）`);
+    currentTransport = "direct";
+    manualDisconnect = true; // 关旧连接不该触发重连
+    try { relaySock.destroy(); } catch {}
+    manualDisconnect = false;
+    sock = winner;
+    wireSocket();
+    // 探测时只发了 HELLO 就停下等应答，会话状态（HELLO_ACK/尺寸/codec）还没建立。
+    // 切过来后必须让对端重走一遍握手，否则新链路上永远等不到 HELLO_ACK，视频起不来。
+    upgradeHandshakePending = true;
+    sock.write(buildFrame(T.HELLO, helloPayload()));
+    setStatus(`已连接 · 直连 ${addr.split(":")[0]}`);
+  };
+
+  for (const addr of peerLanAddrs.slice(0, 4)) {
+    const m = /^\[?([^\]]+)\]?:(\d+)$/.exec(addr);
+    if (!m) continue;
+    const s = net.createConnection(+m[2], m[1]);
+    probes.push(s);
+    s.setNoDelay(true);
+    s.on("connect", () => {
+      // ⚠️ connect 成功不算通：Mihomo/Clash 的 TUN 透明代理下，连一个根本
+      // 不存在的地址 connect 也会成功（实测 10.99.99.99）。必须等对端按协议应答。
+      s.write(buildFrame(T.HELLO, helloPayload()));
+    });
+    const p = new FrameParser((t) => {
+      if (t === T.HELLO || t === T.HELLO_ACK) {
+        s.removeAllListeners("data");
+        finish(s, addr);
+      }
+    });
+    s.on("data", (d) => { try { p.feed(d); } catch { s.destroy(); } });
+    s.on("error", () => {});
+  }
+  if (!probes.length) { upgradeTried = false; return; }
+  setTimeout(() => finish(null), 1500); // 超时就安静地留在中转，不打扰用户
 }
 
 let lastDataTs = 0;
@@ -435,6 +506,8 @@ function onFrame(type, payload) {
       // 记住对端 deviceId：下次连接不必先握手就能算出该谁 listen（规范第 2 条）
       try {
         const h = JSON.parse(payload.toString());
+        // v1.9：拿到对端内网地址就在后台试直连升级（当前若已是直连则跳过）
+        if (h.lanAddrs) setTimeout(() => tryUpgradeToDirect(h.lanAddrs), 200);
         if (h.deviceId) {
           const known = role.getPeerId();
           role.rememberPeer(h.deviceId);

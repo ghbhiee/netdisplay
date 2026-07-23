@@ -143,26 +143,30 @@ ipcMain.on("tray-state", (_e, s) => {
   buildTrayMenu();
 });
 
-// 本机局域网 IP：监听模式要显示给对方，让对方能直连
-function lanIp() {
+// 本机可被直连到的局域网地址（协议 v1.9 HELLO.lanAddrs）。
+// 虚拟网卡（VPN/代理/虚拟机）排在后面：它们常年在列但对方多半连不上，
+// 排前面会让连接升级白白多试几次、拖慢切换。
+function lanCandidates() {
   const nets = require("os").networkInterfaces();
   const cands = [];
   for (const [name, addrs] of Object.entries(nets)) {
     for (const a of addrs || []) {
       if (a.family !== "IPv4" || a.internal) continue;
-      // 虚拟网卡（VPN/代理/虚拟机）常年在列，但对方多半连不上，排到最后
-      const virt = /vEthernet|VMware|VirtualBox|Loopback|Hyper-V|Mihomo|TAP|Clash/i.test(name);
+      const virt = /vEthernet|VMware|VirtualBox|Loopback|Hyper-V|Mihomo|TAP|Clash|WSL/i.test(name);
       cands.push({ ip: a.address, virt });
     }
   }
   cands.sort((x, y) => x.virt - y.virt);
-  return cands.length ? cands[0].ip : null;
+  return cands;
 }
+const lanIp = () => (lanCandidates()[0] || {}).ip || null;
+const lanAddrs = (port = 47800) => lanCandidates().map((c) => `${c.ip}:${port}`);
 
 ipcMain.handle("config", () => {
   const d = screen.getPrimaryDisplay();
   return {
     lanIp: lanIp(),
+    lanAddrs: lanAddrs(),
     screen: {
       width: Math.round(d.size.width * d.scaleFactor),
       height: Math.round(d.size.height * d.scaleFactor),

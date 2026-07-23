@@ -529,9 +529,19 @@ async function startSession(sock, receiverHello, relayMode) {
 function attachReceiverHandler(sock, relayMode) {
     sock.setNoDelay(true);
     onStatus("Receiver 已连入，握手中…");
-    sock.write(
-      buildFrame(T.HELLO, { version: 1, role: "sender", name: os.hostname(), deviceId: deviceId() })
-    );
+    // lanAddrs 直接向主进程要，不依赖调用方传参——有 5 处入口调用 startSender*，
+    // 靠每处都记得传，漏一处就表现为「升级永远不触发」且没有任何报错。
+    ipcRenderer.invoke("config").then((cfg) => {
+      if (sock.destroyed) return;
+      sock.write(buildFrame(T.HELLO, {
+        version: 1, role: "sender", name: os.hostname(), deviceId: deviceId(),
+        lanAddrs: (cfg && cfg.lanAddrs) || [], // v1.9：供对端做中转→直连升级
+      }));
+    }).catch(() => {
+      if (!sock.destroyed) sock.write(buildFrame(T.HELLO, {
+        version: 1, role: "sender", name: os.hostname(), deviceId: deviceId(), lanAddrs: [],
+      }));
+    });
     const parser = new FrameParser(async (type, payload) => {
       switch (type) {
         case T.HELLO: {
@@ -589,7 +599,14 @@ async function startSender(statusCb) {
   if (server) return;
   onStatus = statusCb || (() => {});
   server = net.createServer((sock) => {
-    if (active) { sock.destroy(); return; } // 单连接：拒绝并发（MVP）
+    // v1.9 连接升级：对端从中转切直连时会带着新 socket 连过来，此时旧的中转会话
+    // 还占着 active。这种情况必须**让新连接顶替**，不能当并发拒绝——否则升级
+    // 永远握手不成功，表现为「切过去了但没画面」。
+    if (active) {
+      dbg("已有会话，新连接顶替（多为中转→直连升级）");
+      try { active.stop(); } catch {}
+      active = null;
+    }
     attachReceiverHandler(sock, false);
   });
   server.listen(47800, () => onStatus("发送端就绪：监听 :47800，等待 Receiver 连入"));
@@ -622,7 +639,17 @@ let relayTimer = null;
 async function startSenderRelay(statusCb, opts = {}) {
   if (relayActive || server) return;
   onStatus = statusCb || (() => {});
+  sessionOpts = { ...sessionOpts, ...opts };
   relayActive = true;
+
+  // v1.9：直连监听口常开——中转模式下也要开，否则对端拿到我们的 lanAddrs 也无处可连，
+  // 连接升级永远不会成功。失败（如端口被占）不影响中转，只是升级不可用。
+  if (!server && opts.listenForUpgrade !== false) {
+    try {
+      await startSender(statusCb);
+      dbg("直连口 47800 已开（供连接升级）");
+    } catch (e) { dbg("直连口未能开启，连接升级不可用:", e.message); }
+  }
   // 共享固定配对（联调用）：给了 secret/pairhash 就直接按 pairHash 待命，零配对码、零点击
   overrideSecret = opts.secret || null;
   overrideHash = opts.pairHash || null;
