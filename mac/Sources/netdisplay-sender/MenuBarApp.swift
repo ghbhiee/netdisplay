@@ -16,6 +16,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     // Receive mode (this Mac as a target screen) — the symmetric-app half.
     private var receiver: ReceiverRelayClient?       // relay receive
     private var receiverDirect: ReceiverSession?     // direct receive (dial peer :47800)
+    private var receiverAuto: ReceiverAuto?          // auto: race direct + relay
     private var receiverWindow: ReceiverWindow?
     private var receiving = false
 
@@ -311,12 +312,16 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         let alert = NSAlert()
         alert.messageText = "接收投射（本机作目标屏）"
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 380, height: 24))
-        if cfg.mode == .direct {
-            alert.informativeText = "直连模式：拨号对方地址（端口 :\(cfg.listenPort)）。"
+        switch cfg.mode {
+        case .direct:
+            alert.informativeText = "直连：拨号对方地址（端口 :\(cfg.listenPort)）。"
             field.stringValue = cfg.peerHost
             field.placeholderString = "对方地址，如 10.77.0.2 或 192.168.x.x"
-        } else {
+        case .relay:
             alert.informativeText = "中转 \(cfg.relayServer)：输入发送端显示的 6 位配对码；已持久配对可留空。"
+            field.placeholderString = "6 位配对码（已配对可留空）"
+        case .auto:
+            alert.informativeText = "自动：并行试直连（对方地址=\(cfg.peerHost.isEmpty ? "未填，跳过直连" : cfg.peerHost)）与中转，先握手成功者胜。填中转配对码；已配对可留空。"
             field.placeholderString = "6 位配对码（已配对可留空）"
         }
         alert.accessoryView = field
@@ -328,10 +333,8 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         if cfg.mode == .direct {
             guard !input.isEmpty else { return }
             mutate { $0.peerHost = input }   // remember the peer address
-            startReceiving(directHost: input, code: "")
-        } else {
-            startReceiving(directHost: nil, code: input)
         }
+        startReceiving(code: cfg.mode == .direct ? "" : input)
     }
 
     /// Report this Mac's main-display pixel size + the codecs it can decode.
@@ -343,12 +346,12 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
             scale: 1, fps: cfg.fps, bitrateMbps: cfg.bitrateAuto ? nil : cfg.bitrateMbps)
     }
 
-    private func startReceiving(directHost: String?, code: String) {
+    private func startReceiving(code: String) {
         let cfg = controller.config
         let screen = receiverScreen()
         let codecs = ["hevc422", "hevc", "h264"]
         let win = ReceiverWindow()
-        // Window wiring shared by both transports.
+        // Window wiring shared by all transports.
         let onReady: (HelloAck.Display?, VideoCodec) -> Void = { d, c in
             guard let d = d else { return }
             win.configure(width: d.width, height: d.height,
@@ -358,24 +361,35 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         let onResize: (Int, Int) -> Void = { w, h in win.configure(width: w, height: h, title: "NetDisplay 接收 — \(w)×\(h)") }
         let onFrame: (CVImageBuffer, CMTime) -> Void = { img, _ in win.present(img) }
 
-        if let host = directHost {
-            let s = ReceiverSession(host: host, port: UInt16(cfg.listenPort),
-                                    name: senderName, deviceId: deviceId, screen: screen, codecs: codecs)
-            s.onReady = onReady; s.onProjectionState = onProj; s.onResize = onResize; s.onFrame = onFrame
-            s.onClosed = { [weak self] in DispatchQueue.main.async { self?.stopReceiving() } }
-            receiverDirect = s
-            s.start()
-        } else {
+        func makeDirect() -> ReceiverSession {
+            ReceiverSession(host: cfg.peerHost, port: UInt16(cfg.listenPort),
+                            name: senderName, deviceId: deviceId, screen: screen, codecs: codecs)
+        }
+        func makeRelay() -> ReceiverRelayClient {
             let parts = cfg.relayServer.split(separator: ":")
             let rhost = String(parts.first ?? "15.tokencv.com")
             let rport = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
-            let client = ReceiverRelayClient(host: rhost, port: rport,
-                                             token: cfg.relayToken.isEmpty ? nil : cfg.relayToken,
-                                             code: code.isEmpty ? nil : code,
-                                             name: senderName, deviceId: deviceId, screen: screen, codecs: codecs)
-            client.onReady = onReady; client.onProjectionState = onProj; client.onResize = onResize; client.onFrame = onFrame
-            receiver = client
-            client.start()
+            return ReceiverRelayClient(host: rhost, port: rport,
+                                       token: cfg.relayToken.isEmpty ? nil : cfg.relayToken,
+                                       code: code.isEmpty ? nil : code,
+                                       name: senderName, deviceId: deviceId, screen: screen, codecs: codecs)
+        }
+
+        switch cfg.mode {
+        case .direct:
+            let s = makeDirect()
+            s.onReady = onReady; s.onProjectionState = onProj; s.onResize = onResize; s.onFrame = onFrame
+            s.onClosed = { [weak self] in DispatchQueue.main.async { self?.stopReceiving() } }
+            receiverDirect = s; s.start()
+        case .relay:
+            let c = makeRelay()
+            c.onReady = onReady; c.onProjectionState = onProj; c.onResize = onResize; c.onFrame = onFrame
+            receiver = c; c.start()
+        case .auto:
+            // Race a direct dial (if peer address set) + a relay join; app-layer win.
+            let auto = ReceiverAuto(direct: cfg.peerHost.isEmpty ? nil : makeDirect(), relay: makeRelay())
+            auto.onReady = onReady; auto.onProjectionState = onProj; auto.onResize = onResize; auto.onFrame = onFrame
+            receiverAuto = auto; auto.start()
         }
         receiverWindow = win
         receiving = true
@@ -385,6 +399,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     @objc private func stopReceiving() {
         receiver?.stop(); receiver = nil
         receiverDirect?.close(); receiverDirect = nil
+        receiverAuto?.stop(); receiverAuto = nil
         receiverWindow = nil
         receiving = false
         rebuildMenu()
