@@ -20,6 +20,12 @@ final class RelayClient {
     /// Explicit pairHash (shared --secret/--pairhash) pinning the relay room for
     /// CLI-only tests; overrides the stored sender pairing.
     var pairHashOverride: String?
+    /// A **stable, user-set pairing code** (settings → 配对码). When non-empty the
+    /// sender registers under this fixed code every launch instead of a fresh
+    /// random one, so the peer never has to re-enter it. Cross-compatible with the
+    /// Windows build (both speak RELAY_REGISTER/JOIN `code`); when set it takes the
+    /// plain-code path (no pairHash auto-match).
+    var fixedCode: String?
 
     private var conn: Conn?
     private var relayParser = FrameParser()
@@ -57,8 +63,11 @@ final class RelayClient {
         relayParser = FrameParser()
         session = nil
 
-        let code = Self.generateCode()
-        let pairHash = pairHashOverride ?? PairStore.currentPairHash()   // non-nil → auto-match, no code
+        // A user-set stable code pins the room and wins over any stored pairHash,
+        // so it's the same every launch and the peer never re-enters it.
+        let usingFixed = !(fixedCode ?? "").isEmpty
+        let code = usingFixed ? fixedCode! : Self.generateCode()
+        let pairHash = usingFixed ? nil : (pairHashOverride ?? PairStore.currentPairHash())   // non-nil → auto-match, no code
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host),
                                            port: NWEndpoint.Port(rawValue: port)!)
         let nw = NWConnection(to: endpoint, using: Conn.tcpParameters())

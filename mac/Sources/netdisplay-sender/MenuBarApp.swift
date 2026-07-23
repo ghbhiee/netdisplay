@@ -12,6 +12,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var lastCode: String?
     private var appList: [String] = []
+    private var dialogGenTarget: GenCodeTarget?   // retains the 生成 button target during the settings modal
 
     // Receive mode (this Mac as a target screen) — the symmetric-app half.
     private var receiver: ReceiverRelayClient?       // relay receive
@@ -140,7 +141,8 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         // Connection — one consolidated settings dialog (方式 + 地址/中转/token).
         let modeName: String
         switch cfg.mode { case .auto: modeName = "自动"; case .direct: modeName = "直连"; case .relay: modeName = "中转" }
-        let connItem = NSMenuItem(title: "连接设置：\(modeName) …", action: #selector(editConnectionSettings), keyEquivalent: "")
+        let codeSuffix = (cfg.mode != .direct && !cfg.pairCode.isEmpty) ? " · 配对码 \(cfg.pairCode)" : ""
+        let connItem = NSMenuItem(title: "连接设置：\(modeName)\(codeSuffix) …", action: #selector(editConnectionSettings), keyEquivalent: "")
         connItem.target = self
         menu.addItem(connItem)
         menu.addItem(.separator())
@@ -250,27 +252,36 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         let W: CGFloat = 520
         let alert = NSAlert()
         alert.messageText = "连接设置"
-        alert.informativeText = "两端配一次即可。自动 = 并行试直连+中转、先通者胜；token 留空 = 不鉴权。"
+        alert.informativeText = "两端配一次即可，全部保存在本地、下次启动不用再填。\n配对码：两端填同一个（自定或点『生成』），投射端和接收端都用它，固定不变。token 留空=不鉴权。"
         func label(_ t: String, _ y: CGFloat) -> NSTextField {
             let l = NSTextField(labelWithString: t); l.frame = NSRect(x: 0, y: y, width: W, height: 18); return l
         }
-        func field(_ y: CGFloat, _ v: String, _ ph: String, mono: Bool = false) -> NSTextField {
-            let f = NSTextField(frame: NSRect(x: 0, y: y, width: W, height: 24))
+        func field(_ y: CGFloat, _ w: CGFloat, _ v: String, _ ph: String, mono: Bool = false) -> NSTextField {
+            let f = NSTextField(frame: NSRect(x: 0, y: y, width: w, height: 24))
             f.stringValue = v; f.placeholderString = ph
             if mono { f.font = .monospacedSystemFont(ofSize: 12, weight: .regular); f.cell?.wraps = false; f.cell?.isScrollable = true }
             return f
         }
-        let modePopup = NSPopUpButton(frame: NSRect(x: 0, y: 150, width: W, height: 26))
+        let modePopup = NSPopUpButton(frame: NSRect(x: 0, y: 234, width: W, height: 26))
         modePopup.addItems(withTitles: ["自动（推荐）", "直连（同网 / USB4）", "中转（跨网络）"])
         modePopup.selectItem(at: cfg.mode == .auto ? 0 : (cfg.mode == .direct ? 1 : 2))
-        let peer = field(100, cfg.peerHost, "对方地址（直连/自动用），如 10.77.0.2 或 192.168.x.x")
-        let server = field(50, cfg.relayServer, "15.tokencv.com:47700")
-        let token = field(0, cfg.relayToken, "中转 token（可 Cmd+V 粘贴，留空=不鉴权）", mono: true)
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: W, height: 200))
-        let views: [NSView] = [label("连接方式", 178), modePopup,
-                               label("对方地址（直连 / 自动）", 126), peer,
-                               label("中转服务器", 76), server,
-                               label("访问 token", 26), token]
+        // 配对码 + 生成按钮（同一行）
+        let pairField = field(184, W - 96, cfg.pairCode, "配对码，两端填同一个（如 8888）", mono: true)
+        let genBtn = NSButton(frame: NSRect(x: W - 88, y: 182, width: 88, height: 26))
+        genBtn.title = "生成"; genBtn.bezelStyle = .rounded
+        genBtn.setButtonType(.momentaryPushIn)
+        let gen = GenCodeTarget { pairField.stringValue = String(format: "%06d", Int.random(in: 100000...999999)) }
+        genBtn.target = gen; genBtn.action = #selector(GenCodeTarget.fire)
+        dialogGenTarget = gen   // keep the button's target alive for the modal's lifetime
+        let peer = field(130, W, cfg.peerHost, "对方地址（直连/自动用），如 10.77.0.2 或 192.168.x.x")
+        let server = field(76, W, cfg.relayServer, "15.tokencv.com:47700")
+        let token = field(6, W, cfg.relayToken, "中转 token（可 Cmd+V 粘贴，留空=不鉴权）", mono: true)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: W, height: 264))
+        let views: [NSView] = [label("连接方式", 262), modePopup,
+                               label("配对码（两端相同，保存本地、启动不变）", 208), pairField, genBtn,
+                               label("对方地址（直连 / 自动）", 156), peer,
+                               label("中转服务器", 100), server,
+                               label("访问 token", 30), token]
         views.forEach(box.addSubview)
         alert.accessoryView = box
         alert.addButton(withTitle: "保存")
@@ -281,6 +292,7 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
             let picked = modes[max(0, min(2, modePopup.indexOfSelectedItem))]
             mutate {
                 $0.mode = picked
+                $0.pairCode = pairField.stringValue.trimmingCharacters(in: .whitespaces)
                 $0.peerHost = peer.stringValue.trimmingCharacters(in: .whitespaces)
                 $0.relayServer = server.stringValue.trimmingCharacters(in: .whitespaces)
                 $0.relayToken = token.stringValue.trimmingCharacters(in: .whitespaces)
@@ -318,11 +330,13 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
             field.stringValue = cfg.peerHost
             field.placeholderString = "对方地址，如 10.77.0.2 或 192.168.x.x"
         case .relay:
-            alert.informativeText = "中转 \(cfg.relayServer)：输入发送端显示的 6 位配对码；已持久配对可留空。"
-            field.placeholderString = "6 位配对码（已配对可留空）"
+            alert.informativeText = "中转 \(cfg.relayServer)：与投射端填同一个配对码（已在设置里保存则自动带出，直接开始即可）。"
+            field.stringValue = cfg.pairCode          // saved code pre-filled → no re-typing
+            field.placeholderString = "配对码（和投射端相同）"
         case .auto:
-            alert.informativeText = "自动：并行试直连（对方地址=\(cfg.peerHost.isEmpty ? "未填，跳过直连" : cfg.peerHost)）与中转，先握手成功者胜。填中转配对码；已配对可留空。"
-            field.placeholderString = "6 位配对码（已配对可留空）"
+            alert.informativeText = "自动：并行试直连（对方地址=\(cfg.peerHost.isEmpty ? "未填，跳过直连" : cfg.peerHost)）与中转，先握手成功者胜。配对码和投射端相同（已保存则自动带出）。"
+            field.stringValue = cfg.pairCode          // saved code pre-filled → no re-typing
+            field.placeholderString = "配对码（和投射端相同）"
         }
         alert.accessoryView = field
         alert.addButton(withTitle: "开始接收")
@@ -333,6 +347,8 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         if cfg.mode == .direct {
             guard !input.isEmpty else { return }
             mutate { $0.peerHost = input }   // remember the peer address
+        } else if !input.isEmpty && input != cfg.pairCode {
+            mutate { $0.pairCode = input }   // remember the pairing code → no re-typing next time
         }
         startReceiving(code: cfg.mode == .direct ? "" : input)
     }
@@ -417,4 +433,11 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         controller.update(cfg)
         rebuildMenu()
     }
+}
+
+/// Tiny @objc target so an NSButton can run a Swift closure (the 生成 code button).
+final class GenCodeTarget: NSObject {
+    private let action: () -> Void
+    init(_ action: @escaping () -> Void) { self.action = action }
+    @objc func fire() { action() }
 }

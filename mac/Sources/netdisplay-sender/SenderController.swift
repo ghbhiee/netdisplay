@@ -29,6 +29,7 @@ struct AppConfig: Codable, Equatable {
     var mode: Mode = .relay
     var relayServer = "15.tokencv.com:47700"  // user-configurable in settings
     var relayToken = ""                        // public-relay auth token (set in settings)
+    var pairCode = ""          // stable pairing code (both ends set the same one); persisted, never regenerated
     var listenPort = 47800
     var peerHost = ""          // direct mode: the other machine's address (used when this Mac receives directly)
     // nil width/height = adopt the receiver's reported resolution.
@@ -98,6 +99,7 @@ final class SenderController {
                                 override: config.override, prioritizeQuality: config.quality,
                                 windowApp: config.windowApp, bitrateExplicit: !config.bitrateAuto,
                                 stage: config.stage)
+            r.fixedCode = config.pairCode.trimmingCharacters(in: .whitespaces)   // stable code from settings
             r.onState = { [weak self] st in self?.state = st }
             relay = r
             state = .connecting
@@ -135,6 +137,8 @@ final class SenderController {
 
         let connLevel = old.mode != newConfig.mode
             || old.relayServer != newConfig.relayServer
+            || old.relayToken != newConfig.relayToken
+            || old.pairCode != newConfig.pairCode
             || old.listenPort != newConfig.listenPort
             || old.bitrateMbps != newConfig.bitrateMbps
             || old.bitrateAuto != newConfig.bitrateAuto
