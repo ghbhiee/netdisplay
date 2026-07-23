@@ -10,6 +10,7 @@ tags: [netdisplay, handoff, protocol, spec]
 >
 > Changelog:
 > - 2026-07-21 v1 初版（Windows 端 Claude 起草）
+> - 2026-07-22 v1.9 **HELLO 增加可选 `lanAddrs` + 连接升级（§3.5）**：配合 UX 重做（transport 是程序探测的**状态**、不是用户选的「直连/中转」，见 docs/10-ux-model.md 与 20-design-handoff.md）。两端 HELLO 互告各自局域网可直连地址（含 :47800 监听口）；即便走中转连上，也在后台试直连、握手成功则无感切过去。**升级只在「待命」时做、投射中不切链路**（MVP）。**判据是收到对端 HELLO/HELLO_ACK，不是 TCP connect 成功**（TUN 代理会骗）。老端忽略 `lanAddrs`，天然兼容。（Mac 端 Claude，承接 Windows #88 提案，两端已定 A）
 > - 2026-07-22 v1.1 HELLO_ACK.display 增加**可选 `scale` 字段**（HiDPI 因子）；明确 **Sender 可覆盖 Receiver 请求的分辨率/缩放**，Receiver 一律以 HELLO_ACK.display 为唯一权威尺寸。向后兼容（老 Receiver 忽略 scale 即可）。（Mac 端 Claude）
 > - 2026-07-22 v1.2 HELLO.screen 增加**可选 `bitrateMbps` 字段**（Receiver 期望码率，Mbps 整数）：Sender 可采纳、可用 `--bitrate` 覆盖、也可忽略（老 Sender 的 JSON 解码会跳过未知字段，天然兼容）。用途：Receiver 设置界面里让用户调码率，重连生效。（Windows 端 Claude）
 > - 2026-07-22 v1.3 **codec 协商**（Receiver 端已实现，Sender 待实装，未实装时行为不变）：Receiver HELLO 增加可选顶层 **`codecs`** 数组——按偏好排序的解码能力，取值 `"hevc444"`（HEVC Rext Main 4:4:4）/`"hevc"`（HEVC Main 4:2:0）/`"h264"`。Sender 从中挑选并在 HELLO_ACK 的 `codec` 字段返回（原值 `"h264"` 扩展为可回 `"hevc"`/`"hevc444"`）；VIDEO_FRAME 载荷格式不变（HEVC 同样 Annex-B，关键帧内联 VPS/SPS/PPS）。VIDEO_CONFIG 的 `codec` 同步扩展。老 Sender 忽略 `codecs` 回 `"h264"`，天然兼容。依据：Windows 端实测硬解支持 HEVC Rext 4:4:4（见 91）。（Windows 端 Claude）
@@ -115,6 +116,8 @@ Sender → Receiver 的 HELLO：
 }
 ```
 
+- `lanAddrs`（可选，v1.9，**双向**都可带）：本机在局域网可被直连到的地址数组，如 `["192.168.1.20:47800","[fe80::1]:47800"]`（含直连监听端口）。用途：见 §3.5「连接升级」——即便当前这条 HELLO 是走**中转**连上的，两端也借此互告各自的内网地址，好在后台悄悄试**直连**。老端忽略此字段（§0 容忍规则），天然兼容。**不含任何隐私敏感信息，只是内网 IP。**
+
 ### 3.4 HELLO_ACK（0x02）
 
 ```json
@@ -135,6 +138,16 @@ Sender → Receiver 的 HELLO：
 - `accepted: false` 时附 `"reason"`，随后 Sender 发 BYE 断开。
 
 > **给 Receiver 的分辨率/缩放控制**：想让用户在 Windows 端自选，可在 HELLO 的 `screen` 里发期望的 `width/height/scale`（Sender 默认按此建屏）；Sender 若带了 `--width/--height/--scale` 覆盖参数则以 Sender 为准，最终尺寸都在 HELLO_ACK.display 里回给你。
+
+### 3.5 连接升级（中转 → 直连，v1.9）——transport 是状态不是用户选项
+
+配套 UX 决策（docs/10-ux-model.md）：**用户永远只交换配对码，不选也不填「直连/中转」**；走哪条路由 app 探测决定、只做展示（「已连接·直连·3ms」/「已连接·中转·310ms」）。协议侧机制：
+
+1. **先中转连上**（一定通），完成 HELLO/HELLO_ACK。两端 HELLO 里都带上 `lanAddrs`（§3.3）。
+2. **后台试直连**：拿到对端 `lanAddrs` 后，在**不影响当前中转会话**的前提下，另起 socket 去 `dial` 对端每个 `lanAddrs`，成功 `connect` 后**必须收到对端的 HELLO/HELLO_ACK 才算这条路真通**——⚠️ 只凭 TCP `connect` 成功会被代理骗（Clash/Mihomo **TUN 透明代理**下连不可达地址也返回成功；这是两端实测的坑）。
+3. **无感切换**：直连握手成功 → 把媒体流切到直连、拆掉中转的转发；失败/超时（~1.5s）→ 保持中转，不打扰用户。
+4. **只在「待命」时升级，投射中不切链路**（MVP，两端一致）：待命阶段就已升级到直连，等到真正投射时已经在直连上，避免中途切换丢帧。UI 上直连/中转 + 延迟只作**状态展示**。
+5. **强制中转**：高级设置里的开关，置位则跳过第 2~3 步、恒走中转（企业网禁 P2P 兜底）。
 
 ## 4. VIDEO_FRAME（0x10）payload 格式
 
