@@ -425,6 +425,36 @@ case "paircode-selftest":
     Log.info("paircode-selftest \(ok ? "PASS" : "FAIL")")
     exit(ok ? 0 : 1)
 
+case "panel-demo":
+    // Render the redesigned main panel with sample state for visual QA.
+    let m = AppModel()
+    m.devices = [
+        PairedDevice(deviceId: "peer-win", secret: "demo-secret-1", name: "LEGION-Y7000P"),
+        PairedDevice(deviceId: "pending:abc", secret: "demo-secret-2", name: "", alias: nil),
+    ]
+    m.selectedSecret = "demo-secret-1"
+    NSApplication.shared.setActivationPolicy(.regular)
+    let panel = MainPanelWindow(model: m)
+    panel.appList = ["Safari", "Xcode", "Terminal"]
+    if let dark = args.flags["theme"], dark == "dark" { Theme.override = .darkAqua }
+    panel.show()
+    if let shot = args.flags["screenshot"] {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+            if let win = NSApp.windows.first(where: { $0.isVisible }) {
+                let wid = CGWindowID(win.windowNumber)
+                if let cg = CGWindowListCreateImage(.null, .optionIncludingWindow, wid, [.boundsIgnoreFraming, .bestResolution]) {
+                    let rep = NSBitmapImageRep(cgImage: cg)
+                    if let png = rep.representation(using: .png, properties: [:]) {
+                        try? png.write(to: URL(fileURLWithPath: shot))
+                        Log.info("panel screenshot → \(shot) (\(cg.width)x\(cg.height))")
+                    }
+                }
+            }
+            exit(0)
+        }
+    }
+    NSApplication.shared.run()
+
 case "appmodel-selftest":
     // Exercise the presentation state machine transitions + mutual exclusion.
     var mok = true
