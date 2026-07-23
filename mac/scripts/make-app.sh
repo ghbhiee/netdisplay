@@ -5,14 +5,19 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CONFIG="${1:-release}"
-echo "Building NetDisplay ($CONFIG)…"
-swift build -c "$CONFIG"
+if [ "$CONFIG" = "release" ]; then
+  echo "Building NetDisplay (release, universal arm64+x86_64)…"
+  swift build -c release --arch arm64 --arch x86_64
+  BIN=".build/apple/Products/Release/netdisplay-sender"   # fat binary
+else
+  echo "Building NetDisplay ($CONFIG)…"
+  swift build -c "$CONFIG"
+  BIN=".build/$CONFIG/netdisplay-sender"
+fi
 
 APP_DIR="build/NetDisplay.app"
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
-
-BIN=".build/$CONFIG/netdisplay-sender"
 [ -f "$BIN" ] || { echo "Binary not found at $BIN"; exit 1; }
 cp "$BIN" "$APP_DIR/Contents/MacOS/netdisplay-sender"
 cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"

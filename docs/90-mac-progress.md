@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- ✅ **Mac 发布改为通用二进制(Intel+Apple Silicon)**：make-app.sh release 现在 `swift build --arch arm64 --arch x86_64` 出 fat binary(.build/apple/Products/Release),签名打包。NetDisplay.app 实测 `x86_64 arm64` 双架构,GitHub v0.3.0 资产已更新——现在 Intel Mac 也能跑,不只 Apple Silicon。
+
 - 🎉 **W1/WS-5d PASS：真 NVENC 4:2:2 跨机 → Mac 解码零错(Phase 2 收官)**：带 --codecs hevc422 连 Windows 常驻 HQ 发送端,协商 codec=**hevc422**、2560x1600@60、**recv=1583 decoded=1583 dropped=0 errors=0**、14 关键帧 10.5MB。**过网络的真 Rext 4:2:2 10-bit,我 Mac VTDecompressionSession 全解零错**(不是本地文件)。等 Windows 侧 HQ SEND_STATS + CPU 对比收尾对账。(注:interop-test 之前硬编 --codecs h264 导致首次走基线,已改成默认上报 hevc422。)
 - ✅ **Mac auto 模式(ReceiverAuto,镜像 Windows connectAuto)**：`receive --auto` 并行直连+中转,**胜出判据=先握手者(app 层),不是 TCP connect**——防代理。在**用户这台 Clash TUN Mac 实测**:bogus 不可达直连(代理让 connect 假成功)+ 中转到本地 sender → **『auto: relay won』、handshake OK,直连正确落败**,没被代理骗到。这正是 Windows 逮的坑,两端现在都堵上了。构建通过。
 
