@@ -40,8 +40,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "NetDisplay")
 
         panel = MainPanelWindow(model: model)
+        panel.config = config
         panel.onAddDevice = { [weak self] in self?.addDevice() }
         panel.onRelaySettings = { [weak self] in self?.editRelaySettings() }
+        panel.onConfigChange = { [weak self] cfg in
+            self?.config = cfg
+            self?.sender.update(cfg)   // persists + applies live if streaming
+        }
 
         tray = TrayMenu(model: model)
         tray.onAddDevice = { [weak self] in self?.addDevice() }

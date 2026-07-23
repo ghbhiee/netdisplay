@@ -8,7 +8,11 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     private var onCastTab = true
     private var qualityOpen = false
+    private var chipTargets: [GenCodeTarget] = []   // retains quality-chip closure targets per rebuild
     var appList: [String] = []
+    /// Receiver-side quality config (画质设置); AppController binds + persists it.
+    var config = AppConfig()
+    var onConfigChange: ((AppConfig) -> Void)?
     /// Live relay health, shown on the 中转设置 button (set by AppController).
     var relayStatus: RelayHealth.Status = .unknown { didSet { DispatchQueue.main.async { [weak self] in self?.rebuild() } } }
     /// Called when the user asks to pair a new device (＋ 添加设备).
@@ -31,6 +35,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
                              backing: .buffered, defer: false)
             w.title = "NetDisplay"          // name lives in the native title bar now
             w.titleVisibility = .visible
+            w.titlebarAppearsTransparent = true   // blend the titlebar into the panel (no dark two-tone seam)
             w.isReleasedWhenClosed = false
             w.delegate = self
             w.backgroundColor = Theme.panel
@@ -46,6 +51,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
 
     private func rebuild() {
         guard let window else { return }
+        chipTargets.removeAll()
         let root = FlippedView()
         root.wantsLayer = true
         root.layer?.backgroundColor = Theme.panel.cgColor
@@ -296,10 +302,24 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let col = UI.vstack([head], spacing: 0)
         if qualityOpen {
             let opts = UI.vstack([
-                qualityGroup("分辨率", ["跟随对方", "1920×1080", "2560×1440"]),
-                qualityGroup("缩放", ["100%", "150%", "200%"]),
-                qualityGroup("帧率", ["30 fps", "60 fps"]),
-                qualityGroup("码率", ["自动", "10 Mbps", "20 Mbps"]),
+                qualityGroup("分辨率", [
+                    QOpt("跟随对方", config.width == nil) { self.mutateConfig { $0.width = nil; $0.height = nil } },
+                    QOpt("1920×1080", config.width == 1920) { self.mutateConfig { $0.width = 1920; $0.height = 1080 } },
+                    QOpt("2560×1440", config.width == 2560) { self.mutateConfig { $0.width = 2560; $0.height = 1440 } },
+                ]),
+                qualityGroup("缩放", [
+                    QOpt("100%", config.scale == 1) { self.mutateConfig { $0.scale = 1 } },
+                    QOpt("200%", config.scale == 2) { self.mutateConfig { $0.scale = 2 } },
+                ]),
+                qualityGroup("帧率", [
+                    QOpt("30 fps", config.fps == 30) { self.mutateConfig { $0.fps = 30 } },
+                    QOpt("60 fps", config.fps == 60) { self.mutateConfig { $0.fps = 60 } },
+                ]),
+                qualityGroup("码率", [
+                    QOpt("自动", config.bitrateAuto) { self.mutateConfig { $0.bitrateAuto = true } },
+                    QOpt("10 Mbps", !config.bitrateAuto && config.bitrateMbps == 10) { self.mutateConfig { $0.bitrateAuto = false; $0.bitrateMbps = 10 } },
+                    QOpt("20 Mbps", !config.bitrateAuto && config.bitrateMbps == 20) { self.mutateConfig { $0.bitrateAuto = false; $0.bitrateMbps = 20 } },
+                ]),
             ], spacing: 12)
             let pad = wrapPadded(opts, x: 12, y: 12, topLine: true)
             col.addArrangedSubview(pad)
@@ -308,22 +328,39 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         return fullWidthView(box)
     }
 
-    private func qualityGroup(_ label: String, _ options: [String]) -> NSView {
+    /// One quality chip binding: title, whether it's the current value, and how to apply it.
+    private struct QOpt {
+        let title: String; let selected: Bool; let apply: () -> Void
+        init(_ title: String, _ selected: Bool, _ apply: @escaping () -> Void) {
+            self.title = title; self.selected = selected; self.apply = apply
+        }
+    }
+
+    private func qualityGroup(_ label: String, _ options: [QOpt]) -> NSView {
         let lbl = UI.label(label, size: 12, color: Theme.sub)
         lbl.translatesAutoresizingMaskIntoConstraints = false
         lbl.widthAnchor.constraint(equalToConstant: 52).isActive = true
         var chips: [NSView] = []
         for o in options {
-            let sel = o == options.first   // placeholder selection until wired to config
-            let c = UI.button(o, fill: sel ? Theme.recvWeak : .clear, textColor: sel ? Theme.recv : Theme.sub,
-                              border: sel ? Theme.recv : Theme.line, radius: 6, size: 12, weight: .regular,
-                              target: self, action: #selector(noop))
+            let t = GenCodeTarget(o.apply)
+            chipTargets.append(t)   // retain for the rebuild's lifetime
+            let c = UI.button(o.title, fill: o.selected ? Theme.recvWeak : .clear,
+                              textColor: o.selected ? Theme.recv : Theme.sub,
+                              border: o.selected ? Theme.recv : Theme.line, radius: 6, size: 12, weight: .regular,
+                              target: t, action: #selector(GenCodeTarget.fire))
             c.translatesAutoresizingMaskIntoConstraints = false
             c.heightAnchor.constraint(equalToConstant: 24).isActive = true
             chips.append(c)
         }
         let chipRow = UI.hstack(chips, spacing: 6)
         return UI.hstack([lbl, chipRow], spacing: 10, align: .centerY)
+    }
+
+    /// Edit the receiver-quality config, persist via the binding, and re-render.
+    private func mutateConfig(_ change: (inout AppConfig) -> Void) {
+        change(&config)
+        onConfigChange?(config)
+        rebuild()
     }
 
     // MARK: - Paired devices
@@ -479,7 +516,6 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         Theme.override = dark ? .aqua : .darkAqua
         rebuild()
     }
-    @objc private func noop() {}
 
     func windowWillClose(_ notification: Notification) {}
 }
