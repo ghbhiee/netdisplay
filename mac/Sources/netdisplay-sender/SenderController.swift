@@ -24,7 +24,7 @@ enum SenderState {
 
 /// User-adjustable configuration, persisted to UserDefaults.
 struct AppConfig: Codable, Equatable {
-    enum Mode: String, Codable { case relay, direct }
+    enum Mode: String, Codable { case auto, relay, direct }
 
     var mode: Mode = .relay
     var relayServer = "15.tokencv.com:47700"  // user-configurable in settings
@@ -86,7 +86,9 @@ final class SenderController {
         running = true
         let bitrate = config.bitrateMbps * 1_000_000
         switch config.mode {
-        case .relay:
+        case .relay, .auto:
+            // Sender side: auto currently registers on the relay (works everywhere).
+            // Full auto (A 位同时 listen+register，待命常驻) is task #25 (Option-A 编排).
             let parts = config.relayServer.split(separator: ":")
             let host = String(parts.first ?? "15.tokencv.com")
             let port = UInt16(parts.count > 1 ? Int(parts[1]) ?? 47700 : 47700)

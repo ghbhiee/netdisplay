@@ -128,16 +128,12 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
         }
         menu.addItem(.separator())
 
-        // Mode
-        menu.addItem(sectionHeader("模式"))
-        menu.addItem(choice("中转（relay，跨网络）", checked: cfg.mode == .relay, action: #selector(setModeRelay)))
-        menu.addItem(choice("直连（direct，USB4/局域网）", checked: cfg.mode == .direct, action: #selector(setModeDirect)))
-        if cfg.mode == .relay {
-            let rs = NSMenuItem(title: "中转设置：\(cfg.relayServer)" + (cfg.relayToken.isEmpty ? "（无 token）" : "（有 token）") + " …",
-                                action: #selector(editRelaySettings), keyEquivalent: "")
-            rs.target = self
-            menu.addItem(rs)
-        }
+        // Connection — one consolidated settings dialog (方式 + 地址/中转/token).
+        let modeName: String
+        switch cfg.mode { case .auto: modeName = "自动"; case .direct: modeName = "直连"; case .relay: modeName = "中转" }
+        let connItem = NSMenuItem(title: "连接设置：\(modeName) …", action: #selector(editConnectionSettings), keyEquivalent: "")
+        connItem.target = self
+        menu.addItem(connItem)
         menu.addItem(.separator())
 
         // Scale
@@ -238,34 +234,48 @@ final class MenuBarApp: NSObject, NSApplicationDelegate {
     }
     @objc private func refreshApps() { refreshAppList() }
     @objc private func toggleStage() { mutate { $0.stage.toggle() } }
-    @objc private func editRelaySettings() {
-        let alert = NSAlert()
-        alert.messageText = "中转服务器设置"
-        alert.informativeText = "两端填同一个即可。token 留空 = 不鉴权。"
+    /// One consolidated connection settings dialog (对齐 10-ux-model)：连接方式(自动/直连/中转)
+    /// + 对方地址(直连/自动) + 中转服务器 + token。发送和接收共用这一处。
+    @objc private func editConnectionSettings() {
+        let cfg = controller.config
         let W: CGFloat = 520
-        let serverLabel = NSTextField(labelWithString: "中转地址（host:port）")
-        serverLabel.frame = NSRect(x: 0, y: 86, width: W, height: 18)
-        let server = NSTextField(frame: NSRect(x: 0, y: 62, width: W, height: 24))
-        server.stringValue = controller.config.relayServer
-        server.placeholderString = "15.tokencv.com:47700"
-        let tokenLabel = NSTextField(labelWithString: "访问 token（可 Cmd+V 粘贴，字段够宽能看全）")
-        tokenLabel.frame = NSRect(x: 0, y: 26, width: W, height: 18)
-        let token = NSTextField(frame: NSRect(x: 0, y: 0, width: W, height: 24))
-        token.stringValue = controller.config.relayToken
-        token.placeholderString = "粘贴 token（48 位十六进制）"
-        token.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        token.cell?.wraps = false
-        token.cell?.isScrollable = true       // no length cap; long token scrolls within the field
-        let box = NSView(frame: NSRect(x: 0, y: 0, width: W, height: 110))
-        box.addSubview(serverLabel); box.addSubview(server)
-        box.addSubview(tokenLabel); box.addSubview(token)
+        let alert = NSAlert()
+        alert.messageText = "连接设置"
+        alert.informativeText = "两端配一次即可。自动 = 并行试直连+中转、先通者胜；token 留空 = 不鉴权。"
+        func label(_ t: String, _ y: CGFloat) -> NSTextField {
+            let l = NSTextField(labelWithString: t); l.frame = NSRect(x: 0, y: y, width: W, height: 18); return l
+        }
+        func field(_ y: CGFloat, _ v: String, _ ph: String, mono: Bool = false) -> NSTextField {
+            let f = NSTextField(frame: NSRect(x: 0, y: y, width: W, height: 24))
+            f.stringValue = v; f.placeholderString = ph
+            if mono { f.font = .monospacedSystemFont(ofSize: 12, weight: .regular); f.cell?.wraps = false; f.cell?.isScrollable = true }
+            return f
+        }
+        let modePopup = NSPopUpButton(frame: NSRect(x: 0, y: 150, width: W, height: 26))
+        modePopup.addItems(withTitles: ["自动（推荐）", "直连（同网 / USB4）", "中转（跨网络）"])
+        modePopup.selectItem(at: cfg.mode == .auto ? 0 : (cfg.mode == .direct ? 1 : 2))
+        let peer = field(100, cfg.peerHost, "对方地址（直连/自动用），如 10.77.0.2 或 192.168.x.x")
+        let server = field(50, cfg.relayServer, "15.tokencv.com:47700")
+        let token = field(0, cfg.relayToken, "中转 token（可 Cmd+V 粘贴，留空=不鉴权）", mono: true)
+        let box = NSView(frame: NSRect(x: 0, y: 0, width: W, height: 200))
+        let views: [NSView] = [label("连接方式", 178), modePopup,
+                               label("对方地址（直连 / 自动）", 126), peer,
+                               label("中转服务器", 76), server,
+                               label("访问 token", 26), token]
+        views.forEach(box.addSubview)
         alert.accessoryView = box
         alert.addButton(withTitle: "保存")
         alert.addButton(withTitle: "取消")
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            mutate { $0.relayServer = server.stringValue.trimmingCharacters(in: .whitespaces)
-                     $0.relayToken = token.stringValue.trimmingCharacters(in: .whitespaces) }
+            let modes: [AppConfig.Mode] = [.auto, .direct, .relay]
+            let picked = modes[max(0, min(2, modePopup.indexOfSelectedItem))]
+            mutate {
+                $0.mode = picked
+                $0.peerHost = peer.stringValue.trimmingCharacters(in: .whitespaces)
+                $0.relayServer = server.stringValue.trimmingCharacters(in: .whitespaces)
+                $0.relayToken = token.stringValue.trimmingCharacters(in: .whitespaces)
+            }
         }
     }
     @objc private func setModeRelay() { mutate { $0.mode = .relay } }
