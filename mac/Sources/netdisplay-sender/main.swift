@@ -417,6 +417,12 @@ case "role-selftest":
     Log.info("role-selftest \(rok && persistOK ? "PASS" : "FAIL") (persist=\(persistOK))")
     exit(rok && persistOK ? 0 : 1)
 
+case "paircode-selftest":
+    // Verify §3.7 pairing-code→room derivation is byte-identical to Windows.
+    let ok = PairCode.selftest()
+    Log.info("paircode-selftest \(ok ? "PASS" : "FAIL")")
+    exit(ok ? 0 : 1)
+
 case "decode-file":
     // Feed a raw Annex-B file's access units to the Decoder — verifies decoding
     // of genuine streams (e.g. real Rext 4:2:2 10-bit from ffmpeg). Splits AUs on
