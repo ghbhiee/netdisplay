@@ -152,15 +152,20 @@ function lanCandidates() {
   for (const [name, addrs] of Object.entries(nets)) {
     for (const a of addrs || []) {
       if (a.family !== "IPv4" || a.internal) continue;
-      const virt = /vEthernet|VMware|VirtualBox|Loopback|Hyper-V|Mihomo|TAP|Clash|WSL/i.test(name);
-      cands.push({ ip: a.address, virt });
+      const virt = /vEthernet|VMware|VirtualBox|Loopback|Hyper-V|Mihomo|TAP|Clash|WSL|Tailscale|ZeroTier/i.test(name);
+      cands.push({ ip: a.address, virt, name });
     }
   }
   cands.sort((x, y) => x.virt - y.virt);
   return cands;
 }
 const lanIp = () => (lanCandidates()[0] || {}).ip || null;
-const lanAddrs = (port = 47800) => lanCandidates().map((c) => `${c.ip}:${port}`);
+
+// 只对外公布**真实网卡**的地址。虚拟网卡（Mihomo/Clash 的 TUN、VMware、WSL…）
+// 的地址对端根本路由不到；而且实测本机自连时它会被选中，流量绕回代理，
+// 「升级到直连」后 RTT 仍是 293ms——等于白升级。宁可不公布也不要公布假的。
+const lanAddrs = (port = 47800) =>
+  lanCandidates().filter((c) => !c.virt).map((c) => `${c.ip}:${port}`);
 
 ipcMain.handle("config", () => {
   const d = screen.getPrimaryDisplay();

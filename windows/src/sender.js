@@ -545,6 +545,19 @@ function attachReceiverHandler(sock, relayMode) {
     const parser = new FrameParser(async (type, payload) => {
       switch (type) {
         case T.HELLO: {
+          // 同一条连接上重复收到 HELLO 不能再起一个会话——会造成多个会话并存、
+          // 帧发到没人收的那条上（连接升级时实测出现三个会话）。
+          if (active && active.sock === sock) {
+            dbg("忽略重复 HELLO（该连接已有会话）");
+            break;
+          }
+          // 换了一条连接才顶替：此刻对端确实要用这条了（HELLO 是它的意图声明），
+          // 比「一连上就顶替」安全——探测连接不会误杀正在用的会话。
+          if (active) {
+            dbg("新连接发来 HELLO，顶替旧会话（多为中转→直连升级）");
+            try { active.stop(); } catch {}
+            active = null;
+          }
           const hello = JSON.parse(payload.toString());
           if (hello.version !== 1) {
             sock.write(buildFrame(T.BYE, { reason: "version mismatch" }));
@@ -598,17 +611,10 @@ function attachReceiverHandler(sock, relayMode) {
 async function startSender(statusCb) {
   if (server) return;
   onStatus = statusCb || (() => {});
-  server = net.createServer((sock) => {
-    // v1.9 连接升级：对端从中转切直连时会带着新 socket 连过来，此时旧的中转会话
-    // 还占着 active。这种情况必须**让新连接顶替**，不能当并发拒绝——否则升级
-    // 永远握手不成功，表现为「切过去了但没画面」。
-    if (active) {
-      dbg("已有会话，新连接顶替（多为中转→直连升级）");
-      try { active.stop(); } catch {}
-      active = null;
-    }
-    attachReceiverHandler(sock, false);
-  });
+  // 顶替旧会话的时机放在收到 HELLO 之后（见 attachReceiverHandler），不能放在这里：
+  // 连接升级时对端只是**探测**，一连上就杀掉中转会话的话，对端还没切过来就先断了，
+  // 表现为「升级成功但 recv=0」。
+  server = net.createServer((sock) => attachReceiverHandler(sock, false));
   server.listen(47800, () => onStatus("发送端就绪：监听 :47800，等待 Receiver 连入"));
   server.on("error", (e) => { onStatus("监听失败: " + e.message); server = null; });
 }

@@ -50,6 +50,8 @@
     #overlay { position: fixed; top: 10px; right: 12px; display: none; z-index: 10;
       background: rgba(0,0,0,.6); border-radius: 4px; padding: 5px 9px;
       font: 11px/1.5 Consolas, monospace; color: #7ee787; pointer-events: none; }
+    #hint { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+      display: none; z-index: 10; font-size: 11px; color: rgba(255,255,255,.35); }
 
     /* ---------- 主面板 ---------- */
     #panel { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 20; }
@@ -263,6 +265,7 @@
   </div>
   <div id="srcLabel"></div>
   <div id="overlay"></div>
+  <div id="hint">长按 Esc 断开 · F1 统计 · F2 设置</div>
 
   <script src="renderer.js"></script>
 </body>

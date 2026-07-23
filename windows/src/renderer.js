@@ -432,7 +432,7 @@ function tryUpgradeToDirect(peerLanAddrs) {
   const probes = [];
   let done = false;
 
-  const finish = (winner, addr) => {
+  const finish = (winner, addr, seenFrames) => {
     if (done) { winner && winner.destroy(); return; }
     done = true;
     for (const p of probes) if (p !== winner) p.destroy();
@@ -448,10 +448,17 @@ function tryUpgradeToDirect(peerLanAddrs) {
     manualDisconnect = false;
     sock = winner;
     wireSocket();
-    // 探测时只发了 HELLO 就停下等应答，会话状态（HELLO_ACK/尺寸/codec）还没建立。
-    // 切过来后必须让对端重走一遍握手，否则新链路上永远等不到 HELLO_ACK，视频起不来。
-    upgradeHandshakePending = true;
-    sock.write(buildFrame(T.HELLO, helloPayload()));
+    // 探测发的 HELLO 已经让对端建好了会话，HELLO_ACK 也已经在探测期收到了。
+    // **不能再发一次 HELLO** —— 对端会当成新连接再起一个会话，实测出现三个会话
+    // 并存、帧发到没人收的那条上，表现为「升级成功但 recv=0」。
+    // 正确做法是把探测期读到的帧回放给正式解析器（同 connectAuto 的处理）。
+    const replay = seenFrames || [];
+    console.log(`[recv] 回放探测期收到的 ${replay.length} 帧: ` +
+      replay.map(([t]) => "0x" + t.toString(16)).join(","));
+    for (const [t, p] of replay) {
+      try { onFrame(t, p); } catch (e) { console.log("[recv] 回放出错: " + e.message); }
+    }
+    console.log(`[recv] 回放后 display=${display ? display.width + "x" + display.height : "null"}`);
     setStatus(`已连接 · 直连 ${addr.split(":")[0]}`);
   };
 
@@ -466,10 +473,13 @@ function tryUpgradeToDirect(peerLanAddrs) {
       // 不存在的地址 connect 也会成功（实测 10.99.99.99）。必须等对端按协议应答。
       s.write(buildFrame(T.HELLO, helloPayload()));
     });
-    const p = new FrameParser((t) => {
-      if (t === T.HELLO || t === T.HELLO_ACK) {
+    const seen = [];
+    const p = new FrameParser((t, pl) => {
+      seen.push([t, Buffer.from(pl)]); // 全部留存，胜出后回放，避免丢掉 HELLO_ACK
+      // 等 HELLO_ACK 而不是 HELLO：只有它才代表对端已建好会话、带着尺寸和 codec。
+      if (t === T.HELLO_ACK) {
         s.removeAllListeners("data");
-        finish(s, addr);
+        finish(s, addr, seen);
       }
     });
     s.on("data", (d) => { try { p.feed(d); } catch { s.destroy(); } });
