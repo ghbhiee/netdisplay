@@ -9,6 +9,8 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🔧 **#26 关窗停接收(done) + #25 选项A 角色判定基础(进行中)**：#26 ReceiverWindow 作 NSWindowDelegate,关窗 onClose→stopReceiving(不再空跑)。#25 第一步:`PairRole.decide(deviceId 字节序,小者=A位 listen/register、大者=B位 dial/join)` + `PeerStore` 持久化对端 deviceId(断线可重算默认角色,防死锁)。role-selftest PASS(两端角色恒相反、smaller=A、持久化 roundtrip)。#25 剩余(下增量):待命常驻连接生命周期(A位 hold listen/register+PROJECTION_STATE{active:false}、B位 dial/join+重连、换方向重建、断线回默认)。
+
 - ✅ **#23 主控制收敛 + #24 GUI 接入 auto**：#23 菜单顶部改成角色态(◀接收中/▶投射中:源→对方/○待命)+『投射本机 ▸(源+开始/停止收进一个子菜单)』+『接收投射』,不再散落。#24 GUI 接收按连接方式分流,mode=自动时用 ReceiverAuto 并行直连+中转、以协议应答判胜(防 Clash TUN 假连接);直连/中转各自路径不变。均构建通过、App 启动无崩溃。
 
 - ✅ **#22 Mac 菜单栏「连接设置」面板(统一 UI 第一步)**：把散落的『模式(中转/直连)』『中转设置』合并成**一个「连接设置…」对话框**——连接方式(自动/直连/中转)下拉 + 对方地址(直连/自动用) + 中转服务器 + token(等宽可粘)。AppConfig.Mode 加 `.auto`(发送端暂按 relay 注册,完整 A位 listen+register 待 #25)。构建通过、App 启动无崩溃。对齐 10-ux-model『连接方式只设一处、收发共用』。

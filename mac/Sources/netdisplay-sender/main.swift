@@ -400,6 +400,23 @@ case "decode-selftest":
     }
     dispatchMain()
 
+case "role-selftest":
+    // Verify Option-A role decision is deterministic: both sides get opposite
+    // roles, and the smaller deviceId is A. Plus a PeerStore persistence roundtrip.
+    var rok = true
+    for (x, y) in [("aaaa", "bbbb"), ("dev-0001", "dev-0002"), ("ffff", "0000"), (devId, "z-" + devId)] {
+        let rx = PairRole.decide(myDeviceId: x, peerDeviceId: y)
+        let ry = PairRole.decide(myDeviceId: y, peerDeviceId: x)
+        let opposite = rx != ry
+        let smallerIsA = (rx == .a) == Array(x.utf8).lexicographicallyPrecedes(Array(y.utf8))
+        Log.info("role: \(x) vs \(y) → self=\(rx.rawValue) peer=\(ry.rawValue) opposite=\(opposite) smallerIsA=\(smallerIsA)")
+        if !opposite || !smallerIsA { rok = false }
+    }
+    PeerStore.save("test-peer-id", slot: "roletest")
+    let persistOK = PeerStore.load(slot: "roletest") == "test-peer-id"
+    Log.info("role-selftest \(rok && persistOK ? "PASS" : "FAIL") (persist=\(persistOK))")
+    exit(rok && persistOK ? 0 : 1)
+
 case "decode-file":
     // Feed a raw Annex-B file's access units to the Decoder — verifies decoding
     // of genuine streams (e.g. real Rext 4:2:2 10-bit from ffmpeg). Splits AUs on
