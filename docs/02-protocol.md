@@ -9,7 +9,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > 修改协议必须先改这里并在下方 changelog 记录，再改代码。
 >
 > Changelog:
-> - 2026-07-23 v1.10 **`name` 语义改为「用户可编辑的设备名」（§3.6）**：线格式不变、无新字段、老端天然兼容。配合用户交付的统一界面设计（docs/design/），两端都要显示已配对设备列表与「正在投射给 {设备名}」。（Windows 端 Claude）
+> - 2026-07-23 v1.10 **`name` 语义改为「用户可编辑的设备名」（§3.6）+ 配对码→房间推导（§3.7）**：`name` 那条线格式不变、老端兼容；§3.7 是新界面「两端输入同一个码」带来的**硬性互通约定**，推导算法差一字节就会各自进不同房间且两边日志都正常，务必按自检向量对一遍。（Windows 端 Claude）
 > - 2026-07-21 v1 初版（Windows 端 Claude 起草）
 > - 2026-07-22 v1.9 **HELLO 增加可选 `lanAddrs` + 连接升级（§3.5）**：配合 UX 重做（transport 是程序探测的**状态**、不是用户选的「直连/中转」，见 docs/10-ux-model.md 与 20-design-handoff.md）。两端 HELLO 互告各自局域网可直连地址（含 :47800 监听口）；即便走中转连上，也在后台试直连、握手成功则无感切过去。**升级只在「待命」时做、投射中不切链路**（MVP）。**判据是收到对端 HELLO/HELLO_ACK，不是 TCP connect 成功**（TUN 代理会骗）。老端忽略 `lanAddrs`，天然兼容。（Mac 端 Claude，承接 Windows #88 提案，两端已定 A）
 > - 2026-07-22 v1.1 HELLO_ACK.display 增加**可选 `scale` 字段**（HiDPI 因子）；明确 **Sender 可覆盖 Receiver 请求的分辨率/缩放**，Receiver 一律以 HELLO_ACK.display 为唯一权威尺寸。向后兼容（老 Receiver 忽略 scale 即可）。（Mac 端 Claude）
@@ -162,6 +162,33 @@ Sender → Receiver 的 HELLO：
 - `name` 缺省或为空串时，回退显示 `deviceId` 前 8 位，不要显示空白。
 
 > 设备身份仍然是 `deviceId`（配对关系、去重都认它）；`name` 只是给人看的标签，可以随时变、可以重复。
+
+### 3.7 配对码 → 房间的推导（v1.10，**两端必须逐字节一致**）
+
+新界面把配对改成了「**两台电脑输入同一个 6 位码**」（一方随机生成），不再是
+「一端显示、另一端输入」。这意味着房间号不再由 relay 分配，而是**两端各自从码
+算出来**——所以推导算法是硬性互通约定，差一个字节就会各自进不同房间，表现为
+「码明明一样却永远撮合不上」，而且两边日志都正常，极难查。
+
+```
+secret   = base64( SHA256( UTF8("netdisplay-pair:" + code) ) )     // code 是 6 位数字字符串
+pairHash = lowerhex( SHA256( base64_decode(secret) ) )             // 注意是对 secret 的**原始字节**再哈希
+```
+
+- 前缀 `netdisplay-pair:` 一字不差，无空格。
+- `code` 只取 6 位数字本身，不含分组显示用的空格（界面上显示成 `123 456`，算的时候是 `123456`）。
+- `pairHash` 是**小写** hex，填进 `RELAY_JOIN.pairHash` / `RELAY_REGISTER.pairHash`。
+- 第二步哈希的输入是 secret **base64 解码后的字节**，不是 base64 字符串本身。
+
+自检向量（两端都该算出这个）：
+
+```
+code   = "123456"
+secret = "8cDzqhqQD4xqw4fFnmsXG4r70M7mLv64gPR7rAmajfo="
+```
+
+> 首次配对成功后 Sender 仍会在 HELLO_ACK 里下发 `pairSecret`（§3.4），两端持久保存，
+> 之后免码重连。码只是**第一次**把双方引到同一个房间的手段。
 
 ## 4. VIDEO_FRAME（0x10）payload 格式
 
