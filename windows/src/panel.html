@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>NetDisplay</title>
+<style>
+  /* Design Tokens：直接取自 docs/design/README.md 与原型 v2 的 CSS 变量，勿手改 */
+  [data-theme="light"]{--bg:#E9EBEE;--panel:#FFFFFF;--panel2:#F5F6F8;--text:#1B1E23;--sub:#6E7681;--line:#E2E4E8;--accent:#3B6FE0;--accent-weak:rgba(59,111,224,.10);--recv:#0F9D8C;--recv-weak:rgba(15,157,140,.12);--ok:#1D9E55;--err:#D5453C;--shadow:0 12px 40px rgba(20,30,50,.14)}
+  [data-theme="dark"]{--bg:#141619;--panel:#1F2226;--panel2:#282C31;--text:#E9EBEE;--sub:#98A0A9;--line:#34383E;--accent:#5C88E8;--accent-weak:rgba(92,136,232,.16);--recv:#31BFAD;--recv-weak:rgba(49,191,173,.16);--ok:#3DBE74;--err:#E4655C;--shadow:0 12px 40px rgba(0,0,0,.45)}
+  @keyframes nd-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+
+  html,body{margin:0;padding:0;height:100%}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
+    background:var(--panel);color:var(--text);font-size:13px;
+    overflow-x:hidden;overflow-y:auto;user-select:none;
+  }
+  button,input{font-family:inherit}
+  input{user-select:text}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-thumb{background:var(--line);border-radius:4px}
+  ::-webkit-scrollbar-track{background:transparent}
+  .hidden{display:none !important}
+
+  /* ===== 标题栏 ===== */
+  .titlebar{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);
+    -webkit-app-region:drag;position:sticky;top:0;background:var(--panel);z-index:10}
+  .titlebar button{-webkit-app-region:no-drag}
+  .logo{width:18px;height:18px;border-radius:5px;background:var(--accent);display:flex;align-items:center;
+    justify-content:center;color:#fff;font-size:10px;font-weight:700}
+  .app-name{font-size:13px;font-weight:600}
+  .spacer{flex:1}
+  .theme-btn{font-size:11px;color:var(--sub);background:var(--panel2);border:1px solid var(--line);
+    border-radius:6px;padding:3px 10px;cursor:pointer}
+  .theme-btn:hover{color:var(--text)}
+  .win-ctl{display:flex;gap:14px;margin-left:4px}
+  .win-ctl button{color:var(--sub);font-size:12px;background:none;border:none;cursor:pointer;padding:0 2px;line-height:1}
+  .win-ctl button:hover{color:var(--text)}
+
+  .body{padding:16px;display:flex;flex-direction:column;gap:14px}
+
+  /* ===== 模式切换 ===== */
+  .seg{display:flex;background:var(--panel2);border-radius:8px;padding:3px}
+  .seg button{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;font-size:13px;padding:7px 0;
+    border:none;border-radius:6px;cursor:pointer;background:transparent;color:var(--sub);font-weight:600}
+  .seg button.on-cast{background:var(--accent-weak);color:var(--accent)}
+  .seg button.on-recv{background:var(--recv-weak);color:var(--recv)}
+  .run-dot{color:var(--ok);font-size:9px}
+
+  .col8{display:flex;flex-direction:column;gap:8px}
+  .cap{font-size:12px;color:var(--sub)}
+  .foot{font-size:11px;color:var(--sub);text-align:center}
+
+  /* ===== 状态条 ===== */
+  .bar{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--line);border-radius:8px}
+  .bar.cast{border-color:var(--accent);background:var(--accent-weak)}
+  .bar.recv{border-color:var(--recv);background:var(--recv-weak)}
+  .bar .grow{flex:1;min-width:0}
+  .bar .t{font-size:13px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bar .s{font-size:11px;color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .glyph-cast{font-size:14px;color:var(--accent)}
+  .glyph-recv{font-size:14px;color:var(--recv)}
+  .switch-icon{color:var(--accent);animation:nd-pulse 1s infinite}
+  .switch-text{font-size:13px;color:var(--sub)}
+  .btn-stop{font-size:12px;font-weight:600;color:var(--err);background:none;border:1px solid var(--err);
+    border-radius:6px;padding:5px 12px;cursor:pointer}
+  .btn-stop:hover{background:var(--err);color:#fff}
+
+  /* ===== 投射内容列表 ===== */
+  .srclist{display:flex;flex-direction:column;gap:5px;max-height:296px;overflow-y:auto;padding-right:2px}
+  .src{display:flex;align-items:center;gap:9px;padding:7px 10px;border:1px solid var(--line);background:var(--panel);
+    border-radius:7px;cursor:pointer}
+  .src:hover{border-color:var(--accent)}
+  .src.on{border-color:var(--accent);background:var(--accent-weak)}
+  .src .icon{font-size:13px;width:18px;text-align:center;flex-shrink:0}
+  .src .name{flex:1;font-size:13px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .src .desc{font-size:11px;color:var(--sub);flex-shrink:0}
+  .src .ck{font-size:12px;color:var(--accent);width:12px;flex-shrink:0;text-align:center}
+
+  .btn-cast{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:9px 0;font-size:13px;
+    font-weight:600;color:#fff;background:var(--accent);border:none;border-radius:8px;cursor:pointer}
+  .btn-cast.off{background:var(--line);color:var(--sub);cursor:not-allowed}
+
+  /* 无配对设备时的引导卡片（设计稿未给样式，见交付说明） */
+  .empty-card{display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 12px;text-align:center;
+    border:1px dashed var(--line);border-radius:8px}
+  .empty-card .t{font-size:13px;font-weight:600}
+  .empty-card .s{font-size:11px;color:var(--sub);line-height:1.6}
+  .btn-weak{font-size:12px;color:var(--accent);background:var(--accent-weak);border:none;border-radius:8px;
+    padding:7px 14px;cursor:pointer;white-space:nowrap;margin-top:4px}
+
+  /* ===== 接收页 ===== */
+  .svc-dot{width:8px;height:8px;border-radius:50%;background:var(--sub);flex-shrink:0}
+  .svc-dot.live{background:var(--recv);animation:nd-pulse 2s infinite}
+  .btn-svc{width:100%;display:flex;align-items:center;justify-content:center;gap:7px;padding:9px 0;font-size:13px;
+    font-weight:600;color:var(--recv);background:transparent;border:1px solid var(--recv);border-radius:8px;
+    cursor:pointer;box-sizing:border-box}
+  .btn-svc.solid{background:var(--recv);color:#fff}
+  .btn-svc.muted{border-color:var(--line);color:var(--sub);background:transparent;cursor:not-allowed}
+
+  /* ===== 折叠区 ===== */
+  .fold{border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  .fold-head{display:flex;align-items:center;gap:8px;padding:10px 12px;cursor:pointer;background:var(--panel2)}
+  .chev{font-size:11px;color:var(--sub);width:10px}
+  .fold-title{font-size:13px;font-weight:600}
+  .fold-note{font-size:11px;color:var(--sub)}
+  .fold-body{padding:12px;display:flex;flex-direction:column;gap:12px;border-top:1px solid var(--line)}
+
+  .qrow{display:flex;align-items:center;gap:10px}
+  .qrow .qlabel{font-size:12px;color:var(--sub);width:52px;flex-shrink:0}
+  .qopts{display:flex;gap:6px;flex-wrap:wrap}
+  .qopt{font-size:12px;padding:5px 11px;border-radius:6px;cursor:pointer;border:1px solid var(--line);
+    background:var(--panel);color:var(--sub)}
+  .qopt.on{border-color:var(--recv);background:var(--recv-weak);color:var(--recv)}
+
+  /* ===== 已配对设备 ===== */
+  .sec-head{display:flex;align-items:center;margin-bottom:8px}
+  .sec-title{font-size:12px;font-weight:600;color:var(--sub);letter-spacing:.5px}
+  .link-btn{font-size:12px;color:var(--accent);background:none;border:none;cursor:pointer;padding:0}
+  .devlist{display:flex;flex-direction:column;gap:6px}
+  .dev{display:flex;align-items:center;gap:10px;padding:9px 12px;border:1px solid var(--line);border-radius:8px;
+    background:var(--panel);cursor:pointer}
+  .dev:hover{border-color:var(--accent)}
+  .dev.on{border-color:var(--accent);background:var(--accent-weak)}
+  .dev .radio{font-size:13px;color:var(--sub);line-height:1;flex-shrink:0}
+  .dev.on .radio{color:var(--accent)}
+  .pdot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+  .dev .grow{flex:1;min-width:0}
+  .dev .name{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .dev .st{font-size:11px;color:var(--sub)}
+  .dev .st.ok{color:var(--ok)}
+  .btn-ghost{font-size:12px;color:var(--sub);background:none;border:1px solid var(--line);border-radius:6px;
+    padding:4px 10px;cursor:pointer;flex-shrink:0}
+  .btn-ghost:hover{color:var(--err);border-color:var(--err)}
+  .btn-txt{font-size:12px;color:var(--sub);background:none;border:none;cursor:pointer;flex-shrink:0;padding:0}
+  .btn-txt:hover{color:var(--text)}
+  .btn-txt.danger:hover{color:var(--err)}
+  .rename-input{flex:1;min-width:0;font-size:13px;padding:4px 8px;border:1px solid var(--accent);border-radius:6px;
+    background:var(--panel2);color:var(--text);outline:none}
+  .confirm-txt{flex:1;min-width:0;font-size:12px;color:var(--err);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .btn-danger{font-size:12px;color:#fff;background:var(--err);border:none;border-radius:6px;padding:4px 10px;
+    cursor:pointer;flex-shrink:0}
+  .dev-empty{font-size:11px;color:var(--sub);padding:12px;border:1px dashed var(--line);border-radius:8px;text-align:center}
+
+  .local-row{display:flex;align-items:center;gap:6px;margin-top:8px;font-size:11px;color:var(--sub)}
+  .local-name{color:var(--text)}
+  .local-input{font-size:11px;padding:2px 6px;border:1px solid var(--accent);border-radius:5px;background:var(--panel2);
+    color:var(--text);outline:none;width:140px}
+  .link-btn.sm{font-size:11px}
+
+  /* ===== 高级设置 ===== */
+  .arow{display:flex;align-items:center;gap:10px}
+  .arow .alabel{font-size:12px;color:var(--sub);width:80px;flex-shrink:0}
+  .ainput{flex:1;min-width:0;font-size:12px;padding:6px 9px;border:1px solid var(--line);border-radius:6px;
+    background:var(--panel2);color:var(--text);outline:none}
+  .toggle{width:34px;height:19px;border-radius:10px;background:var(--line);position:relative;cursor:pointer;
+    transition:background .15s;flex-shrink:0}
+  .toggle.on{background:var(--accent)}
+  .knob{position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;background:#fff;
+    transition:left .15s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+  .toggle.on .knob{left:17px}
+  .toggle-note{font-size:11px;color:var(--sub)}
+
+  /* ===== 弹窗 ===== */
+  .mask{position:fixed;inset:0;background:rgba(10,12,16,.45);display:flex;align-items:center;justify-content:center;
+    z-index:50;padding:16px;box-sizing:border-box}
+  .modal{width:360px;max-width:100%;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    box-shadow:var(--shadow);padding:18px;color:var(--text);box-sizing:border-box}
+  .modal.narrow{width:340px}
+  .modal-head{display:flex;align-items:center;margin-bottom:14px}
+  .modal-title{font-size:15px;font-weight:600}
+  .btn-x{font-size:14px;color:var(--sub);background:none;border:none;cursor:pointer}
+  .modal-col{display:flex;flex-direction:column;gap:14px}
+  .modal-col.tight{gap:10px}
+  .field-label{font-size:12px;color:var(--sub);margin-bottom:6px}
+  .field-hint{font-size:11px;color:var(--sub);margin-top:6px}
+  .code-row{display:flex;gap:8px}
+  .code-input{flex:1;min-width:0;font-size:18px;letter-spacing:3px;text-align:center;padding:9px;
+    border:1px solid var(--line);border-radius:8px;background:var(--panel2);color:var(--text);outline:none}
+  .code-input.err{border-color:var(--err)}
+  .btn-gen{font-size:12px;color:var(--accent);background:var(--accent-weak);border:none;border-radius:8px;
+    padding:0 14px;cursor:pointer;white-space:nowrap}
+  .field-input{width:100%;box-sizing:border-box;font-size:13px;padding:9px;border:1px solid var(--line);
+    border-radius:8px;background:var(--panel2);color:var(--text);outline:none}
+  .field-input.sm{padding:8px 10px;border-radius:7px}
+  .err-text{font-size:12px;color:var(--err);text-align:center}
+  .btn-primary{width:100%;padding:10px 0;font-size:14px;font-weight:600;color:#fff;background:var(--accent);
+    border:none;border-radius:8px;cursor:pointer}
+  .btn-primary.sm{padding:9px 0;font-size:13px;margin-top:2px}
+  .relay-status{display:flex;align-items:center;gap:8px;padding:8px 10px;background:var(--panel2);
+    border:1px solid var(--line);border-radius:8px;margin-bottom:14px}
+  .relay-status .dot{width:8px;height:8px;border-radius:50%;background:var(--sub);flex-shrink:0}
+  .relay-status .txt{font-size:12px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+  /* ===== Toast ===== */
+  .toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:var(--text);color:var(--panel);
+    font-size:13px;padding:9px 18px;border-radius:8px;box-shadow:var(--shadow);z-index:60;max-width:86%;
+    text-align:center;line-height:1.5}
+</style>
+</head>
+<body>
+
+<!-- ===== 标题栏（可拖动，按钮 no-drag） ===== -->
+<div class="titlebar">
+  <div class="logo">N</div>
+  <div class="app-name">NetDisplay</div>
+  <div class="spacer"></div>
+  <button id="themeBtn" class="theme-btn">◑ 深色</button>
+  <div class="win-ctl">
+    <button id="btnMin" title="最小化">—</button>
+    <button id="btnClose" title="关闭">✕</button>
+  </div>
+</div>
+
+<div class="body">
+
+  <!-- ===== 模式切换 ===== -->
+  <div class="seg">
+    <button id="tabCast">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 13V7"></path><path d="M9 10l3-3 3 3"></path><path d="M8 21h8"></path></svg>
+      投射本机 <span id="castDot" class="run-dot"></span>
+    </button>
+    <button id="tabRecv">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 7v6"></path><path d="M9 10l3 3 3-3"></path><path d="M8 21h8"></path></svg>
+      接收显示 <span id="recvDot" class="run-dot"></span>
+    </button>
+  </div>
+
+  <!-- ===== 投射页 ===== -->
+  <div id="pageCast" class="col8">
+    <div id="castSwitching" class="bar hidden">
+      <span class="switch-icon">⇄</span><span class="switch-text">切换中…</span>
+    </div>
+
+    <div id="castingBar" class="bar cast hidden">
+      <span class="glyph-cast">⇡</span>
+      <div class="grow">
+        <div class="t" id="castingTitle">正在投射</div>
+        <div class="s" id="castingSource">来源：</div>
+      </div>
+      <button id="btnStopCast" class="btn-stop">停止</button>
+    </div>
+
+    <div id="castPick" class="col8">
+      <div class="cap">选择投射内容</div>
+      <div id="sourceList" class="srclist"></div>
+
+      <div id="castEmpty" class="empty-card hidden">
+        <div class="t">还没有配对设备</div>
+        <div class="s">投射前先和另一台电脑配对一次，<br>之后会自动重连，不用重复配。</div>
+        <button id="btnEmptyAdd" class="btn-weak">＋ 添加设备</button>
+      </div>
+
+      <button id="btnStartCast" class="btn-cast">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 13V7"></path><path d="M9 10l3-3 3 3"></path></svg>
+        开始投射
+      </button>
+      <div class="foot">把本机画面投给对方当显示器</div>
+    </div>
+  </div>
+
+  <!-- ===== 接收页 ===== -->
+  <div id="pageRecv" class="col8 hidden">
+    <div id="recvSwitching" class="bar hidden">
+      <span class="switch-icon">⇄</span><span class="switch-text">切换中…</span>
+    </div>
+
+    <div id="recvBar" class="bar recv hidden">
+      <span class="glyph-recv">⇣</span>
+      <div class="grow">
+        <div class="t" id="recvBarTitle">正在接收画面</div>
+        <div class="s">已在独立窗口中显示</div>
+      </div>
+    </div>
+
+    <div id="recvStatusRow" class="bar">
+      <div id="recvSvcDot" class="svc-dot"></div>
+      <div class="grow">
+        <div id="recvStatusTitle" style="font-size:13px">接收服务已关闭</div>
+        <div id="recvStatusSub" class="s">开启后对方才能投射到本机</div>
+      </div>
+    </div>
+
+    <button id="btnRecvSvc" class="btn-svc solid">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 7v6"></path><path d="M9 10l3 3 3-3"></path></svg>
+      <span id="recvBtnLabel">开启接收服务</span>
+    </button>
+    <div class="foot">本机作为对方的扩展显示器</div>
+
+    <!-- 画质设置 -->
+    <div class="fold">
+      <div id="qualityHead" class="fold-head">
+        <span id="qualityChev" class="chev">▸</span>
+        <div class="fold-title">画质设置</div>
+        <div class="fold-note">作为显示器时生效</div>
+      </div>
+      <div id="qualityBody" class="fold-body hidden">
+        <div id="qualityGroups" style="display:flex;flex-direction:column;gap:12px"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== 已配对设备 ===== -->
+  <div>
+    <div class="sec-head">
+      <div class="sec-title">已配对设备</div>
+      <div class="spacer"></div>
+      <button id="btnAddDevice" class="link-btn">＋ 添加设备</button>
+    </div>
+    <div id="devList" class="devlist"></div>
+    <div id="devEmpty" class="dev-empty hidden">还没有配对设备 — 点右上角「＋ 添加设备」，和另一台电脑输入相同的配对码</div>
+    <div class="local-row">
+      <span>本机名称：</span>
+      <span id="localNameText" class="local-name"></span>
+      <button id="btnEditLocal" class="link-btn sm">修改</button>
+      <input id="localNameInput" class="local-input hidden" type="text" spellcheck="false">
+    </div>
+  </div>
+
+  <!-- ===== 高级设置 ===== -->
+  <div class="fold">
+    <div id="advHead" class="fold-head">
+      <span id="advChev" class="chev">▸</span>
+      <div class="fold-title">高级设置</div>
+      <div class="fold-note">一般无需改动</div>
+    </div>
+    <div id="advBody" class="fold-body hidden" style="gap:10px">
+      <div class="arow">
+        <div class="alabel">中转服务器</div>
+        <input id="advRelayAddr" class="ainput" type="text" spellcheck="false" placeholder="relay.example.com:7000">
+      </div>
+      <div class="arow">
+        <div class="alabel">访问 Token</div>
+        <input id="advRelayToken" class="ainput" type="password">
+      </div>
+      <div class="arow">
+        <div class="alabel">强制走中转</div>
+        <div id="advForce" class="toggle"><div class="knob"></div></div>
+        <div class="toggle-note">仅在网络禁止直连时开启</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<!-- ===== 配对弹窗 ===== -->
+<div id="pairModal" class="mask hidden">
+  <div class="modal">
+    <div class="modal-head">
+      <div class="modal-title">添加设备</div>
+      <div class="spacer"></div>
+      <button id="btnPairClose" class="btn-x">✕</button>
+    </div>
+    <div class="modal-col">
+      <div>
+        <div class="field-label">配对码 — 两台电脑输入相同的码</div>
+        <div class="code-row">
+          <input id="pairCode" class="code-input" type="text" maxlength="7" placeholder="手工输入 6 位数字" spellcheck="false">
+          <button id="btnGenCode" class="btn-gen">随机生成</button>
+        </div>
+        <div class="field-hint">一方随机生成后，另一方输入相同的配对码。</div>
+      </div>
+      <div>
+        <div class="field-label">对方地址（可选）</div>
+        <input id="pairAddr" class="field-input" type="text" placeholder="可留空，由对方填写" spellcheck="false">
+        <div class="field-hint">双方都留空时，将通过中转服务器建立连接。</div>
+      </div>
+      <div id="pairErr" class="err-text hidden">配对码错误，请核对后重试（应为 6 位数字）</div>
+      <button id="btnPairSubmit" class="btn-primary">配对</button>
+    </div>
+  </div>
+</div>
+
+<!-- ===== 中转设置弹窗 ===== -->
+<div id="relayModal" class="mask hidden">
+  <div class="modal narrow">
+    <div class="modal-head">
+      <div class="modal-title">中转设置</div>
+      <div class="spacer"></div>
+      <button id="btnRelayClose" class="btn-x">✕</button>
+    </div>
+    <div class="relay-status">
+      <div id="relayDot" class="dot"></div>
+      <div id="relayStatusText" class="txt">未设置中转服务器</div>
+    </div>
+    <div class="modal-col tight">
+      <div>
+        <div class="field-label">中转服务器</div>
+        <input id="mRelayAddr" class="field-input sm" type="text" spellcheck="false" placeholder="relay.example.com:7000">
+      </div>
+      <div>
+        <div class="field-label">访问 Token</div>
+        <input id="mRelayToken" class="field-input sm" type="password">
+      </div>
+      <div class="arow">
+        <div id="mForce" class="toggle"><div class="knob"></div></div>
+        <div style="font-size:12px">强制走中转</div>
+        <div class="toggle-note">仅在网络禁止直连时开启</div>
+      </div>
+      <button id="btnRelaySave" class="btn-primary sm">保存</button>
+    </div>
+  </div>
+</div>
+
+<div id="toast" class="toast hidden"></div>
+
+<script src="panel.js"></script>
+</body>
+</html>

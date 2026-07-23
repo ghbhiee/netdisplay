@@ -9,8 +9,16 @@ const fs = require("fs");
 const path = require("path");
 
 const dir = path.join(__dirname, "..", "src");
-const js = fs.readFileSync(path.join(dir, "renderer.js"), "utf8");
+const raw = fs.readFileSync(path.join(dir, "renderer.js"), "utf8");
 const html = fs.readFileSync(path.join(dir, "index.html"), "utf8");
+
+// 注释里提到 $("res") 只是在讲历史，不是真引用。不剔掉就会报假警，
+// 而假警和真警混在一起时，真警就会被当成噪音忽略掉——那这工具就废了。
+// 用空格替换而不是删除：行号要和原文对齐，否则报出来的位置指向别处，更难查。
+const blank = (s) => s.replace(/[^\n]/g, " ");
+const js = raw
+  .replace(/\/\*[\s\S]*?\*\//g, blank)
+  .replace(/(^|[^:])\/\/[^\n]*/g, (m, p1) => p1 + blank(m.slice(p1.length)));
 
 const referenced = [...js.matchAll(/\$\("([A-Za-z][\w-]*)"\)/g)].map((m) => m[1]);
 const declared = new Set([...html.matchAll(/id="([^"]+)"/g)].map((m) => m[1]));

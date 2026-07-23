@@ -4,268 +4,91 @@
   <meta charset="utf-8" />
   <title>NetDisplay</title>
   <style>
-    /* Windows 11 观感：Segoe UI Variable、云母底、系统强调色、紧凑留白。
-       刻意避免「网页感」——无大圆角卡片、无渐变、控件贴近原生尺寸。 */
-    :root {
-      --bg: #f3f3f3; --card: #fbfbfb; --line: #e3e3e3; --line2: #d6d6d6;
-      --fg: #1b1b1b; --fg2: #5d5d5d; --fg3: #8a8a8a;
-      --accent: #0067c0; --accent-hover: #0078d4; --accent-soft: #eaf3fb;
-      --ok: #0f7b0f; --warn: #9d5d00; --err: #c42b1c;
-    }
-    @media (prefers-color-scheme: dark) {
-      :root {
-        --bg: #202020; --card: #2b2b2b; --line: #383838; --line2: #454545;
-        --fg: #ffffff; --fg2: #cfcfcf; --fg3: #9a9a9a;
-        --accent: #4cc2ff; --accent-hover: #62caff; --accent-soft: #1b3a4d;
-        --ok: #6ccb5f; --warn: #fce100; --err: #ff99a4;
-      }
-    }
+    /* 设计 tokens 与 docs/design/ 一致——接收窗口和主面板必须是同一套视觉。 */
+    [data-theme="light"]{--bg:#E9EBEE;--panel:#FFFFFF;--panel2:#F5F6F8;--text:#1B1E23;--sub:#6E7681;--line:#E2E4E8;--accent:#3B6FE0;--recv:#0F9D8C;--ok:#1D9E55;--err:#D5453C}
+    [data-theme="dark"]{--bg:#141619;--panel:#1F2226;--panel2:#282C31;--text:#E9EBEE;--sub:#98A0A9;--line:#34383E;--accent:#5C88E8;--recv:#31BFAD;--ok:#3DBE74;--err:#E4655C}
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body { height: 100%; overflow: hidden; }
     body {
-      background: var(--bg); color: var(--fg);
-      font: 14px/1.45 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+      background: var(--panel); color: var(--text);
+      font: 13px/1.45 "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
       -webkit-font-smoothing: antialiased;
+      display: flex; flex-direction: column;
     }
 
-    /* ---------- 舞台（收到画面时全屏显示） ---------- */
-    #stage { position: fixed; inset: 0; display: none; background: #000;
-      align-items: center; justify-content: center; }
+    /* 标题栏：设计 §5「NetDisplay — {设备名} 的画面」。可拖动，按钮除外。 */
+    #titlebar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px; border-bottom: 1px solid var(--line);
+      -webkit-app-region: drag; flex: 0 0 auto;
+    }
+    #winTitle { font-size: 12px; font-weight: 600; }
+    #winBtns { margin-left: auto; display: flex; gap: 12px; color: var(--sub);
+      font-size: 11px; -webkit-app-region: no-drag; }
+    #winBtns span { cursor: pointer; }
+    #winBtns span:hover { color: var(--text); }
+    body.fullscreen #titlebar { display: none; }
+
+    #stage { flex: 1; position: relative; background: #000;
+      display: flex; align-items: center; justify-content: center; overflow: hidden; }
     #video { display: block; background: #000; }
     #video.dimmed { filter: brightness(.2) saturate(.4); }
-    #idle { position: fixed; inset: 0; display: none; z-index: 5;
+
+    /* 待命：窗口通常是隐藏的，这里只覆盖「已显示但首帧未到」的空档 */
+    #idle { position: absolute; inset: 0; display: none; z-index: 5;
       align-items: center; justify-content: center; flex-direction: column; gap: 8px;
       background: rgba(0,0,0,.5); color: #fff; }
     #idle .big { font-size: 19px; font-weight: 600; letter-spacing: 1px; }
     #idle .small { font-size: 12px; opacity: .65; }
-    #toolbar { position: fixed; top: 12px; left: 50%; transform: translateX(-50%);
-      display: none; gap: 6px; z-index: 15; opacity: 0; transition: opacity .15s; }
+
+    /* 左下角悬浮徽标：设计 §5「接收中 · 直连 · 3ms」 */
+    #badge { position: absolute; left: 10px; bottom: 10px; z-index: 10;
+      font-size: 11px; color: rgba(255,255,255,.75); background: rgba(0,0,0,.45);
+      border-radius: 6px; padding: 4px 9px; pointer-events: none; }
+
+    #toolbar { position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; z-index: 15; opacity: 0; transition: opacity .15s; }
     #toolbar.show { opacity: 1; }
     #toolbar button { padding: 6px 14px; border: 1px solid rgba(255,255,255,.18);
-      border-radius: 4px; background: rgba(32,32,32,.9); color: #fff; font-size: 13px;
-      cursor: pointer; backdrop-filter: blur(8px); }
+      border-radius: 6px; background: rgba(32,32,32,.9); color: #fff; font-size: 12px;
+      cursor: pointer; font-family: inherit; backdrop-filter: blur(8px); }
     #toolbar button:hover { background: rgba(60,60,60,.95); }
-    #srcLabel { position: fixed; top: 10px; left: 12px; z-index: 10; display: none;
+
+    #srcLabel { position: absolute; top: 10px; left: 12px; z-index: 10; display: none;
       font-size: 11px; color: rgba(255,255,255,.5); pointer-events: none; }
-    #overlay { position: fixed; top: 10px; right: 12px; display: none; z-index: 10;
-      background: rgba(0,0,0,.6); border-radius: 4px; padding: 5px 9px;
+    #overlay { position: absolute; top: 10px; right: 12px; display: none; z-index: 10;
+      background: rgba(0,0,0,.6); border-radius: 6px; padding: 5px 9px;
       font: 11px/1.5 Consolas, monospace; color: #7ee787; pointer-events: none; }
-    #hint { position: fixed; bottom: 10px; left: 50%; transform: translateX(-50%);
+    #hint { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%);
       display: none; z-index: 10; font-size: 11px; color: rgba(255,255,255,.35); }
-
-    /* ---------- 主面板 ---------- */
-    #panel { position: fixed; inset: 0; display: flex; flex-direction: column; z-index: 20; }
-    #panel.over-stream { background: rgba(0,0,0,.55); }
-    #panel.over-stream .wrap { box-shadow: 0 12px 40px rgba(0,0,0,.45); }
-    .wrap { margin: auto; width: 460px; max-height: 96vh; overflow-y: auto;
-      background: var(--card); border: 1px solid var(--line);
-      border-radius: 8px; padding: 18px 20px 16px; }
-
-    .titlebar { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-    .titlebar img { width: 26px; height: 26px; }
-    h1 { font: 600 17px "Segoe UI Variable Display", "Segoe UI", sans-serif; }
-    .sub { color: var(--fg2); font-size: 12px; margin-bottom: 14px; }
-
-    /* 分组：把相关参数放在它所属的选择下面，而不是散在别处 */
-    .group { border: 1px solid var(--line); border-radius: 6px; margin-bottom: 10px;
-      background: var(--bg); overflow: hidden; }
-    .group > .head { display: flex; align-items: center; gap: 9px; padding: 10px 12px;
-      cursor: pointer; user-select: none; }
-    .group.on { border-color: var(--accent); background: var(--accent-soft); }
-    .group .radio { width: 16px; height: 16px; border-radius: 50%; flex: 0 0 16px;
-      border: 1.5px solid var(--fg3); position: relative; }
-    .group.on .radio { border-color: var(--accent); }
-    .group.on .radio::after { content: ""; position: absolute; inset: 3px;
-      border-radius: 50%; background: var(--accent); }
-    .group .t { font-weight: 600; font-size: 13.5px; }
-    .group .d { color: var(--fg2); font-size: 11.5px; }
-    .group > .body { padding: 0 12px 12px 37px; display: none; }
-    .group.on > .body { display: block; }
-
-    label.f { display: block; font-size: 11.5px; color: var(--fg2); margin: 10px 0 4px; }
-    input[type=text], input[type=number], select {
-      width: 100%; padding: 6px 9px; font-size: 13px; color: var(--fg);
-      background: var(--card); border: 1px solid var(--line2); border-radius: 4px;
-      outline: none; font-family: inherit;
-    }
-    input:focus, select:focus { border-color: var(--accent); }
-    .row { display: flex; gap: 8px; }
-    .row > * { flex: 1; }
-    .mono { font-family: Consolas, monospace; letter-spacing: 2px; }
-
-    /* 大号配对码展示：监听方要把它念给对方，必须一眼看清 */
-    .codebox { display: flex; align-items: center; justify-content: space-between;
-      gap: 10px; padding: 9px 12px; border: 1px solid var(--line2);
-      border-radius: 5px; background: var(--card); }
-    .codebox .v { font: 600 22px/1 Consolas, monospace; letter-spacing: 5px; color: var(--accent); }
-    .codebox .lbl { font-size: 11px; color: var(--fg2); }
-    .linkbtn { background: none; border: 0; color: var(--accent); font-size: 12px;
-      cursor: pointer; padding: 2px 4px; font-family: inherit; }
-    .linkbtn:hover { text-decoration: underline; }
-
-    /* 屏幕参数：置顶、随时可改，不埋进任何分组 */
-    .screenbar { display: flex; gap: 8px; align-items: flex-end; margin-bottom: 12px; }
-    .screenbar > div { flex: 1; }
-
-    .actions { display: flex; gap: 8px; margin-top: 12px; }
-    button.primary, button.ghost {
-      flex: 1; padding: 7px 12px; font-size: 13.5px; font-family: inherit;
-      border-radius: 4px; cursor: pointer; border: 1px solid transparent;
-    }
-    button.primary { background: var(--accent); color: #fff; }
-    button.primary:hover { background: var(--accent-hover); }
-    button.ghost { background: var(--card); color: var(--fg); border-color: var(--line2); }
-    button.ghost:hover { background: var(--bg); }
-
-    .status { margin-top: 10px; font-size: 12px; min-height: 17px; color: var(--fg2);
-      white-space: pre-wrap; }
-    .status.err { color: var(--err); }
-    .status.ok { color: var(--ok); }
-
-    .chk { display: flex; align-items: center; gap: 7px; font-size: 12.5px;
-      color: var(--fg2); margin-top: 8px; cursor: pointer; }
-    .chk input { width: auto; }
-    hr.sep { border: 0; border-top: 1px solid var(--line); margin: 14px 0 0; }
-    .hidden { display: none !important; }
+    #status { display: none; }
   </style>
 </head>
-<body>
-  <div id="panel">
-    <div class="wrap">
-      <div class="titlebar">
-        <img src="../assets/icon.png" alt="" />
-        <h1>NetDisplay</h1>
-      </div>
-      <div class="sub">把另一台电脑当第二块屏幕用 · 任意方向</div>
+<body data-theme="dark">
+  <div id="titlebar">
+    <div id="winTitle">NetDisplay</div>
+    <div id="winBtns"><span id="winMin">—</span><span id="winClose">✕</span></div>
+  </div>
 
-      <!-- 屏幕参数：用户要求「在外边，可以随时切换」 -->
-      <div class="screenbar">
-        <div>
-          <label class="f">画面分辨率</label>
-          <select id="res">
-            <option value="auto">跟随本机屏幕</option>
-            <option value="3840x2400">3840 × 2400</option>
-            <option value="2560x1600">2560 × 1600</option>
-            <option value="2560x1440">2560 × 1440</option>
-            <option value="1920x1200">1920 × 1200</option>
-            <option value="1920x1080">1920 × 1080</option>
-            <option value="1280x800">1280 × 800</option>
-            <option value="custom">自定义…</option>
-          </select>
-        </div>
-        <div>
-          <label class="f">缩放</label>
-          <select id="scale">
-            <option value="1">1x（画面大）</option>
-            <option value="2">2x（字大清晰）</option>
-          </select>
-        </div>
-        <div>
-          <label class="f">帧率</label>
-          <select id="fps"><option value="60">60</option><option value="30">30</option></select>
-        </div>
-      </div>
-      <div class="row hidden" id="grpCustom" style="margin:-6px 0 12px">
-        <input type="number" id="customW" placeholder="宽（像素）" min="640" step="2" />
-        <input type="number" id="customH" placeholder="高（像素）" min="400" step="2" />
-      </div>
-
-      <!-- 连接方式：用户要的「监听 / 连接」二选一，参数就在各自下面 -->
-      <div class="group" id="gListen" data-mode="listen">
-        <div class="head">
-          <div class="radio"></div>
-          <div>
-            <div class="t">等待对方连接我</div>
-            <div class="d">本机待命，把下面的地址或配对码告诉对方</div>
-          </div>
-        </div>
-        <div class="body">
-          <label class="f">配对码（长期有效，对方输入它即可连上）</label>
-          <div class="codebox">
-            <div><div class="v" id="myCode">------</div>
-              <div class="lbl">经中转服务器连接时使用</div></div>
-            <button class="linkbtn" id="btnNewCode">换一个</button>
-          </div>
-          <label class="f">本机地址（同一局域网时对方可直接填这个）</label>
-          <div class="codebox">
-            <div><div class="v mono" id="myAddr" style="font-size:15px;letter-spacing:1px">…</div>
-              <div class="lbl">直连，延迟最低</div></div>
-            <button class="linkbtn" id="btnCopyAddr">复制</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="group" id="gConnect" data-mode="connect">
-        <div class="head">
-          <div class="radio"></div>
-          <div>
-            <div class="t">我去连接对方</div>
-            <div class="d">填对方给你的配对码，或它的局域网地址</div>
-          </div>
-        </div>
-        <div class="body">
-          <label class="f">对方的配对码</label>
-          <input type="text" id="code" class="mono" maxlength="6" placeholder="6 位数字" inputmode="numeric" />
-          <label class="f">或：对方的局域网地址（同网段时更快）</label>
-          <input type="text" id="ip" placeholder="例如 192.168.1.20" spellcheck="false" />
-          <div id="pairInfo" class="hidden" style="margin-top:8px;font-size:11.5px;color:var(--ok)">
-            已与对方配对 ✓ 之后免输码<button class="linkbtn" id="clearPair">解除配对</button>
-          </div>
-        </div>
-      </div>
-
-      <div class="actions">
-        <button class="primary" id="btnConnect">连接</button>
-        <button class="ghost" id="btnDisconnect" style="display:none">断开</button>
-        <button class="ghost" id="btnClose" style="display:none">返回画面</button>
-      </div>
-      <div class="status" id="status"></div>
-
-      <!-- 连上之后才出现：投射开关 -->
-      <div id="roleBar" class="hidden">
-        <hr class="sep" />
-        <label class="f">把本机画面投给对方</label>
-        <div class="row">
-          <select id="sendSource"><option value="">整个屏幕</option></select>
-          <button class="ghost" id="btnRefreshSources" style="flex:0 0 64px">刷新</button>
-        </div>
-        <div class="actions">
-          <button class="primary" id="btnProject">开始投射</button>
-          <button class="ghost" id="btnProjectStop" style="display:none">停止投射</button>
-        </div>
-        <div id="sendStatus" style="font-size:11.5px;color:var(--fg2);min-height:16px;margin-top:6px"></div>
-      </div>
-
-      <hr class="sep" />
-      <label class="chk"><input type="checkbox" id="windowed" />窗口显示（不全屏）</label>
-      <label class="chk"><input type="checkbox" id="overlayOn" checked />显示实时统计</label>
-      <div id="advWrap" style="margin-top:8px">
-        <button class="linkbtn" id="btnAdv" style="padding:0">高级设置 ▾</button>
-        <div id="adv" class="hidden">
-          <label class="f">中转服务器</label>
-          <input type="text" id="relayServer" value="15.tokencv.com:47700" spellcheck="false" />
-          <label class="f">访问令牌</label>
-          <input type="text" id="token" placeholder="服务器启用鉴权时填写" spellcheck="false" />
-          <label class="f">码率上限（Mbps）</label>
-          <input type="number" id="bitrate" value="40" min="2" max="120" />
-        </div>
-      </div>
+  <div id="stage">
+    <canvas id="video"></canvas>
+    <div id="idle">
+      <div class="big">等待投射…</div>
+      <div class="small">连接保持中 · 对方开始投射即自动显示</div>
     </div>
+    <div id="toolbar">
+      <button id="btnBounce">⏏ 弹回对方</button>
+      <button id="btnStop">■ 停止投射</button>
+    </div>
+    <div id="srcLabel"></div>
+    <div id="overlay"></div>
+    <div id="badge"></div>
+    <div id="hint">长按 Esc 断开 · F1 统计</div>
   </div>
 
-  <div id="stage"><canvas id="video"></canvas></div>
-  <div id="idle">
-    <div class="big">等待投射…</div>
-    <div class="small">连接保持中 · 对方开始投射即自动显示</div>
-  </div>
-  <div id="toolbar">
-    <button id="btnBounce">⏏ 弹回对方</button>
-    <button id="btnStop">■ 停止投射</button>
-    <button id="btnSettings">⚙ 设置</button>
-  </div>
-  <div id="srcLabel"></div>
-  <div id="overlay"></div>
-  <div id="hint">长按 Esc 断开 · F1 统计 · F2 设置</div>
+  <!-- 引擎把人话状态写这里；窗口不显示它，headless 时转 stdout 供 CLI 联调 -->
+  <div id="status"></div>
 
   <script src="renderer.js"></script>
 </body>

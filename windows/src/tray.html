@@ -1,0 +1,207 @@
+<!doctype html>
+<html data-theme="light">
+<head>
+<meta charset="utf-8">
+<title>NetDisplay 托盘菜单</title>
+<style>
+  /* 窗口本体透明：圆角、阴影、边框由 #menu 自己画。
+     body 四周留 PAD 透明边给阴影，左侧还留出二级菜单向左弹的空间。 */
+  html, body { margin:0; padding:0; height:100%; background:transparent; overflow:hidden; }
+  body {
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased;
+    display:flex; align-items:flex-start; justify-content:flex-end;
+    padding:12px; box-sizing:border-box;
+    user-select:none; cursor:default;
+  }
+
+  [data-theme="light"]{--bg:#E9EBEE;--panel:#FFFFFF;--panel2:#F5F6F8;--text:#1B1E23;--sub:#6E7681;--line:#E2E4E8;--accent:#3B6FE0;--accent-weak:rgba(59,111,224,.10);--recv:#0F9D8C;--recv-weak:rgba(15,157,140,.12);--ok:#1D9E55;--err:#D5453C;--shadow:0 12px 40px rgba(20,30,50,.14)}
+  [data-theme="dark"]{--bg:#141619;--panel:#1F2226;--panel2:#282C31;--text:#E9EBEE;--sub:#98A0A9;--line:#34383E;--accent:#5C88E8;--accent-weak:rgba(92,136,232,.16);--recv:#31BFAD;--recv-weak:rgba(49,191,173,.16);--ok:#3DBE74;--err:#E4655C;--shadow:0 12px 40px rgba(0,0,0,.45)}
+
+  #menu {
+    position:relative; width:246px; flex-shrink:0;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    box-shadow:var(--shadow); padding:5px; box-sizing:border-box; color:var(--text);
+  }
+
+  .sep { height:1px; background:var(--line); margin:5px 4px; }
+  .hd  { font-size:10px; color:var(--sub); padding:3px 9px; letter-spacing:.5px; }
+  .hide { display:none !important; }
+  .dim { opacity:.45; }
+
+  /* 一级条目（第一节 / 尾部）：13px 标题 + 可选 10px 副行 + 右侧操作文字 */
+  .item {
+    display:flex; align-items:center; gap:8px;
+    padding:7px 9px; border-radius:6px; cursor:pointer; font-size:13px;
+  }
+  .item:hover, .row:hover, .subrow:hover { background:var(--panel2); }
+  .item .ico { display:flex; width:13px; flex-shrink:0; align-items:center; justify-content:center; color:var(--sub); }
+  .item .body { flex:1; min-width:0; }
+  .item .title { font-size:13px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .subline { font-size:10px; color:var(--sub); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .item .act { font-size:11px; flex-shrink:0; }
+  #castItem .ico { color:var(--accent); }
+  #recvItem .ico { color:var(--recv); }
+  #quitItem { color:var(--sub); }
+
+  /* 第二节 投射内容行 */
+  .row {
+    display:flex; align-items:center; gap:6px;
+    padding:5px 9px; border-radius:6px; cursor:pointer; font-size:12px;
+  }
+  .row .mark { width:13px; flex-shrink:0; color:var(--accent); }
+  .row .emj  { width:16px; flex-shrink:0; text-align:center; }
+  .row .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
+  /* 第三节 设备行 */
+  .devrow {
+    display:flex; align-items:center; gap:6px;
+    padding:6px 9px; border-radius:6px; cursor:pointer; font-size:13px;
+  }
+  .devrow:hover { background:var(--panel2); }
+  .devrow .mark { width:13px; flex-shrink:0; color:var(--accent); font-size:12px; }
+  .devrow .dot  { width:7px; height:7px; flex-shrink:0; border-radius:50%; }
+  .devrow .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .devrow .st   { font-size:11px; flex-shrink:0; color:var(--sub); }
+  .devrow .act  { font-size:11px; flex-shrink:0; padding:2px 4px; }
+  #addDevItem { color:var(--accent); }
+  #addDevItem .ico { color:var(--accent); }
+
+  /* 二级菜单：托盘在屏幕右下角，向右会出屏幕，所以一律向左弹 */
+  .subhost { position:relative; }
+  .submenu {
+    position:absolute; right:100%; top:0; margin-right:4px; width:170px;
+    background:var(--panel); border:1px solid var(--line); border-radius:9px;
+    box-shadow:var(--shadow); padding:5px; box-sizing:border-box; z-index:5;
+  }
+  .subrow {
+    display:flex; align-items:center; gap:6px;
+    padding:6px 9px; border-radius:6px; cursor:pointer; font-size:12px;
+  }
+  .subrow .mark { width:13px; flex-shrink:0; color:var(--accent); }
+  .subrow .emj  { width:16px; flex-shrink:0; text-align:center; }
+  .subrow .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .subrow .desc { font-size:10px; color:var(--sub); flex-shrink:0; }
+  #moreQMenu .subrow .mark { color:var(--recv); }
+
+  /* 「更多窗口 ▸ / 更多画质… ▸」触发行 */
+  .more {
+    display:flex; align-items:center; gap:6px;
+    padding:6px 9px; border-radius:6px; cursor:pointer; font-size:12px; color:var(--sub);
+  }
+  .more:hover { background:var(--panel2); }
+  .more .pad { width:13px; flex-shrink:0; }
+  .more .name { flex:1; min-width:0; }
+  .more .val { font-size:10px; flex-shrink:0; }
+
+  /* 第四节 chip 行 */
+  .chiprow { display:flex; align-items:center; gap:6px; padding:4px 9px; }
+  .chiprow .lbl { font-size:11px; color:var(--sub); width:36px; flex-shrink:0; }
+  .chips { display:flex; gap:4px; flex-wrap:wrap; }
+  .chip {
+    font-size:10px; padding:3px 7px; border-radius:5px; cursor:pointer;
+    border:1px solid var(--line); background:transparent; color:var(--sub); white-space:nowrap;
+  }
+  .chip.on { border-color:var(--recv); background:var(--recv-weak); color:var(--recv); }
+
+  /* toast 浮在菜单底部，不参与布局——否则每来一条提示窗口就得改一次高度 */
+  #toast {
+    position:absolute; left:8px; right:8px; bottom:8px; z-index:9;
+    background:var(--text); color:var(--panel);
+    font-size:11px; line-height:1.4; text-align:center;
+    padding:6px 10px; border-radius:6px; box-sizing:border-box;
+    pointer-events:none; opacity:0; transition:opacity .15s;
+  }
+  #toast.show { opacity:.96; }
+</style>
+</head>
+<body>
+<div id="menu">
+
+  <!-- 第一节：投射 / 接收服务 -->
+  <div id="castItem" class="item">
+    <span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 13V7"></path><path d="M9 10l3-3 3 3"></path></svg></span>
+    <div class="body">
+      <div class="title" id="castTitle">投射</div>
+      <div class="subline hide" id="castSub"></div>
+    </div>
+    <span class="act" id="castAction"></span>
+  </div>
+  <div id="recvItem" class="item">
+    <span class="ico"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"></rect><path d="M12 7v6"></path><path d="M9 10l3 3 3-3"></path></svg></span>
+    <div class="body">
+      <div class="title" id="recvTitle">启动接收服务</div>
+      <div class="subline hide" id="recvSub"></div>
+    </div>
+    <span class="act" id="recvAction"></span>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- 第二节：投射内容（仅当所选设备已连接且未在接收时显示） -->
+  <div id="secSrc" class="hide">
+    <div class="hd">投射内容 · 最近窗口</div>
+    <div id="srcList"></div>
+    <div class="subhost hide" id="moreWinHost">
+      <div class="more" id="moreWinBtn">
+        <span class="pad"></span>
+        <span class="emj" style="width:16px;flex-shrink:0"></span>
+        <span class="name">更多窗口</span>
+        <span>▸</span>
+      </div>
+      <div class="submenu hide" id="moreWinMenu"></div>
+    </div>
+  </div>
+  <div class="sep hide" id="sepSrc"></div>
+
+  <!-- 第三节：已配对设备 -->
+  <div class="hd" id="devHeader">投射目标 · 已配对设备</div>
+  <div id="devList"></div>
+  <div id="addDevItem" class="item hide">
+    <span class="ico">＋</span>
+    <div class="body"><div class="title">添加设备…</div></div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- 第四节：显示（作为显示器时） -->
+  <div class="hd">显示（作为显示器时）</div>
+  <div class="chiprow">
+    <span class="lbl">分辨率</span>
+    <div class="chips" id="resChips"></div>
+  </div>
+  <div class="chiprow">
+    <span class="lbl">缩放</span>
+    <div class="chips" id="scaleChips"></div>
+  </div>
+  <div class="subhost" id="moreQHost">
+    <div class="more" id="moreQBtn">
+      <span class="pad"></span>
+      <span class="name">更多画质…</span>
+      <span class="val" id="qualityName"></span>
+      <span>▸</span>
+    </div>
+    <div class="submenu hide" id="moreQMenu"></div>
+  </div>
+  <div id="relayItem" class="item">
+    <span class="ico">⚙</span>
+    <div class="body"><div class="title">中转设置…</div></div>
+  </div>
+
+  <div class="sep"></div>
+
+  <!-- 尾部 -->
+  <div id="openPanelItem" class="item">
+    <span class="ico">▢</span>
+    <div class="body"><div class="title">打开主面板</div></div>
+  </div>
+  <div id="quitItem" class="item">
+    <span class="ico">✕</span>
+    <div class="body"><div class="title">退出</div></div>
+  </div>
+
+  <div id="toast"></div>
+</div>
+<script src="./tray.js"></script>
+</body>
+</html>
