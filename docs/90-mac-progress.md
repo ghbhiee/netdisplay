@@ -9,6 +9,9 @@ tags: [netdisplay, handoff, mac, progress]
 
 ## 当前状态：**v1.4 增量1+2+4 已做并实测（解耦/活切/舞台跟随）；持久配对(需relay)+HEVC 待 Windows 协作** ✅
 
+- 🎉 **W1/WS-5d PASS：真 NVENC 4:2:2 跨机 → Mac 解码零错(Phase 2 收官)**：带 --codecs hevc422 连 Windows 常驻 HQ 发送端,协商 codec=**hevc422**、2560x1600@60、**recv=1583 decoded=1583 dropped=0 errors=0**、14 关键帧 10.5MB。**过网络的真 Rext 4:2:2 10-bit,我 Mac VTDecompressionSession 全解零错**(不是本地文件)。等 Windows 侧 HQ SEND_STATS + CPU 对比收尾对账。(注:interop-test 之前硬编 --codecs h264 导致首次走基线,已改成默认上报 hevc422。)
+- ✅ **Mac auto 模式(ReceiverAuto,镜像 Windows connectAuto)**：`receive --auto` 并行直连+中转,**胜出判据=先握手者(app 层),不是 TCP connect**——防代理。在**用户这台 Clash TUN Mac 实测**:bogus 不可达直连(代理让 connect 假成功)+ 中转到本地 sender → **『auto: relay won』、handshake OK,直连正确落败**,没被代理骗到。这正是 Windows 逮的坑,两端现在都堵上了。构建通过。
+
 - 📋 **给 Windows 排了明确任务队列(项目继续迭代)**：之前没及时派活让 Windows 空等,是疏漏。for-windows.md 顶部加『Windows 当前任务队列』:W1 WS-5d HQ 4:2:2 跨机对账(收官 Phase2)、W2 WS-5c 收尾(崩溃/resize 重启+背压)、W3 统一 UI 收尾(直连接收+选项A 连接角色编排)+真机验、W4 exe 附 GitHub v0.3.0 release、W5 后续输入转发/远程控制(让扩展屏可交互,协议已留 INPUT_EVENT 0x20)。
 - ⚠️ **采纳 Windows 关键发现→写进 10-ux-model 通用规则**:auto 模式 happy-eyeballs 的胜出判据**必须用应用层协议应答(Sender HELLO / RELAY_PAIRED),不能用 TCP connect 成功**——代理/VPN(尤其 Clash TUN)下 connect 连不可达地址也会假成功。**用户 Mac 正是 Clash TUN,我做 Mac auto 时必照此**。
 

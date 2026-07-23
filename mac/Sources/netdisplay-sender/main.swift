@@ -76,7 +76,7 @@ func parseArgs() -> Args {
     var a = Args(command: command)
     // NB: "window" is a VALUE flag (--window <appName> = project that app's window
     // on the sender). The receiver's "show a window" toggle is --view.
-    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "view", "stats-repeat"]
+    let boolFlags: Set<String> = ["debug-raw", "quality", "stage", "view", "stats-repeat", "auto"]
     var i = 0
     while i < argv.count {
         let tok = argv[i]
@@ -295,7 +295,39 @@ case "receive":
 
     func runLoop() { if showWindow { NSApplication.shared.setActivationPolicy(.regular); NSApplication.shared.run() } else { dispatchMain() } }
 
-    if let server = args.flags["server"] {
+    // Build a relay client from --server/--secret/--code/--token (shared by relay + auto).
+    func makeRelayClient() -> ReceiverRelayClient? {
+        guard let server = args.flags["server"] else { return nil }
+        let parts = server.split(separator: ":")
+        let rhost = String(parts.first ?? "15.tokencv.com")
+        let rport = UInt16(parts.count > 1 ? Int(parts[1]) ?? Int(Proto.relayPort) : Int(Proto.relayPort))
+        let pinnedHash = args.flags["pairhash"] ?? args.flags["secret"].flatMap { PairStore.pairHash(fromSecret: $0) }
+        return ReceiverRelayClient(host: rhost, port: rport, token: args.flags["token"],
+                                   code: args.flags["code"], pairHashOverride: pinnedHash,
+                                   name: name, deviceId: devId, screen: screen, codecs: codecs)
+    }
+
+    if args.bool("auto") {
+        // Auto: race a direct dial and a relay join; the winner is whoever reaches
+        // the handshake first (proxy-safe — TCP connect alone is a false positive
+        // under Clash TUN). Needs --host (direct peer) and/or --server (relay).
+        let directS: ReceiverSession? = args.flags["host"].map {
+            ReceiverSession(host: $0, port: port, name: name, deviceId: devId, screen: screen, codecs: codecs)
+        }
+        let relayC = makeRelayClient()
+        guard directS != nil || relayC != nil else {
+            Log.error("receive --auto needs --host and/or --server"); exit(2)
+        }
+        directS?.statsEmitSec = statsEmitSec; directS?.statsRepeat = statsRepeat
+        relayC?.statsEmitSec = statsEmitSec; relayC?.statsRepeat = statsRepeat
+        let auto = ReceiverAuto(direct: directS, relay: relayC)
+        auto.onFrame = onFrame; auto.onReady = onReady
+        auto.onProjectionState = onProjState; auto.onResize = onResize
+        Log.info("receive(auto): racing direct(\(args.flags["host"] ?? "-")) + relay(\(args.flags["server"] ?? "-")) codecs=\(codecs)")
+        installSignalHandler { auto.stop(); exit(0) }
+        auto.start()
+        runLoop()
+    } else if let server = args.flags["server"] {
         // Relay mode: JOIN the Sender's room via the relay (code or stored pairHash).
         let parts = server.split(separator: ":")
         let rhost = String(parts.first ?? "15.tokencv.com")

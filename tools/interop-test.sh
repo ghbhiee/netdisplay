@@ -43,7 +43,7 @@ fi
 pkill -f "netdisplay-sender receive" 2>/dev/null; sleep 1
 echo "joining shared room for ${SECS}s…"
 caffeinate -u -t "$((SECS+5))" >/dev/null 2>&1 &
-"$BIN" receive --server "$RELAY" --token "$TOKEN" --secret "$SECRET" --codecs h264 \
+"$BIN" receive --server "$RELAY" --token "$TOKEN" --secret "$SECRET" --codecs hevc422,hevc,h264 \
        --stats-after 5 --stats-repeat >"$LOG" 2>&1 &
 P=$!; sleep "$SECS"; kill -INT "$P" 2>/dev/null; sleep 1; kill "$P" 2>/dev/null; wait "$P" 2>/dev/null || true
 
