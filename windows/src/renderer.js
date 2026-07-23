@@ -31,6 +31,7 @@ let reconnectTimer = null;
 let reconnectDelay = 1000;
 
 let plainCodeTried = false; // 交接期：pairHash 房间没人时，是否已回退试过明文码
+let firstContact = false; // 首次接触（还不知道对端 deviceId）：join 扑空要改成 register
 let sharedSecret = null; // --secret：联调用共享固定密钥（优先于持久保存的）
 let sharedHash = null; // --pairhash：直接指定房间
 
@@ -402,8 +403,43 @@ function doPair(code, addr) {
   saveDevices(devices);
   selectedId = id;
   localStorage.setItem("selectedId", id);
+  role.clearPairing(); // 换了对象就别拿旧 peerId 算角色
   pushState();
-  toast((addr || "").trim() ? `已配对，将优先直连 ${addr}` : "已配对，将通过中转连接");
+
+  // 配对不是「在本地记一笔」就完了——用户此刻最想知道的是「成了没有、对面是谁」。
+  // 而这不需要造一套独立的握手：v1.4 早就把连接和投射解耦了，待命连接本来就会
+  // 交换 HELLO，HELLO 里本来就带 deviceId 和 name。所以直接起待命连接，
+  // 等 HELLO 到了再 promote + 报出对方名字。
+  toast("配对中，等待对方…");
+  setRecvSvc(true);
+}
+
+// A 位（监听/注册）时，对端 HELLO 只到 sender.js，renderer 的 onFrame 看不到。
+// 不接这个出口的话，「配对成功、显示对方名字」只在 B 位那一侧发生，J1 1.2 会一半通过
+// 一半不通过——而且看起来像是「对方实现有问题」。
+sender.setPeerHelloHandler((h) => {
+  try {
+    if (h.deviceId) role.rememberPeer(h.deviceId);
+    firstContact = false;
+    const d = selectedDevice();
+    if (!d) return;
+    if (h.name) d.name = String(h.name).slice(0, 40);
+    d.online = true;
+    saveDevices(devices);
+    peerName = deviceLabel(d);
+    promotePaired(d);
+    pushState();
+  } catch (e) {
+    console.log("[recv] 处理对端 HELLO 出错: " + ((e && e.stack) || e));
+  }
+});
+
+// 首次拿到对端 HELLO = 配对真正完成。此前设备是「记下了但没见过对方」的状态。
+function promotePaired(d) {
+  if (!d || d.paired) return;
+  d.paired = true;
+  saveDevices(devices);
+  toast(`已与「${deviceLabel(d)}」配对成功`);
 }
 
 // ===== 三个动作：开投 / 回待命 / 开关接收服务 =====
@@ -576,7 +612,15 @@ function connect() {
   const d = selectedDevice();
   if (!d) return setStatus("还没有配对设备", true);
 
-  if (role.myPosition(deviceId) === "A") return startListening();
+  const pos = role.myPosition(deviceId);
+  if (pos === "A") return startListening();
+
+  // pos === null：刚配完对，还没交换过 HELLO，两端都不知道对端 deviceId，
+  // 也就都算不出该谁监听。照「不是 A 就拨号」处理的话**两端都会拨号、没人注册**，
+  // 双双拿到 code_not_found —— 用户输了正确的码却被告知「配对码不存在」。
+  // 解法不需要新协议：先 join，扑空就改为 register 并等着。两端跑同一个算法，
+  // 房间空就当房主、有人就进去。
+  if (pos === null) firstContact = true;
 
   // B 位：我去拨对方。先停掉可能还开着的待命，否则会在中转上留一个没人用的
   // 注册，用户看不见也不知道，还占着房间。
@@ -855,12 +899,14 @@ function onFrame(type, payload) {
         if (h.lanAddrs) setTimeout(() => tryUpgradeToDirect(h.lanAddrs), 200);
         // v1.10：对端自报的设备名。别名仍然优先——那是本机用户自己起的。
         peerName = "";
+        firstContact = false; // 见到对端了，之后按 deviceId 算角色
         const dd = selectedDevice();
         if (dd) {
           if (h.name) dd.name = String(h.name).slice(0, 40);
           dd.online = true;
           saveDevices(devices);
           peerName = deviceLabel(dd);
+          promotePaired(dd); // 名字已拿到，这时候报「配对成功」才名副其实
         } else if (h.name) peerName = String(h.name).slice(0, 40);
         if (h.deviceId) {
           const known = role.getPeerId();
@@ -947,6 +993,18 @@ function onFrame(type, payload) {
       // 都正常，用户只会看到「配对码不存在」。所以 pairHash 没找到房间时，
       // 自动再用明文码试一次。等两端都升级后这条路自然不会被走到。
       const dd = selectedDevice();
+      // 首次接触：房间是空的说明对端还没到，那就由我来当房主等它。
+      // 两端跑同一个算法，谁先到谁开房间，后到的进来，不需要预先约定角色。
+      if (r === "code_not_found" && firstContact) {
+        firstContact = false;
+        teardown(null, true);
+        // 随机退避：两端同时发现房间空会同时 register，relay 的替换语义下
+        // 后者顶掉前者；错开一点就不会撞上 flapping 保护（15s 内替换 >3 次）。
+        const backoff = 60 + Math.floor(Math.random() * 240);
+        console.log(`[recv] 房间还没人，改为开房等待（${backoff}ms 后）`);
+        setTimeout(() => { if (!sock) startListening(); }, backoff);
+        return;
+      }
       if (r === "code_not_found" && !plainCodeTried && dd && dd.code) {
         plainCodeTried = true;
         console.log("[recv] pairHash 房间无人，回退用明文码再试一次（对端可能是老版本）");
@@ -1303,6 +1361,13 @@ window.addEventListener("keyup", (e) => {
     const dump = () => console.log("SEND_STATS " + JSON.stringify(sender.getSenderStats()));
     setTimeout(dump, +a.sendStatsAfter * 1000);
     if (a.sendStatsRepeat) setInterval(dump, +a.sendStatsAfter * 1000);
+  }
+  // --start-cast：走 handleCmd 的真实路径，和用户点「开始投射」等价。
+  // 刻意不复用 --send-relay：那条旁路直接指定角色、绕开了角色编排，正是它
+  // 让首次配对的编排死锁一直没被测出来。联调要测的就是真实路径。
+  if (a.startCast) {
+    setTimeout(() => handleCmd({ cmd: "start-cast" }), 1200);
+    return;
   }
   if (a.autoConnect) connectDirectCli(a.autoConnect, true);
   else if (a.connect) connectDirectCli(a.connect, false);

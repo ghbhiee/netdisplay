@@ -130,7 +130,9 @@ function render() {
   $("recvItem").classList.toggle("dim", casting);
 
   // --- 第二节：投射内容 ---
-  const srcOn = !!sel && sel.conn === "on" && !receiving;
+  // 接收服务开着就不列投什么。投射与接收互斥，正等着收画面的时候还摆一排
+  // 「投射内容」，等于请用户点一个必然会被拒的东西。（用户提的，两端一致。）
+  const srcOn = !!sel && sel.conn === "on" && !receiving && svcOff;
   show($("secSrc"), srcOn);
   show($("sepSrc"), srcOn);
   if (srcOn) renderSources(s);

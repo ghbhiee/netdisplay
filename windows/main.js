@@ -31,6 +31,7 @@ const testArgs = {
   pairCode: arg("pair-code"), // 测试：按 6 位码建一条配对设备并选中，走真实 UI 路径
   showTray: argv.includes("--show-tray") ? "1" : null, // 测试：启动后自动弹出托盘菜单（否则只能手点图标，没法自动核对）
   probeRelay: argv.includes("--probe-relay") ? "1" : null, // 测试：只做一次中转健康探测，打印结论后退出
+  startCast: argv.includes("--start-cast") ? "1" : null, // 联调：配对后直接开投，走 handleCmd 真实路径（不是 --send-relay 那条旁路）
   send: argv.includes("--send") ? "1" : null, // 启动即开发送端（WS-1）
   sendRelay: argv.includes("--send-relay") ? "1" : null, // 启动即开中转发送（WS-2）
   sendRelayCode: arg("send-relay-code"), // 测试：固定配对码（并强制走码注册）
@@ -101,12 +102,12 @@ function createEngine() {
     if (!quitting && uiEnabled) { e.preventDefault(); engineWin.hide(); send(engineWin, "nd-cmd", { cmd: "drop-stream" }); }
   });
 
-  // headless：把 renderer 的日志转到主进程 stdout，无需 --enable-logging
-  if (isHeadless) {
-    engineWin.webContents.on("console-message", (_e, _lvl, message) => {
-      if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE|^PROBE_RESULT/.test(message)) console.log(message);
-    });
-  }
+  // 把引擎日志转到主进程 stdout。以前只在 headless 下转，于是真实运行时排障
+  // 只能开 devtools 看——而现场联调恰恰是最需要日志的时候。过滤器只认我们自己
+  // 的前缀，不会把 Chromium 的噪音带出来。
+  engineWin.webContents.on("console-message", (_e, _lvl, message) => {
+    if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE|^PROBE_RESULT/.test(message)) console.log(message);
+  });
 }
 
 function createPanel() {

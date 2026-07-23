@@ -21,6 +21,7 @@ const deviceId = () => {
 let server = null;
 let active = null; // 当前会话 {sock, stop()}
 let onStatus = () => {};
+let onPeerHello = null; // A 位时把对端 HELLO 抛给上层（配对完成要靠它拿对方名字）
 let stats = null; // 最近一次会话的发送统计（会话结束后保留，供互调对账）
 let sessionOpts = {}; // 启动时传入的选项（HQ 开关、ffmpeg 路径等）
 const dbg = (...a) => console.log("[sender]", ...a); // --enable-logging 时可见
@@ -564,6 +565,9 @@ function attachReceiverHandler(sock, relayMode) {
             sock.destroy();
             return;
           }
+          // 我在 A 位时，对端的 HELLO 只经过这里——renderer 的 onFrame 看不到它。
+          // 不往上抛的话，「配对完成、显示对方名字」在 A 位这一侧永远不会发生。
+          if (onPeerHello) { try { onPeerHello(hello); } catch (e) { dbg("onPeerHello 抛错: " + e.message); } }
           try {
             active = await startSession(sock, hello, relayMode);
           } catch (e) {
@@ -750,4 +754,5 @@ module.exports = {
   setSource, // WS-3：选择投射源（null = 主屏），下次会话生效
   requireWindow, // WS-3：声明必须投某窗口，找不到就报错而非退回整屏
   isSending: () => !!server || relayActive,
+  setPeerHelloHandler: (fn) => { onPeerHello = fn; }, // A 位时对端 HELLO 的出口
 };
