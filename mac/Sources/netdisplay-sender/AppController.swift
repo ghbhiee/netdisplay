@@ -166,46 +166,14 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - Dialogs
 
     private func addDevice() {
-        guard let (code, addr) = PairDialog.run() else { return }
-        let dev = DeviceStore.pairFromCode(code, addr: addr)
+        // The dialog announces + waits internally and returns a device ONLY once the
+        // peer confirmed with the same code (docs/11 §1 + user's security ask). If
+        // the user closes/cancels, nothing is saved — the code can't be exploited.
+        guard let dev = PairDialog.run(config: config, deviceId: deviceId, name: senderName) else { return }
+        DeviceStore.upsert(dev)
         model.devices = DeviceStore.load()
         model.select(secret: dev.secret)
-        // Mutual pairing (docs/11, user's model): announce the room and WAIT for
-        // the peer to enter the same code. "已配对" only becomes true once the
-        // relay confirms the *other* machine really used the same code (with its
-        // name). Until then the device shows 「等待对方输入配对码…」.
-        guard let hash = dev.pairHash else { return }
-        model.pairing.insert(dev.secret)
-        model.onChange?()
-        let pa = PairAnnounce.start(server: config.relayServer,
-                                    token: config.relayToken.isEmpty ? nil : config.relayToken,
-                                    pairHash: hash, deviceId: deviceId, name: senderName) { [weak self] r in
-            guard let self else { return }
-            switch r {
-            case .confirmed(let peerId, let peerName):
-                DeviceStore.promote(secret: dev.secret, deviceId: peerId, name: peerName)
-                self.model.devices = DeviceStore.load()
-                self.model.pairing.remove(dev.secret)
-                self.announcers[dev.secret] = nil
-                Log.info("pair: CONFIRMED — 已配对 \(peerName) (\(peerId))")
-                self.model.onChange?()
-            case .failed(let reason):
-                self.model.pairing.remove(dev.secret)
-                self.announcers[dev.secret] = nil
-                self.pairAuthAlert(reason == "unauthorized"
-                    ? "中转 token 错误。请在「中转设置」里改对 token 后重新配对。"
-                    : "配对失败：\(reason)。请确认网络与中转服务器。")
-                self.model.onChange?()
-            }
-        }
-        announcers[dev.secret] = pa
-    }
-    private var announcers: [String: PairAnnounce] = [:]
-
-    /// Non-blocking heads-up if pairing failed.
-    private func pairAuthAlert(_ text: String) {
-        let a = NSAlert(); a.messageText = "配对未完成"; a.informativeText = text
-        a.addButton(withTitle: "好"); NSApp.activate(ignoringOtherApps: true); a.runModal()
+        Log.info("pair: CONFIRMED — 已配对 \(dev.name)")
     }
 
     private func editRelaySettings() {
