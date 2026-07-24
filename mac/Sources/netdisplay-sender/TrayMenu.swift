@@ -77,7 +77,9 @@ final class TrayMenu: NSObject, NSMenuDelegate {
         } else {
             for d in model.devices {
                 let sel = d.secret == model.selectedSecret
-                let status = (sel && model.conn == .on) ? model.connLabel : "已配对"
+                let status = model.pairing.contains(d.secret) ? "等待对方…"
+                           : (sel && model.conn == .on) ? model.connLabel
+                           : (d.nameKnown ? "已配对" : "未连接")
                 let it = item("\(d.displayName) · \(status)", #selector(selectDevice), checked: sel, obj: d.secret)
                 let sub = NSMenu()
                 let rm = NSMenuItem(title: "解除配对…", action: #selector(removeDevice), keyEquivalent: "")

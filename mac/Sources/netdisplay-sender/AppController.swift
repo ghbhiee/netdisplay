@@ -135,26 +135,41 @@ final class AppController: NSObject, NSApplicationDelegate {
         let dev = DeviceStore.pairFromCode(code, addr: addr)
         model.devices = DeviceStore.load()
         model.select(secret: dev.secret)
-        // New model (user's design): pairing does NOT open a client↔client
-        // connection — it just saves the code and *authenticates with the relay*
-        // (reachable + token valid). The peer's name fills in on the first
-        // projection. Who-connects-to-whom only matters at projection time.
-        RelayHealth.check(server: config.relayServer,
-                          token: config.relayToken.isEmpty ? nil : config.relayToken) { [weak self] st in
-            switch st {
-            case .ok(let ms): Log.info("pair: relay auth OK (\(ms)ms) — 已配对 \(dev.code)")
-            case .unauthorized:
-                self?.pairAuthAlert("中转 token 错误。配对已保存，但投射前请在「中转设置」里改对 token。")
-            case .unreachable:
-                self?.pairAuthAlert("连不上中转服务器。配对已保存，但投射前请确认网络与服务器地址。")
-            default: break
+        // Mutual pairing (docs/11, user's model): announce the room and WAIT for
+        // the peer to enter the same code. "已配对" only becomes true once the
+        // relay confirms the *other* machine really used the same code (with its
+        // name). Until then the device shows 「等待对方输入配对码…」.
+        guard let hash = dev.pairHash else { return }
+        model.pairing.insert(dev.secret)
+        model.onChange?()
+        let pa = PairAnnounce.start(server: config.relayServer,
+                                    token: config.relayToken.isEmpty ? nil : config.relayToken,
+                                    pairHash: hash, deviceId: deviceId, name: senderName) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case .confirmed(let peerId, let peerName):
+                DeviceStore.promote(secret: dev.secret, deviceId: peerId, name: peerName)
+                self.model.devices = DeviceStore.load()
+                self.model.pairing.remove(dev.secret)
+                self.announcers[dev.secret] = nil
+                Log.info("pair: CONFIRMED — 已配对 \(peerName) (\(peerId))")
+                self.model.onChange?()
+            case .failed(let reason):
+                self.model.pairing.remove(dev.secret)
+                self.announcers[dev.secret] = nil
+                self.pairAuthAlert(reason == "unauthorized"
+                    ? "中转 token 错误。请在「中转设置」里改对 token 后重新配对。"
+                    : "配对失败：\(reason)。请确认网络与中转服务器。")
+                self.model.onChange?()
             }
         }
+        announcers[dev.secret] = pa
     }
+    private var announcers: [String: PairAnnounce] = [:]
 
-    /// Non-blocking heads-up if relay authentication failed during pairing.
+    /// Non-blocking heads-up if pairing failed.
     private func pairAuthAlert(_ text: String) {
-        let a = NSAlert(); a.messageText = "配对：中转认证未通过"; a.informativeText = text
+        let a = NSAlert(); a.messageText = "配对未完成"; a.informativeText = text
         a.addButton(withTitle: "好"); NSApp.activate(ignoringOtherApps: true); a.runModal()
     }
 

@@ -434,6 +434,22 @@ case "traymenu-dump":
     dump("接收服务等待", configure: { $0.startRecvService() })
     exit(0)
 
+case "pair-test":
+    // Exercise the mutual-pairing client: announce a code's room, wait for a peer.
+    let code = args.str("code", "TEST99")
+    let hash = PairCode.pairHash(fromCode: code) ?? ""
+    let server = args.str("server", "15.tokencv.com:47700")
+    Log.info("pair-test: announcing code \(code) room \(hash.prefix(12))… as \(devId.prefix(8)) name=\(name)")
+    PairAnnounce.start(server: server, token: args.flags["token"], pairHash: hash,
+                       deviceId: devId, name: name) { r in
+        switch r {
+        case .confirmed(let id, let n): Log.info("pair-test: CONFIRMED ✓ peer name=\(n) id=\(id)")
+        case .failed(let reason): Log.info("pair-test: FAILED \(reason)")
+        }
+        exit(0)
+    }
+    dispatchMain()
+
 case "relay-health":
     // Probe relay reachability + token via the self-pair trick (TUN-proof).
     let server = args.str("server", "15.tokencv.com:47700")

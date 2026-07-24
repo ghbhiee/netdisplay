@@ -29,6 +29,8 @@ enum MsgType: UInt8 {
     case relayJoin = 0x41
     case relayPaired = 0x42
     case relayError = 0x43
+    case pairAnnounce = 0x44   // v1.12: mutual pairing
+    case pairConfirmed = 0x45
 }
 
 // MARK: - Frame encoding
@@ -192,6 +194,13 @@ struct RelayJoin: Codable {
 
 struct RelayError: Codable {
     let reason: String
+}
+
+// v1.12 mutual pairing (docs/11 / §2). The announce payload is built inside the
+// PairAnnounce client (its nested Payload); here we just decode the confirmation.
+struct PairConfirmed: Codable {
+    let peerDeviceId: String
+    let peerName: String
 }
 
 // MARK: - VIDEO_FRAME payload builder (§4)

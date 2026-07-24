@@ -388,12 +388,13 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
                               stroke: selected ? Theme.accent : Theme.line, radius: 7)
         let radio = UI.label(selected ? "◉" : "○", size: 13, color: selected ? Theme.accent : Theme.sub)
         let active = selected && model.conn == .on
-        let online = UI.dot(active ? Theme.ok : Theme.sub, size: 8)
+        let waiting = model.pairing.contains(d.secret)
+        let online = UI.dot(active ? Theme.ok : (waiting ? Theme.sub : (d.nameKnown ? Theme.accent : Theme.sub)), size: 8)
         let name = UI.label(d.displayName, size: 13)
-        // Honest status: pairing only saved the code + checked the relay — it does
-        // NOT mean the two machines are connected. So show 未连接 until a projection
-        // actually connects (then the live connection state).
-        let status = UI.label(active ? model.connLabel : "未连接", size: 11, color: Theme.sub)
+        // Honest status: 「等待对方输入配对码…」 while announcing, 「已配对」 only once the
+        // peer confirmed (nameKnown), the live connection state while projecting.
+        let statusText = waiting ? "等待对方输入配对码…" : (active ? model.connLabel : (d.nameKnown ? "已配对" : "未连接"))
+        let status = UI.label(statusText, size: 11, color: Theme.sub)
         let inner = UI.hstack([radio, online, name, NSView(), status], spacing: 9)
         embed(inner, in: row, padX: 10, padY: 8)
         let click = ClickCatcher { [weak self] in self?.model.select(secret: d.secret) }

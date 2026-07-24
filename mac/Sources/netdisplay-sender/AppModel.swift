@@ -25,6 +25,9 @@ final class AppModel {
     var devices: [PairedDevice] = []
     var selectedSecret: String?
     var selected: PairedDevice? { devices.first { $0.secret == selectedSecret } }
+    /// Secrets currently announcing on the relay, waiting for the peer to enter the
+    /// same code (docs/11 mutual pairing). Shown as 「等待对方输入配对码…」.
+    var pairing: Set<String> = []
 
     /// Fires after any state change so observers rebuild UI.
     var onChange: (() -> Void)?
