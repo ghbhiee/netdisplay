@@ -32,6 +32,10 @@ const (
 	// 同房间不同 deviceId 的两个 announce 就给双方发 PAIR_CONFIRMED 并记录关系。
 	tPairAnnounce  = 0x44
 	tPairConfirmed = 0x45
+	// v1.14: presence — app 开着时对每个配对维持一个 PRESENCE 通道上报状态，relay
+	// 把对端状态转给你（docs/11 §5）。
+	tPresence     = 0x48
+	tPeerPresence = 0x49
 
 	announceTTL = 2 * time.Minute // 等对方输码的最长时间
 )
@@ -44,6 +48,88 @@ type ctrlMsg struct {
 	Token    string `json:"token,omitempty"` // v1.5 公网鉴权
 	DeviceId string `json:"deviceId,omitempty"`
 	Name     string `json:"name,omitempty"`
+	State    string `json:"state,omitempty"` // v1.14 presence: idle/casting/recv-waiting/receiving
+}
+
+// v1.14 presence: a client's live state for a paired room.
+type presenceEntry struct {
+	conn     net.Conn
+	deviceId string
+	name     string
+	state    string
+}
+
+var (
+	presenceMu sync.Mutex
+	presence   = map[string][]*presenceEntry{} // pairHash → present clients
+)
+
+func sendPeerPresence(c net.Conn, peerId, peerName, peerState string) {
+	b, _ := json.Marshal(map[string]string{"peerDeviceId": peerId, "peerName": peerName, "peerState": peerState})
+	writeFrame(c, tPeerPresence, b)
+}
+
+// upsertPresence records/updates a client's state for a room and cross-notifies
+// peers (different deviceId). Called on first PRESENCE and every update.
+func upsertPresence(key string, c net.Conn, deviceId, name, state string) {
+	presenceMu.Lock()
+	list := presence[key]
+	var me *presenceEntry
+	for _, e := range list {
+		if e.deviceId == deviceId {
+			me = e
+			break
+		}
+	}
+	if me == nil {
+		me = &presenceEntry{conn: c, deviceId: deviceId, name: name, state: state}
+		list = append(list, me)
+		presence[key] = list
+	} else {
+		me.conn = c
+		me.name = name
+		me.state = state
+	}
+	peers := make([]*presenceEntry, 0, len(list))
+	for _, e := range list {
+		if e.deviceId != deviceId {
+			peers = append(peers, &presenceEntry{conn: e.conn, deviceId: e.deviceId, name: e.name, state: e.state})
+		}
+	}
+	presenceMu.Unlock()
+	for _, p := range peers {
+		sendPeerPresence(c, p.deviceId, p.name, p.state) // tell me each peer
+		sendPeerPresence(p.conn, deviceId, name, state)  // tell each peer my state
+	}
+}
+
+// removePresence drops a client (on disconnect) and tells peers it went offline.
+func removePresence(key string, c net.Conn) {
+	presenceMu.Lock()
+	list := presence[key]
+	var gone *presenceEntry
+	nl := list[:0]
+	for _, e := range list {
+		if e.conn == c {
+			gone = e
+		} else {
+			nl = append(nl, e)
+		}
+	}
+	presence[key] = nl
+	if len(nl) == 0 {
+		delete(presence, key)
+	}
+	peers := make([]*presenceEntry, 0, len(nl))
+	for _, e := range nl {
+		peers = append(peers, &presenceEntry{conn: e.conn, deviceId: e.deviceId})
+	}
+	presenceMu.Unlock()
+	if gone != nil {
+		for _, p := range peers {
+			sendPeerPresence(p.conn, gone.deviceId, gone.name, "offline")
+		}
+	}
 }
 
 // A client waiting (via PAIR_ANNOUNCE) for a peer to announce the same room.
@@ -370,6 +456,28 @@ func handle(c net.Conn) {
 		buf := make([]byte, 1)
 		c.Read(buf)
 		removePending(key, c)
+		c.Close()
+		return
+	case tPresence:
+		// Persistent presence channel: report my state, learn peers', get pushed
+		// updates. Loop until the conn closes (docs/11 §5).
+		upsertPresence(key, c, m.DeviceId, m.Name, m.State)
+		log.Printf("PRESENCE room=%s deviceId=%s state=%s", shortKey(key), m.DeviceId, m.State)
+		c.SetReadDeadline(time.Time{})
+		for {
+			t2, p2, err := readFrame(c)
+			if err != nil {
+				break
+			}
+			if t2 != tPresence {
+				continue
+			}
+			var mm ctrlMsg
+			if json.Unmarshal(p2, &mm) == nil {
+				upsertPresence(key, c, mm.DeviceId, mm.Name, mm.State)
+			}
+		}
+		removePresence(key, c)
 		c.Close()
 		return
 	default:

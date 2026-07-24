@@ -71,6 +71,8 @@ tags: [netdisplay, handoff, protocol, spec]
 | 0x45 | PAIR_CONFIRMED | Relay→双方 | JSON `{peerDeviceId,peerName}` | v1.12 |
 | 0x46 | PROBE | 探测方→对端:47800 | 8 字节随机数（回显用） | v1.13 |
 | 0x47 | PROBE_ACK | 对端→探测方 | 原样回显 PROBE 的 8 字节 | v1.13 |
+| 0x48 | PRESENCE | Client→Relay | JSON `{v,pairHash,deviceId,name,state,token}` | v1.14 |
+| 0x49 | PEER_PRESENCE | Relay→Client | JSON `{peerDeviceId,peerName,peerState}` | v1.14 |
 
 未知 type：**跳过该帧继续解析**（向前兼容），但应记日志。
 
