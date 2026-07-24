@@ -9,6 +9,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > 修改协议必须先改这里并在下方 changelog 记录，再改代码。
 >
 > Changelog:
+> - 2026-07-23 v1.13 **连通性探测 `PROBE`(0x46)/`PROBE_ACK`(0x47)（§3.8, docs/11 §2）**：UI 显示「当前直连/中转哪条通」，优先直连。**直连判据 = 收到对端 PROBE_ACK，不是 TCP connect 成功**（Clash TUN 会对不可达地址假成功，两端老坑）。两端在 47800 常驻一个轻量探测响应器：收到 PROBE(8 字节随机回显) 立即原样回 PROBE_ACK，无需会话状态，与直连投射会话共存（先读一帧，PROBE 就回 ACK、HELLO 就进会话）。设了对方 IP 才探直连；没设不探不显示。中转探测=自配对随机房收 RELAY_PAIRED。显示优先级：直连通→「直连·通 Xms」，否则中转结果。两端判据必须一字不差。（Mac 端 Claude，用户要求；Windows 待实装）
 > - 2026-07-23 v1.12 **双向配对撮合 `PAIR_ANNOUNCE`(0x44)/`PAIR_CONFIRMED`(0x45)**（docs/11）：让「已配对」名副其实——只有**另一台也用同一个码连上**才算配对成功，不是各自本地存码/只探测中转。两端配对时各发 `PAIR_ANNOUNCE{v,pairHash,deviceId,name,token}`；relay 按 pairHash 暂存(TTL 2min)，见到**同 pairHash、不同 deviceId** 的第二个 announce → 给双方各发 `PAIR_CONFIRMED{peerDeviceId,peerName}` 并在内存记录该对；**同 deviceId 去重、绝不自撮合**；token 校验同 REGISTER/JOIN。谁先发起都行。已部署 15 并双客户端实测通过。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.11 **配对码升级为 6 位字母+数字（§3.7）**：旧版 6 位纯数字（1M）太弱 → 6 位大小写不敏感字母+数字（31^6≈887M）。派生前先 `normalize`（转大写+仅留 [A-Z0-9]）再走原 §3.7 哈希；自检向量更新为 code `"K7M2QX"`。生成用无歧义字符集 `ABCDEFGHJKMNPQRSTUVWXYZ23456789`。**随之废弃 §3.7「code_not_found→明文码回退」那条交接兼容**：码格式一变，老 0.3.0 的 6 位纯数字明文房永远对不上，回退已无意义（两端确认都上新版）。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.10 **`name` 语义改为「用户可编辑的设备名」（§3.6）+ 配对码→房间推导（§3.7）**：`name` 那条线格式不变、老端兼容；§3.7 是新界面「两端输入同一个码」带来的**硬性互通约定**，推导算法差一字节就会各自进不同房间且两边日志都正常，务必按自检向量对一遍。（Windows 端 Claude）
@@ -68,6 +69,8 @@ tags: [netdisplay, handoff, protocol, spec]
 | 0x43 | RELAY_ERROR | Relay→任一方 | JSON `{"reason": string}` | M3 |
 | 0x44 | PAIR_ANNOUNCE | Client→Relay | JSON `{v,pairHash,deviceId,name,token}` | v1.12 |
 | 0x45 | PAIR_CONFIRMED | Relay→双方 | JSON `{peerDeviceId,peerName}` | v1.12 |
+| 0x46 | PROBE | 探测方→对端:47800 | 8 字节随机数（回显用） | v1.13 |
+| 0x47 | PROBE_ACK | 对端→探测方 | 原样回显 PROBE 的 8 字节 | v1.13 |
 
 未知 type：**跳过该帧继续解析**（向前兼容），但应记日志。
 
@@ -207,6 +210,25 @@ pairHash = "bec0ed709f8fd1a53d42d5e243e6cb134a939467f50bb73a5099722e5c5ae924"
 再用明文码试一次**再报错。等两端都升级后这条回退路径自然不会被走到。Windows 端已实现
 （`renderer.js` 的 `RELAY_ERROR` 分支，实测老端明文码注册 → 新端回退命中 → 握手 →
 升级直连，755 帧 0 错）。
+
+### 3.8 连通性探测（UI 显示用，v1.13）——`PROBE`/`PROBE_ACK`
+
+界面显示这条配对**当前直连/中转哪条通**，优先直连（docs/11 §2）。**两端判据必须一字不差。**
+
+**探测响应器（两端常驻）**：在 `47800` 监听，读到的第一帧若是 `PROBE(0x46)`（payload =
+8 字节随机数），**立即原样回 `PROBE_ACK(0x47)`**（回显那 8 字节）然后可关闭该连接；若第一帧
+是 `HELLO`，则进入正常直连投射会话（§3.1）。无需任何会话状态，空闲时也能被探。
+
+**直连探测**（仅当该设备**配了对方 IP**）：拨 `对方IP:47800`，发 `PROBE`（随机 8 字节）。
+- **判据 = 收到 `PROBE_ACK` 且回显匹配**——**不是** TCP `connect` 成功。Clash/Mihomo **TUN**
+  会对根本不可达的地址也返回 connect 成功，只有 app 层应答才证明真的通到对端。
+- 收到 → 直连通，`RTT` = 往返耗时；~1.5s 超时 → 不通。**没设 IP → 不探直连、不显示「直连不通」**。
+
+**中转探测**：自配对探针（register+join 一个随机 64hex 房，收到 `RELAY_PAIRED` = relay 可达 +
+token 有效）。
+
+**显示优先级**：设了 IP 且直连通 → 「直连 · 通 Xms」；否则 → 中转结果「中转 · 可用 Xms /
+连不上 / token 错」。真正投射选路同优先级（直连优先、回落中转；判据同上）。
 
 ## 4. VIDEO_FRAME（0x10）payload 格式
 
