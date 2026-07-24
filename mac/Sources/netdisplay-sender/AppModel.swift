@@ -87,8 +87,13 @@ final class AppModel {
 
     // MARK: - Casting (投射本机)
 
-    /// Can we begin casting? (design 禁用条件: 未选设备 / 正在接收 / 接收服务开着的互斥。)
-    var canCast: Bool { role == .standby && selected != nil && recvSvc == .off }
+    /// Can we begin casting? (design 禁用条件: 未选设备 / 正在接收 / 接收服务开着的互斥 /
+    /// 对方离线。) Offline only blocks when presence actually says so (docs/11 §5) —
+    /// until the peer reports presence, casting is allowed.
+    var canCast: Bool {
+        guard role == .standby, let d = selected, recvSvc == .off else { return false }
+        return peerPresence[d.secret] != "offline"
+    }
 
     /// Begin casting to the selected device (design: 开始投射 implicitly connects).
     /// Returns false (with no state change) if blocked.

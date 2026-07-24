@@ -157,7 +157,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             height: Int(CGDisplayPixelsHigh(CGMainDisplayID())),
             scale: 1, fps: config.fps, bitrateMbps: config.bitrateAuto ? nil : config.bitrateMbps)
         let win = ReceiverWindow()
-        win.onClose = { [weak self] in self?.model.receiveStopped() }   // 关窗=断开投屏
+        win.onClose = { [weak self] in self?.model.stopRecvService() }   // 用户关窗 = 停止接收(不再重连)
         let client = ReceiverRelayClient(
             host: rhost, port: rport, token: config.relayToken.isEmpty ? nil : config.relayToken,
             code: nil, pairHashOverride: hash,
@@ -172,6 +172,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         client.onResize = { w, h in win.configure(width: w, height: h, title: "NetDisplay — \(device.displayName) 的画面") }
         client.onProjectionState = { a, l, k in win.setLabel(a ? (l ?? k) : "等待投射…") }
         client.onFrame = { img, _ in win.present(img) }
+        client.onStreamEnded = { [weak self] in
+            win.closeWindow()               // 投射方停止 → 关掉接收窗口
+            self?.model.receiveStopped()    // 回待命；接收服务保持，对方再投时自动重开窗口
+        }
         receiver = client
         receiverWindow = win
         client.start()
@@ -180,6 +184,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private func stopReceiving() {
         receiver?.stop(); receiver = nil
+        receiverWindow?.closeWindow()
         receiverWindow = nil
         pushPresence()
     }

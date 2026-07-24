@@ -17,6 +17,19 @@ final class ReceiverWindow: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) { onClose?() }
 
+    /// Programmatically close the window (e.g. the projector stopped). Does not
+    /// fire onClose (that's for user-initiated closes).
+    func closeWindow() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let w = self.window else { return }
+            w.delegate = nil          // don't trigger onClose (not a user close)
+            w.close()
+            self.window = nil
+            self.imageLayer = nil
+            self.configured = false
+        }
+    }
+
     /// Bottom-left floating status badge (design §5): 「接收中 · 中转 · 3ms」.
     func setBadge(_ text: String?) {
         DispatchQueue.main.async { [weak self] in

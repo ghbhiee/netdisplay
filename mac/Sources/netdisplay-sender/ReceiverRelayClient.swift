@@ -139,10 +139,14 @@ final class ReceiverRelayClient {
         }
     }
 
+    /// Fired (main) when the projection session ends (caster stopped/disconnected)
+    /// — so the GUI can close the receive window while the client keeps waiting.
+    var onStreamEnded: (() -> Void)?
+
     private func onSessionClosed() {
-        // Code-free reconnect only makes sense once we have a stored pairing.
-        if PairStore.currentPairHash(slot: "receiver") != nil { scheduleReconnect() }
-        else { stop(); exit(0) }
+        DispatchQueue.main.async { [weak self] in self?.onStreamEnded?() }
+        if stopped { return }
+        scheduleReconnect()   // keep waiting for the caster to come back (backoff)
     }
 
     private func onRelayClose() {
