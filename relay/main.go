@@ -28,6 +28,12 @@ const (
 	tJoin     = 0x41
 	tPaired   = 0x42
 	tError    = 0x43
+	// v1.12: 双向配对撮合（docs/11）——配对时两端各发 PAIR_ANNOUNCE，relay 见到
+	// 同房间不同 deviceId 的两个 announce 就给双方发 PAIR_CONFIRMED 并记录关系。
+	tPairAnnounce  = 0x44
+	tPairConfirmed = 0x45
+
+	announceTTL = 2 * time.Minute // 等对方输码的最长时间
 )
 
 type ctrlMsg struct {
@@ -36,6 +42,41 @@ type ctrlMsg struct {
 	Code     string `json:"code"`
 	PairHash string `json:"pairHash,omitempty"`
 	Token    string `json:"token,omitempty"` // v1.5 公网鉴权
+	DeviceId string `json:"deviceId,omitempty"`
+	Name     string `json:"name,omitempty"`
+}
+
+// A client waiting (via PAIR_ANNOUNCE) for a peer to announce the same room.
+type pendingAnnounce struct {
+	conn     net.Conn
+	deviceId string
+	name     string
+	at       time.Time
+}
+
+var (
+	pendingMu sync.Mutex
+	pending   = map[string][]*pendingAnnounce{} // pairHash → announces waiting for a peer
+)
+
+func confirmPair(c net.Conn, peerId, peerName string) {
+	b, _ := json.Marshal(map[string]string{"peerDeviceId": peerId, "peerName": peerName})
+	writeFrame(c, tPairConfirmed, b)
+}
+
+func removePending(key string, c net.Conn) {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	list := pending[key]
+	for i, pa := range list {
+		if pa.conn == c {
+			pending[key] = append(list[:i], list[i+1:]...)
+			break
+		}
+	}
+	if len(pending[key]) == 0 {
+		delete(pending, key)
+	}
 }
 
 // v1.5：NETDISPLAY_RELAY_TOKEN 非空时启用鉴权；空 = 放行（私网/向后兼容）
@@ -278,6 +319,58 @@ func handle(c net.Conn) {
 			return
 		}
 		pair(key, r.sender, c)
+		return
+	case tPairAnnounce:
+		// Mutual pairing (docs/11): hold this announce until a peer announces the
+		// same room with a *different* deviceId, then confirm both.
+		pendingMu.Lock()
+		list := pending[key]
+		// Dedup: drop a stale announce from the same deviceId.
+		for i, pa := range list {
+			if pa.deviceId == m.DeviceId {
+				pa.conn.Close()
+				list = append(list[:i], list[i+1:]...)
+				break
+			}
+		}
+		var peer *pendingAnnounce
+		for _, pa := range list {
+			if pa.deviceId != m.DeviceId {
+				peer = pa
+				break
+			}
+		}
+		if peer != nil {
+			// Remove the peer from pending and confirm both sides.
+			nl := list[:0]
+			for _, pa := range list {
+				if pa != peer {
+					nl = append(nl, pa)
+				}
+			}
+			pending[key] = nl
+			if len(pending[key]) == 0 {
+				delete(pending, key)
+			}
+			pendingMu.Unlock()
+			confirmPair(c, peer.deviceId, peer.name)
+			confirmPair(peer.conn, m.DeviceId, m.Name)
+			log.Printf("PAIR_CONFIRMED room=%s %s <-> %s", shortKey(key), m.DeviceId, peer.deviceId)
+			c.Close()
+			peer.conn.Close()
+			return
+		}
+		// No peer yet — hold this announce open, waiting.
+		pending[key] = append(list, &pendingAnnounce{conn: c, deviceId: m.DeviceId, name: m.Name, at: time.Now()})
+		pendingMu.Unlock()
+		log.Printf("PAIR_ANNOUNCE room=%s deviceId=%s (waiting for peer)", shortKey(key), m.DeviceId)
+		// Block on a read so the conn stays open; returns on peer-confirm (peer
+		// closes it), client disconnect, or TTL. Then clean up pending.
+		c.SetReadDeadline(time.Now().Add(announceTTL))
+		buf := make([]byte, 1)
+		c.Read(buf)
+		removePending(key, c)
+		c.Close()
 		return
 	default:
 		sendErr(c, "bad_request")

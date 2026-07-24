@@ -9,6 +9,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > 修改协议必须先改这里并在下方 changelog 记录，再改代码。
 >
 > Changelog:
+> - 2026-07-23 v1.12 **双向配对撮合 `PAIR_ANNOUNCE`(0x44)/`PAIR_CONFIRMED`(0x45)**（docs/11）：让「已配对」名副其实——只有**另一台也用同一个码连上**才算配对成功，不是各自本地存码/只探测中转。两端配对时各发 `PAIR_ANNOUNCE{v,pairHash,deviceId,name,token}`；relay 按 pairHash 暂存(TTL 2min)，见到**同 pairHash、不同 deviceId** 的第二个 announce → 给双方各发 `PAIR_CONFIRMED{peerDeviceId,peerName}` 并在内存记录该对；**同 deviceId 去重、绝不自撮合**；token 校验同 REGISTER/JOIN。谁先发起都行。已部署 15 并双客户端实测通过。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.11 **配对码升级为 6 位字母+数字（§3.7）**：旧版 6 位纯数字（1M）太弱 → 6 位大小写不敏感字母+数字（31^6≈887M）。派生前先 `normalize`（转大写+仅留 [A-Z0-9]）再走原 §3.7 哈希；自检向量更新为 code `"K7M2QX"`。生成用无歧义字符集 `ABCDEFGHJKMNPQRSTUVWXYZ23456789`。**随之废弃 §3.7「code_not_found→明文码回退」那条交接兼容**：码格式一变，老 0.3.0 的 6 位纯数字明文房永远对不上，回退已无意义（两端确认都上新版）。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.10 **`name` 语义改为「用户可编辑的设备名」（§3.6）+ 配对码→房间推导（§3.7）**：`name` 那条线格式不变、老端兼容；§3.7 是新界面「两端输入同一个码」带来的**硬性互通约定**，推导算法差一字节就会各自进不同房间且两边日志都正常，务必按自检向量对一遍。（Windows 端 Claude）
 > - 2026-07-21 v1 初版（Windows 端 Claude 起草）
@@ -65,6 +66,8 @@ tags: [netdisplay, handoff, protocol, spec]
 | 0x41 | RELAY_JOIN | Receiver→Relay | JSON | M3 |
 | 0x42 | RELAY_PAIRED | Relay→双方 | JSON | M3 |
 | 0x43 | RELAY_ERROR | Relay→任一方 | JSON `{"reason": string}` | M3 |
+| 0x44 | PAIR_ANNOUNCE | Client→Relay | JSON `{v,pairHash,deviceId,name,token}` | v1.12 |
+| 0x45 | PAIR_CONFIRMED | Relay→双方 | JSON `{peerDeviceId,peerName}` | v1.12 |
 
 未知 type：**跳过该帧继续解析**（向前兼容），但应记日志。
 
