@@ -33,6 +33,8 @@ enum MsgType: UInt8 {
     case pairConfirmed = 0x45
     case probe = 0x46          // v1.13: direct-connectivity probe
     case probeAck = 0x47
+    case presence = 0x48       // v1.14: peer presence
+    case peerPresence = 0x49
 }
 
 // MARK: - Frame encoding

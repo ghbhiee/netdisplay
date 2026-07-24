@@ -111,8 +111,23 @@ final class AppController: NSObject, NSApplicationDelegate {
         model.onStopCasting = { [weak self] in self?.stopCasting() }
         model.onStartRecvService = { [weak self] in self?.startReceiving() }
         model.onStopRecvService = { [weak self] in self?.stopReceiving() }
-        model.onSelect = { [weak self] in self?.probeConnectivityForSelected() }
+        model.onSelect = { [weak self] in self?.probeConnectivityForSelected(); self?.restartPresence() }
     }
+
+    // MARK: - Presence (docs/11 §5)
+    private var presence: PresenceClient?
+    private func restartPresence() {
+        presence?.stop(); presence = nil
+        guard let d = model.selected, let hash = d.pairHash, let secret = model.selectedSecret else { return }
+        let p = PresenceClient(server: config.relayServer,
+                               token: config.relayToken.isEmpty ? nil : config.relayToken,
+                               pairHash: hash, deviceId: deviceId, name: senderName, state: model.presenceState)
+        p.onPeer = { [weak self] st in self?.model.peerPresence[secret] = st; self?.model.onChange?() }
+        presence = p
+        p.start()
+    }
+    /// Push our current state to the peer (call after any role change).
+    private func pushPresence() { presence?.update(state: model.presenceState) }
 
     private func startCasting(_ device: PairedDevice, _ source: AppModel.Source) {
         var cfg = config
@@ -123,11 +138,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         sender.roomPairHash = device.pairHash   // register under the paired device's room
         if sender.running { sender.stop() }
         sender.start()
+        pushPresence()
     }
 
     private func stopCasting() {
         sender.stop()
         sender.roomPairHash = nil
+        pushPresence()
     }
 
     private func startReceiving() {
@@ -156,11 +173,13 @@ final class AppController: NSObject, NSApplicationDelegate {
         receiver = client
         receiverWindow = win
         client.start()
+        pushPresence()
     }
 
     private func stopReceiving() {
         receiver?.stop(); receiver = nil
         receiverWindow = nil
+        pushPresence()
     }
 
     // MARK: - Dialogs

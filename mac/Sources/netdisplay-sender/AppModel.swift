@@ -31,6 +31,17 @@ final class AppModel {
     /// Per-device connectivity string (docs/11 §2): 「直连 · 通 3ms」/「中转 · 可用 310ms」…
     /// prefers direct (only if an IP is set), else relay.
     var connectivity: [String: String] = [:]
+    /// Per-device peer state (docs/11 §5): idle/casting/recv-waiting/receiving/offline.
+    var peerPresence: [String: String] = [:]
+
+    /// This machine's presence state for the selected pairing (docs/11 §5).
+    var presenceState: String {
+        switch role {
+        case .casting, .switching: return "casting"
+        case .receiving: return "receiving"
+        default: return recvSvc == .waiting ? "recv-waiting" : "idle"
+        }
+    }
 
     /// Fires after any state change so observers rebuild UI.
     var onChange: (() -> Void)?
@@ -149,4 +160,15 @@ final class AppModel {
     // MARK: - Human-readable status (design wording)
 
     var connLabel: String { conn == .on ? "已连接" : conn == .connecting ? "连接中…" : "未连接" }
+
+    /// Device-row text for the peer's presence (nil for idle → fall back to connectivity).
+    static func peerStateLabel(_ state: String) -> String? {
+        switch state {
+        case "casting":      return "对方在投射 · 可接收"
+        case "recv-waiting": return "对方待接收 · 可投射"
+        case "receiving":    return "对方在接收"
+        case "offline":      return "对方离线"
+        default:             return nil   // idle
+        }
+    }
 }

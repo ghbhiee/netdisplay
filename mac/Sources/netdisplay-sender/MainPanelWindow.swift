@@ -396,6 +396,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let statusText: String
         if waiting { statusText = "等待对方输入配对码…" }
         else if active { statusText = model.connLabel }
+        else if let ps = model.peerPresence[d.secret], let t = AppModel.peerStateLabel(ps) { statusText = t }
         else if let conn = model.connectivity[d.secret] { statusText = conn }
         else { statusText = d.nameKnown ? "已配对" : "未连接" }
         let status = UI.label(statusText, size: 11, color: Theme.sub)
