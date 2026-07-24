@@ -387,9 +387,12 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let row = RoundedView(fill: selected ? Theme.accentWeak : nil,
                               stroke: selected ? Theme.accent : Theme.line, radius: 7)
         let radio = UI.label(selected ? "◉" : "○", size: 13, color: selected ? Theme.accent : Theme.sub)
-        let online = UI.dot(d.isPending ? Theme.sub : Theme.accent, size: 8)
+        let active = selected && model.conn == .on
+        let online = UI.dot(active ? Theme.ok : Theme.accent, size: 8)
         let name = UI.label(d.displayName, size: 13)
-        let status = UI.label(d.isPending ? "待配对完成" : model.connLabel, size: 11, color: Theme.sub)
+        // Pairing = server-authenticated (no connection). Status is 已配对 until a
+        // projection actually connects, then it reflects the live connection.
+        let status = UI.label(active ? model.connLabel : "已配对", size: 11, color: Theme.sub)
         let inner = UI.hstack([radio, online, name, NSView(), status], spacing: 9)
         embed(inner, in: row, padX: 10, padY: 8)
         let click = ClickCatcher { [weak self] in self?.model.select(secret: d.secret) }

@@ -524,12 +524,12 @@ case "device-selftest":
     let code = "246810"
     DeviceStore.remove(secret: PairCode.secret(fromCode: code))   // clean slate
     let dev = DeviceStore.pairFromCode(code, addr: "192.168.1.9")
-    check(dev.isPending, "fresh code-pair is pending")
+    check(!dev.nameKnown, "fresh code-pair name unknown")
     check(dev.pairHash == PairCode.pairHash(fromCode: code), "device pairHash == code pairHash")
     check(DeviceStore.load().contains { $0.secret == dev.secret }, "persisted after pair")
     DeviceStore.promote(secret: dev.secret, deviceId: "peer-win-01", name: "LEGION-Y7000P")
     let promoted = DeviceStore.load().first { $0.secret == dev.secret }!
-    check(!promoted.isPending && promoted.deviceId == "peer-win-01", "promoted to real id")
+    check(promoted.nameKnown && promoted.deviceId == "peer-win-01", "promoted to real id + name")
     check(promoted.displayName == "LEGION-Y7000P", "displayName = peer name")
     DeviceStore.rename(secret: dev.secret, alias: "客厅台式机")
     check(DeviceStore.load().first { $0.secret == dev.secret }!.displayName == "客厅台式机", "alias wins for display")

@@ -135,6 +135,27 @@ final class AppController: NSObject, NSApplicationDelegate {
         let dev = DeviceStore.pairFromCode(code, addr: addr)
         model.devices = DeviceStore.load()
         model.select(secret: dev.secret)
+        // New model (user's design): pairing does NOT open a client↔client
+        // connection — it just saves the code and *authenticates with the relay*
+        // (reachable + token valid). The peer's name fills in on the first
+        // projection. Who-connects-to-whom only matters at projection time.
+        RelayHealth.check(server: config.relayServer,
+                          token: config.relayToken.isEmpty ? nil : config.relayToken) { [weak self] st in
+            switch st {
+            case .ok(let ms): Log.info("pair: relay auth OK (\(ms)ms) — 已配对 \(dev.code)")
+            case .unauthorized:
+                self?.pairAuthAlert("中转 token 错误。配对已保存，但投射前请在「中转设置」里改对 token。")
+            case .unreachable:
+                self?.pairAuthAlert("连不上中转服务器。配对已保存，但投射前请确认网络与服务器地址。")
+            default: break
+            }
+        }
+    }
+
+    /// Non-blocking heads-up if relay authentication failed during pairing.
+    private func pairAuthAlert(_ text: String) {
+        let a = NSAlert(); a.messageText = "配对：中转认证未通过"; a.informativeText = text
+        a.addButton(withTitle: "好"); NSApp.activate(ignoringOtherApps: true); a.runModal()
     }
 
     private func editRelaySettings() {

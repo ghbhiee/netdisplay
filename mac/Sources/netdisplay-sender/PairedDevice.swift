@@ -14,22 +14,25 @@ import Foundation
 struct PairedDevice: Codable, Equatable {
     var deviceId: String          // peer's id, or "pending:<pairHash prefix>" pre-HELLO
     var secret: String            // pairing secret (base64) → pairHash room
+    var code: String = ""         // the pairing code (normalized), shown until the peer's name arrives
     var name: String = ""         // peer-reported display name (HELLO.name)
     var alias: String? = nil      // local rename; wins over `name`
     var addr: String? = nil       // optional last-known LAN address (direct hint)
 
-    /// What the UI shows: local alias > peer name > short id.
+    /// What the UI shows: local alias > peer name (learned at first projection) >
+    /// the pairing code (so the row is recognizable before any projection).
     var displayName: String {
         if let a = alias, !a.isEmpty { return a }
         if !name.isEmpty { return name }
+        if !code.isEmpty { return "设备 \(code)" }
         return String(deviceId.replacingOccurrences(of: "pending:", with: "").prefix(8))
     }
 
     /// Relay room key derived from the secret.
     var pairHash: String? { PairStore.pairHash(fromSecret: secret) }
 
-    /// True until the first HELLO tells us the peer's real id.
-    var isPending: Bool { deviceId.hasPrefix("pending:") }
+    /// True until the first projection's HELLO tells us the peer's real id/name.
+    var nameKnown: Bool { !name.isEmpty }
 }
 
 /// Persistent list of paired devices + the currently-selected one. Backs both
@@ -80,9 +83,10 @@ enum DeviceStore {
     /// same relay room. The peer's real id/name fill in on the first HELLO.
     @discardableResult
     static func pairFromCode(_ code: String, addr: String? = nil) -> PairedDevice {
-        let secret = PairCode.secret(fromCode: code)
-        let hash = PairStore.pairHash(fromSecret: secret) ?? code
-        let dev = PairedDevice(deviceId: "pending:\(hash.prefix(8))", secret: secret,
+        let norm = PairCode.normalize(code)
+        let secret = PairCode.secret(fromCode: norm)
+        let hash = PairStore.pairHash(fromSecret: secret) ?? norm
+        let dev = PairedDevice(deviceId: "pending:\(hash.prefix(8))", secret: secret, code: norm,
                                addr: addr?.isEmpty == true ? nil : addr)
         return upsert(dev)
     }
