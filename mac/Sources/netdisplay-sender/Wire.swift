@@ -31,6 +31,8 @@ enum MsgType: UInt8 {
     case relayError = 0x43
     case pairAnnounce = 0x44   // v1.12: mutual pairing
     case pairConfirmed = 0x45
+    case probe = 0x46          // v1.13: direct-connectivity probe
+    case probeAck = 0x47
 }
 
 // MARK: - Frame encoding

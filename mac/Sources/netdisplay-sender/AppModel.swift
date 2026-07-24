@@ -28,9 +28,14 @@ final class AppModel {
     /// Secrets currently announcing on the relay, waiting for the peer to enter the
     /// same code (docs/11 mutual pairing). Shown as 「等待对方输入配对码…」.
     var pairing: Set<String> = []
+    /// Per-device connectivity string (docs/11 §2): 「直连 · 通 3ms」/「中转 · 可用 310ms」…
+    /// prefers direct (only if an IP is set), else relay.
+    var connectivity: [String: String] = [:]
 
     /// Fires after any state change so observers rebuild UI.
     var onChange: (() -> Void)?
+    /// Fires when the selected device changes (→ re-probe connectivity).
+    var onSelect: (() -> Void)?
     /// Side-effect hooks (wired to SenderController / receiver by the app layer).
     var onStartCasting: ((PairedDevice, Source) -> Void)?
     var onStopCasting: (() -> Void)?
@@ -65,6 +70,7 @@ final class AppModel {
     func select(secret: String?) {
         selectedSecret = secret
         DeviceStore.selectedId = devices.first { $0.secret == secret }?.deviceId
+        onSelect?()
         changed()
     }
 

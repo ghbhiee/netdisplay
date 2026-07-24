@@ -391,9 +391,13 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let waiting = model.pairing.contains(d.secret)
         let online = UI.dot(active ? Theme.ok : (waiting ? Theme.sub : (d.nameKnown ? Theme.accent : Theme.sub)), size: 8)
         let name = UI.label(d.displayName, size: 13)
-        // Honest status: 「等待对方输入配对码…」 while announcing, 「已配对」 only once the
-        // peer confirmed (nameKnown), the live connection state while projecting.
-        let statusText = waiting ? "等待对方输入配对码…" : (active ? model.connLabel : (d.nameKnown ? "已配对" : "未连接"))
+        // 「等待对方输入配对码…」 while announcing; live connection while projecting;
+        // otherwise the connectivity probe (直连/中转), falling back to 已配对/未连接.
+        let statusText: String
+        if waiting { statusText = "等待对方输入配对码…" }
+        else if active { statusText = model.connLabel }
+        else if let conn = model.connectivity[d.secret] { statusText = conn }
+        else { statusText = d.nameKnown ? "已配对" : "未连接" }
         let status = UI.label(statusText, size: 11, color: Theme.sub)
         let inner = UI.hstack([radio, online, name, NSView(), status], spacing: 9)
         embed(inner, in: row, padX: 10, padY: 8)

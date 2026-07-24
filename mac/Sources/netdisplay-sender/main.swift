@@ -434,6 +434,21 @@ case "traymenu-dump":
     dump("接收服务等待", configure: { $0.startRecvService() })
     exit(0)
 
+case "probe-selftest":
+    // Start the responder, then probe 127.0.0.1 — should get PROBE_ACK.
+    let resp = ProbeResponder()
+    resp.start()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+        DirectProbe.probe(host: "127.0.0.1") { r in
+            switch r {
+            case .ok(let ms): Log.info("probe-selftest: PASS — direct 通 \(ms)ms")
+            case .fail: Log.info("probe-selftest: FAIL — no PROBE_ACK")
+            }
+            exit(r == .fail ? 1 : 0)
+        }
+    }
+    dispatchMain()
+
 case "pair-test":
     // Exercise the mutual-pairing client: announce a code's room, wait for a peer.
     let code = args.str("code", "TEST99")

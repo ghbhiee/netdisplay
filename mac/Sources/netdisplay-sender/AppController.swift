@@ -19,6 +19,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     // Receive side
     private var receiver: ReceiverRelayClient?
     private var receiverWindow: ReceiverWindow?
+    private let probeResponder = ProbeResponder()   // always-on :47800 PROBE→PROBE_ACK (docs/11 §2)
 
     init(senderName: String, deviceId: String) {
         self.senderName = senderName
@@ -56,8 +57,41 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         wireModel()
         refreshAppList()
+        probeResponder.start()          // answer peers' direct-connectivity probes
         panel.show()
         checkRelay()
+        probeConnectivityForSelected()
+    }
+
+    /// docs/11 §2: show how this device connects — prefer direct (only if a peer
+    /// IP is set), else relay. Runs on select / launch; updates the device row.
+    private func probeConnectivityForSelected() {
+        guard let d = model.selected, let secret = model.selectedSecret else { return }
+        let relayThen = { [weak self] in
+            guard let self else { return }
+            RelayHealth.check(server: self.config.relayServer,
+                              token: self.config.relayToken.isEmpty ? nil : self.config.relayToken) { st in
+                switch st {
+                case .ok(let ms): self.model.connectivity[secret] = "中转 · 可用 \(ms)ms"
+                case .unauthorized: self.model.connectivity[secret] = "中转 · token 错"
+                case .unreachable: self.model.connectivity[secret] = "中转 · 连不上"
+                default: break
+                }
+                self.model.onChange?()
+            }
+        }
+        if let addr = d.addr, !addr.isEmpty {
+            let host = addr.split(separator: ":").first.map(String.init) ?? addr
+            DirectProbe.probe(host: host) { [weak self] r in
+                guard let self else { return }
+                switch r {
+                case .ok(let ms): self.model.connectivity[secret] = "直连 · 通 \(ms)ms"; self.model.onChange?()
+                case .fail: relayThen()   // direct not reachable → show relay
+                }
+            }
+        } else {
+            relayThen()   // no IP → don't probe direct
+        }
     }
 
     /// Probe the relay (reachability + token) and reflect it on the 中转设置 button.
@@ -77,6 +111,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         model.onStopCasting = { [weak self] in self?.stopCasting() }
         model.onStartRecvService = { [weak self] in self?.startReceiving() }
         model.onStopRecvService = { [weak self] in self?.stopReceiving() }
+        model.onSelect = { [weak self] in self?.probeConnectivityForSelected() }
     }
 
     private func startCasting(_ device: PairedDevice, _ source: AppModel.Source) {
