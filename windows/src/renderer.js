@@ -423,13 +423,23 @@ function doPair(code, addr) {
   role.clearPairing(); // 换了对象就别拿旧 peerId 算角色
   pushState();
 
-  // 配对只是「建立关系」，不替用户决定方向。以前这里顺手 setRecvSvc(true) 让本机
-  // 立刻进入接收待命——想法是借待命连接的 HELLO 拿对方名字（配对完成握手）。但那套
-  // host/guest 握手还没实装，auto-recv 反而把 firstContact 的角色编排在「刚配完对、
-  // 双方都还没选方向」时就触发了：两端都待命→都 join→都开房→握手后秒断。用户在 GUI
-  // 里「配一下就不行」正是它。方向交回给用户：配完对，点「开始投射」或「接收」。
-  // 「配对成功显示对方名字」等 host/guest 握手正式做出来再补（和 Mac 对齐接口）。
-  toast(addr ? `已配对，可开始投射或接收（对方地址 ${addr}）` : "已配对，点「开始投射」或「接收」即可连上对方");
+  // 新配对模型（用户拍板、两端一致）：**配对 = 本地存码 + 向 relay 认证，不建
+  // 客户端间连接、不定 host/guest。** 经过中转本就不存在「谁连谁」——配对阶段只
+  // 确认「服务器可达 + token 有效」，真正的连接留到用户显式投射/接收时才建立，
+  // 方向天然无歧义。对方名字在首次投射的 HELLO 时才填进设备列表。
+  // （之前那句 auto-recv 的病根就是「配对时不该触发连接」，删对了，这里补上认证。）
+  toast("正在检测中转…");
+  relayAuth((ok, message) => {
+    const dd = deviceById(id);
+    if (!dd) return; // 检测期间被解除了配对
+    dd.authed = !!ok;
+    saveDevices(devices);
+    pushState();
+    // 措辞要诚实：自配对认证只证明「中转可达 + token 有效」，**不代表对端也输了同一个码**。
+    // 说「配对成功」会误导——用户会以为两台已经连上了。真正「和对方连上」只在投射时成立。
+    toast(ok ? "中转已就绪，点「开始投射」或「接收」即可连对方"
+             : `配对码已保存，但中转不可用：${message}（投射/接收时会再试）`);
+  });
 }
 
 // A 位（监听/注册）时，对端 HELLO 只到 sender.js，renderer 的 onFrame 看不到。
@@ -696,66 +706,61 @@ let relayProbing = false;
 const isCliRun = (a) =>
   !!(a.exitAfter || a.send || a.sendRelay || a.recvRelay || a.relay != null || a.connect || a.autoConnect);
 
-function probeRelay() {
+// 中转认证：自己和自己在一个**随机房间**里配一次对，收到 RELAY_PAIRED 就证明
+// 「服务器可达 + token 有效」。这既是中转健康探测，也是新配对模型里「配对＝认证」
+// 那一步——判据坚决用协议应答，不用 TCP connect（TUN 代理会骗）。
+// cb(ok, message, rttMs)。
+function relayAuth(cb) {
   const addr = (prefs.relayServer || "").trim();
-  if (!addr) { relayHealth = { status: "unset", rttMs: null, message: null }; return pushState(); }
-  if (relayProbing) return;
-  relayProbing = true;
-
+  if (!addr) return cb(false, "未设置中转服务器", null);
   const [host, portStr] = addr.split(":");
   const port = +portStr || 47700;
-  const room = nodeCrypto.randomBytes(32).toString("hex"); // 随机房间，不会撞上真会话
+  const room = nodeCrypto.randomBytes(32).toString("hex"); // 随机房间，不撞真会话
   const tok = (prefs.token || "").trim();
   const t0 = performance.now();
   const socks = [];
   let done = false;
 
-  const finish = (status, message) => {
+  const finish = (ok, message) => {
     if (done) return;
     done = true;
-    relayProbing = false;
     clearTimeout(timer);
     for (const s of socks) { try { s.destroy(); } catch {} }
-    relayHealth = {
-      status,
-      rttMs: status === "ok" ? Math.round(performance.now() - t0) : null,
-      message,
-    };
-    console.log(`[recv] 中转探测 ${addr} → ${status}${relayHealth.rttMs != null ? " " + relayHealth.rttMs + "ms" : ""}${message ? " (" + message + ")" : ""}`);
-    pushState();
+    cb(ok, message, ok ? Math.round(performance.now() - t0) : null);
   };
-
-  const timer = setTimeout(
-    () => finish("error", `连不上 ${addr} —— 检查地址，或确认这台机器能访问外网`),
-    5000
-  );
+  const timer = setTimeout(() => finish(false, `连不上 ${addr} —— 检查地址，或确认这台机器能访问外网`), 5000);
 
   const open = (type, payload) => {
-    const s = net.createConnection(port, host, () => {
-      s.setNoDelay(true);
-      s.write(buildFrame(type, payload));
-    });
+    const s = net.createConnection(port, host, () => { s.setNoDelay(true); s.write(buildFrame(type, payload)); });
     const parser = new FrameParser((t, pl) => {
-      if (t === T.RELAY_PAIRED) finish("ok", null);
+      if (t === T.RELAY_PAIRED) finish(true, null);
       else if (t === T.RELAY_ERROR) {
-        let reason = "";
-        try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
-        finish("error", reason === "unauthorized"
-          ? "访问 Token 不正确 —— 到中转设置里核对"
-          : `服务器拒绝：${reason || "未知原因"}`);
+        let reason = ""; try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
+        finish(false, reason === "unauthorized" ? "访问 Token 不正确 —— 到中转设置里核对" : `服务器拒绝：${reason || "未知原因"}`);
       }
     });
     s.on("data", (d) => { try { parser.feed(d); } catch {} });
-    s.on("error", (e) => finish("error", `连不上 ${addr}（${e.code || e.message}）`));
+    s.on("error", (e) => finish(false, `连不上 ${addr}（${e.code || e.message}）`));
     socks.push(s);
-    return s;
   };
 
   const base = { v: 1, code: "", pairHash: room };
   if (tok) base.token = tok;
   open(T.RELAY_REGISTER, { ...base, role: "sender" });
-  // 稍等一下再 join：房间得先建起来，否则会拿到 code_not_found 而误判成服务器有问题
+  // 稍等再 join：房间得先建起来，否则拿到 code_not_found 会误判成服务器有问题
   setTimeout(() => { if (!done) open(T.RELAY_JOIN, { ...base, role: "receiver" }); }, 250);
+}
+
+function probeRelay() {
+  if (!(prefs.relayServer || "").trim()) { relayHealth = { status: "unset", rttMs: null, message: null }; return pushState(); }
+  if (relayProbing) return;
+  relayProbing = true;
+  relayAuth((ok, message, rttMs) => {
+    relayProbing = false;
+    relayHealth = { status: ok ? "ok" : "error", rttMs, message: ok ? null : message };
+    console.log(`[recv] 中转探测 ${prefs.relayServer} → ${ok ? "ok " + rttMs + "ms" : "error (" + message + ")"}`);
+    pushState();
+  });
 }
 
 // ===== CLI 联调入口 =====
@@ -1400,10 +1405,9 @@ window.addEventListener("keyup", (e) => {
   if (a.autoConnect) connectDirectCli(a.autoConnect, true);
   else if (a.connect) connectDirectCli(a.connect, false);
   else if (a.relay != null) connectRelayCli(a.relay);
-  else if (selectedDevice()) {
-    // 已配对 → 启动即开接收服务待命。设计要求「配对后开机自动连、不用再输码」。
-    setRecvSvc(true);
-  }
+  // 启动不再自动开接收服务。新配对模型：配对≠连接，方向由用户显式选（投射/接收）。
+  // 以前这里 setRecvSvc(true)，用户一开程序设备就卡「连接中…」，正是他截图看到的——
+  // 而且这会在他还没决定投还是收时就建连接，把角色编排提前触发。启动只做待命展示。
   if (a.exitAfter) {
     setTimeout(() => {
       const t = stats.total;
