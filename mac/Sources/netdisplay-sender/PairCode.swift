@@ -11,19 +11,31 @@ import CryptoKit
 /// the Windows implementation (windows/src/renderer.js `pairHashHex`).
 ///
 /// ```
-/// secret   = base64( SHA256( UTF8("netdisplay-pair:" + code) ) )
+/// normalize(code) = uppercase then keep [A-Z0-9]         // case-insensitive, spaces dropped
+/// secret   = base64( SHA256( UTF8("netdisplay-pair:" + normalize(code)) ) )
 /// pairHash = lowerhex( SHA256( base64_decode(secret) ) )   // hash the RAW bytes, not the base64 string
 /// ```
-/// Self-test vector: code "123456" → secret "8cDzqhqQD4xqw4fFnmsXG4r70M7mLv64gPR7rAmajfo="
-///                                 → pairHash "a019485a2c51b7e8c2b9f3899359bcc09ea25a05dfd1e7015fb933a36429c795"
+/// Self-test vector (v1.11): code "K7M2QX" → secret "IgIOVj/vp7y49ft6w10/GXJnX91pkGoO9AQ8zVQzKVE="
+///                                         → pairHash "bec0ed709f8fd1a53d42d5e243e6cb134a939467f50bb73a5099722e5c5ae924"
 enum PairCode {
     /// Prefix is exact, no trailing space (protocol §3.7).
     private static let prefix = "netdisplay-pair:"
 
-    /// Keep only the 6 digits — the UI may show a grouped `123 456`, but the
-    /// derivation uses `123456`.
+    /// Characters used to *generate* a code — unambiguous (no I O L 0 1).
+    static let genCharset = Array("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+
+    /// Generate a fresh 6-char code from the unambiguous charset.
+    static func generate() -> String {
+        String((0..<6).map { _ in genCharset.randomElement()! })
+    }
+
+    /// v1.11: uppercase, keep [A-Z0-9] only — case-insensitive, grouping spaces
+    /// dropped (UI may show `K7M 2QX`, derivation uses `K7M2QX`). MUST match the
+    /// Windows normalize rule byte-for-byte.
     static func normalize(_ code: String) -> String {
-        String(code.unicodeScalars.filter { CharacterSet.decimalDigits.contains($0) })
+        String(code.uppercased().unicodeScalars.filter {
+            (($0.value >= 65 && $0.value <= 90) || ($0.value >= 48 && $0.value <= 57))
+        })
     }
 
     /// `secret` = base64(SHA256("netdisplay-pair:" + code)). This is the same
@@ -42,14 +54,15 @@ enum PairCode {
 
     /// Verify byte-parity with the cross-end self-test vector. Returns true on match.
     static func selftest() -> Bool {
-        let s = secret(fromCode: "123456")
-        let h = pairHash(fromCode: "123456") ?? ""
-        let expectS = "8cDzqhqQD4xqw4fFnmsXG4r70M7mLv64gPR7rAmajfo="
-        let expectH = "a019485a2c51b7e8c2b9f3899359bcc09ea25a05dfd1e7015fb933a36429c795"
-        let ok = (s == expectS) && (h == expectH)
+        let s = secret(fromCode: "K7M2QX")
+        let h = pairHash(fromCode: "K7M2QX") ?? ""
+        let expectS = "IgIOVj/vp7y49ft6w10/GXJnX91pkGoO9AQ8zVQzKVE="
+        let expectH = "bec0ed709f8fd1a53d42d5e243e6cb134a939467f50bb73a5099722e5c5ae924"
+        let normOK = normalize("k7m2 qx") == "K7M2QX"
+        let ok = (s == expectS) && (h == expectH) && normOK
         Log.info("paircode-selftest: secret=\(s) \(s == expectS ? "OK" : "MISMATCH")")
         Log.info("paircode-selftest: pairHash=\(h) \(h == expectH ? "OK" : "MISMATCH")")
-        Log.info("paircode-selftest: 123456→123 456 normalize=\(normalize("123 456"))")
+        Log.info("paircode-selftest: normalize(\"k7m2 qx\")=\(normalize("k7m2 qx")) \(normOK ? "OK" : "MISMATCH")")
         return ok
     }
 }

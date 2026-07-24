@@ -17,11 +17,11 @@ enum PairDialog {
         let codeField = NSTextField(frame: .zero)
         codeField.font = .monospacedSystemFont(ofSize: 18, weight: .semibold)
         codeField.alignment = .center
-        codeField.placeholderString = "6 位配对码"
-        codeField.stringValue = String(format: "%06d", Int.random(in: 100000...999999))
+        codeField.placeholderString = "6 位配对码（字母+数字）"
+        codeField.stringValue = PairCode.generate()
         codeField.translatesAutoresizingMaskIntoConstraints = false
 
-        let genTarget = GenCodeTarget { codeField.stringValue = String(format: "%06d", Int.random(in: 100000...999999)) }
+        let genTarget = GenCodeTarget { codeField.stringValue = PairCode.generate() }
         let gen = UI.button("随机生成", fill: Theme.accentWeak, textColor: Theme.accent, radius: 6,
                             size: 12, weight: .regular, target: genTarget, action: #selector(GenCodeTarget.fire))
         gen.translatesAutoresizingMaskIntoConstraints = false

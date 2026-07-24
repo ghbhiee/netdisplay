@@ -9,6 +9,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > 修改协议必须先改这里并在下方 changelog 记录，再改代码。
 >
 > Changelog:
+> - 2026-07-23 v1.11 **配对码升级为 6 位字母+数字（§3.7）**：旧版 6 位纯数字（1M）太弱 → 6 位大小写不敏感字母+数字（31^6≈887M）。派生前先 `normalize`（转大写+仅留 [A-Z0-9]）再走原 §3.7 哈希；自检向量更新为 code `"K7M2QX"`。生成用无歧义字符集 `ABCDEFGHJKMNPQRSTUVWXYZ23456789`。**随之废弃 §3.7「code_not_found→明文码回退」那条交接兼容**：码格式一变，老 0.3.0 的 6 位纯数字明文房永远对不上，回退已无意义（两端确认都上新版）。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.10 **`name` 语义改为「用户可编辑的设备名」（§3.6）+ 配对码→房间推导（§3.7）**：`name` 那条线格式不变、老端兼容；§3.7 是新界面「两端输入同一个码」带来的**硬性互通约定**，推导算法差一字节就会各自进不同房间且两边日志都正常，务必按自检向量对一遍。（Windows 端 Claude）
 > - 2026-07-21 v1 初版（Windows 端 Claude 起草）
 > - 2026-07-22 v1.9 **HELLO 增加可选 `lanAddrs` + 连接升级（§3.5）**：配合 UX 重做（transport 是程序探测的**状态**、不是用户选的「直连/中转」，见 docs/10-ux-model.md 与 20-design-handoff.md）。两端 HELLO 互告各自局域网可直连地址（含 :47800 监听口）；即便走中转连上，也在后台试直连、握手成功则无感切过去。**升级只在「待命」时做、投射中不切链路**（MVP）。**判据是收到对端 HELLO/HELLO_ACK，不是 TCP connect 成功**（TUN 代理会骗）。老端忽略 `lanAddrs`，天然兼容。（Mac 端 Claude，承接 Windows #88 提案，两端已定 A）
@@ -163,28 +164,35 @@ Sender → Receiver 的 HELLO：
 
 > 设备身份仍然是 `deviceId`（配对关系、去重都认它）；`name` 只是给人看的标签，可以随时变、可以重复。
 
-### 3.7 配对码 → 房间的推导（v1.10，**两端必须逐字节一致**）
+### 3.7 配对码 → 房间的推导（v1.11，**两端必须逐字节一致**）
 
-新界面把配对改成了「**两台电脑输入同一个 6 位码**」（一方随机生成），不再是
+新界面把配对改成了「**两台电脑输入同一个码**」（一方随机生成），不再是
 「一端显示、另一端输入」。这意味着房间号不再由 relay 分配，而是**两端各自从码
 算出来**——所以推导算法是硬性互通约定，差一个字节就会各自进不同房间，表现为
 「码明明一样却永远撮合不上」，而且两边日志都正常，极难查。
 
+**配对码格式（v1.11）：6 位、大小写不敏感的字母+数字**（旧版 6 位纯数字，1M
+组合太弱；现 31^6 ≈ 887M）。派生前**必须先归一化**：
+
 ```
-secret   = base64( SHA256( UTF8("netdisplay-pair:" + code) ) )     // code 是 6 位数字字符串
-pairHash = lowerhex( SHA256( base64_decode(secret) ) )             // 注意是对 secret 的**原始字节**再哈希
+normalize(code) = 转大写(uppercase) 后只保留 [A-Z0-9]      // 去掉分组空格等；大小写不敏感
+secret   = base64( SHA256( UTF8("netdisplay-pair:" + normalize(code)) ) )
+pairHash = lowerhex( SHA256( base64_decode(secret) ) )      // 对 secret 的**原始字节**再哈希
 ```
 
 - 前缀 `netdisplay-pair:` 一字不差，无空格。
-- `code` 只取 6 位数字本身，不含分组显示用的空格（界面上显示成 `123 456`，算的时候是 `123456`）。
+- **归一化两端必须完全一致**：`"k7m2 qx"`、`"K7M2QX"` 归一化后都是 `"K7M2QX"`，进同一个房间。
+- **生成用字符集（仅 UX，排除歧义字符 I O L 0 1）**：`ABCDEFGHJKMNPQRSTUVWXYZ23456789`（31 字符）。生成端用它避免看错；输入端只要归一化规则一致即可（大小写、空格都不影响）。
 - `pairHash` 是**小写** hex，填进 `RELAY_JOIN.pairHash` / `RELAY_REGISTER.pairHash`。
 - 第二步哈希的输入是 secret **base64 解码后的字节**，不是 base64 字符串本身。
+- relay 要求 pairHash 为 **64 位小写 hex**（`roomKey`），SHA256 hex 天然满足。
 
-自检向量（两端都该算出这个）：
+自检向量（两端算出必须逐字节一致）：
 
 ```
-code   = "123456"
-secret = "8cDzqhqQD4xqw4fFnmsXG4r70M7mLv64gPR7rAmajfo="
+code     = "K7M2QX"    （"k7m2 qx" 归一化后同此）
+secret   = "IgIOVj/vp7y49ft6w10/GXJnX91pkGoO9AQ8zVQzKVE="
+pairHash = "bec0ed709f8fd1a53d42d5e243e6cb134a939467f50bb73a5099722e5c5ae924"
 ```
 
 > 首次配对成功后 Sender 仍会在 HELLO_ACK 里下发 `pairSecret`（§3.4），两端持久保存，

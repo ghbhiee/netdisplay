@@ -304,7 +304,6 @@ case "receive":
         let pinnedHash = args.flags["pairhash"] ?? args.flags["secret"].flatMap { PairStore.pairHash(fromSecret: $0) }
         return ReceiverRelayClient(host: rhost, port: rport, token: args.flags["token"],
                                    code: args.flags["code"], pairHashOverride: pinnedHash,
-                                   fallbackCode: args.flags["fallback-code"],
                                    name: name, deviceId: devId, screen: screen, codecs: codecs)
     }
 
@@ -339,7 +338,6 @@ case "receive":
         if let ph = pinnedHash { Log.info("receive: pinned pairHash \(ph.prefix(12))… (shared secret)") }
         let client = ReceiverRelayClient(host: rhost, port: rport, token: args.flags["token"],
                                          code: args.flags["code"], pairHashOverride: pinnedHash,
-                                         fallbackCode: args.flags["fallback-code"],
                                          name: name, deviceId: devId, screen: screen, codecs: codecs)
         client.onFrame = onFrame
         client.onReady = onReady

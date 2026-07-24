@@ -17,15 +17,9 @@ final class RelayClient {
     private let windowApp: String?
     private let bitrateExplicit: Bool
     private let stage: Bool
-    /// Explicit pairHash (shared --secret/--pairhash) pinning the relay room for
-    /// CLI-only tests; overrides the stored sender pairing.
+    /// The relay room (pairHash) to register under — derived from the paired
+    /// device's code (§3.7). Set by SenderController / CLI --secret/--pairhash.
     var pairHashOverride: String?
-    /// A **stable, user-set pairing code** (settings → 配对码). When non-empty the
-    /// sender registers under this fixed code every launch instead of a fresh
-    /// random one, so the peer never has to re-enter it. Cross-compatible with the
-    /// Windows build (both speak RELAY_REGISTER/JOIN `code`); when set it takes the
-    /// plain-code path (no pairHash auto-match).
-    var fixedCode: String?
 
     private var conn: Conn?
     private var relayParser = FrameParser()
@@ -63,11 +57,10 @@ final class RelayClient {
         relayParser = FrameParser()
         session = nil
 
-        // A user-set stable code pins the room and wins over any stored pairHash,
-        // so it's the same every launch and the peer never re-enters it.
-        let usingFixed = !(fixedCode ?? "").isEmpty
-        let code = usingFixed ? fixedCode! : Self.generateCode()
-        let pairHash = usingFixed ? nil : (pairHashOverride ?? PairStore.currentPairHash())   // non-nil → auto-match, no code
+        // New model: always register under the code-derived pairHash room. Only a
+        // CLI test with no --pairhash/--secret falls back to a random 6-digit code.
+        let pairHash = pairHashOverride ?? PairStore.currentPairHash()   // non-nil → auto-match, no code
+        let code = pairHash != nil ? "" : Self.generateCode()
         let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host),
                                            port: NWEndpoint.Port(rawValue: port)!)
         let nw = NWConnection(to: endpoint, using: Conn.tcpParameters())
