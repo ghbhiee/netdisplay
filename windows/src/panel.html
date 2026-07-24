@@ -355,7 +355,7 @@
       <div>
         <div class="field-label">配对码 — 两台电脑输入相同的码</div>
         <div class="code-row">
-          <input id="pairCode" class="code-input" type="text" maxlength="7" placeholder="手工输入 6 位数字" spellcheck="false">
+          <input id="pairCode" class="code-input" type="text" maxlength="7" placeholder="6 位字母+数字" spellcheck="false">
           <button id="btnGenCode" class="btn-gen">随机生成</button>
         </div>
         <div class="field-hint">一方随机生成后，另一方输入相同的配对码。</div>
@@ -365,7 +365,7 @@
         <input id="pairAddr" class="field-input" type="text" placeholder="可留空，由对方填写" spellcheck="false">
         <div class="field-hint">双方都留空时，将通过中转服务器建立连接。</div>
       </div>
-      <div id="pairErr" class="err-text hidden">配对码错误，请核对后重试（应为 6 位数字）</div>
+      <div id="pairErr" class="err-text hidden">配对码错误，请核对后重试（6 位字母或数字）</div>
       <button id="btnPairSubmit" class="btn-primary">配对</button>
     </div>
   </div>

@@ -418,9 +418,12 @@ function closePair() { ui.pairOpen = false; ui.pairErr = false; render(); }
 function openRelay() { ui.relayOpen = true; render(); }
 function closeRelay() { ui.relayOpen = false; render(); }
 
+// v1.11：码是 6 位字母+数字，大小写不敏感。归一化（大写 + 只留 [A-Z0-9]）交给
+// 引擎统一做（两端必须逐字节一致），这里只做本地校验挡一下明显的错。
+function normCode(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function submitPair() {
-  const code = ($("pairCode").value || "").replace(/\s/g, "");
-  if (!/^\d{6}$/.test(code)) { ui.pairErr = true; render(); return; }
+  const code = normCode($("pairCode").value);
+  if (!/^[A-Z0-9]{6}$/.test(code)) { ui.pairErr = true; render(); return; }
   cmd("pair", { code, addr: ($("pairAddr").value || "").trim() });
   closePair(); // 结果由引擎的 nd-toast + 设备列表体现
 }
@@ -495,14 +498,21 @@ $("pairModal").addEventListener("click", (e) => { if (e.target === $("pairModal"
 $("btnPairSubmit").addEventListener("click", submitPair);
 $("pairCode").addEventListener("input", () => {
   const box = $("pairCode");
-  box.value = box.value.replace(/[^0-9 ]/g, "");
+  // 边打边归一化成大写字母数字；保留一个空格分组显示（123 456 更好念）
+  const n = normCode(box.value).slice(0, 6);
+  box.value = n.length > 3 ? n.slice(0, 3) + " " + n.slice(3) : n;
   if (ui.pairErr) { ui.pairErr = false; render(); }
 });
 $("pairCode").addEventListener("keydown", (e) => { if (e.key === "Enter") submitPair(); });
 $("pairAddr").addEventListener("keydown", (e) => { if (e.key === "Enter") submitPair(); });
 $("btnGenCode").addEventListener("click", () => {
-  const n = String(Math.floor(100000 + Math.random() * 900000));
-  $("pairCode").value = n.slice(0, 3) + " " + n.slice(3);
+  // 生成用排除易混字符（I O L 0 1）的字母表，纯 UX；输入端不受限。
+  const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const buf = new Uint8Array(6);
+  crypto.getRandomValues(buf);
+  let s = "";
+  for (let i = 0; i < 6; i++) s += ALPHABET[buf[i] % ALPHABET.length];
+  $("pairCode").value = s.slice(0, 3) + " " + s.slice(3);
   ui.pairErr = false;
   render();
 });

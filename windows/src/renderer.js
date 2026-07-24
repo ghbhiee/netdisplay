@@ -30,7 +30,6 @@ let switchingDirection = false; // 正在为「换投射方向」而重建连接
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 
-let plainCodeTried = false; // 交接期：pairHash 房间没人时，是否已回退试过明文码
 let firstContact = false; // 首次接触（还不知道对端 deviceId）：join 扑空要改成 register
 let sharedSecret = null; // --secret：联调用共享固定密钥（优先于持久保存的）
 let sharedHash = null; // --pairhash：直接指定房间
@@ -162,8 +161,26 @@ function selectedDevice() {
 
 // 配对码 → secret：两端输入同一个码就得到同一个房间。设计把配对改成了
 // 「双方输入相同的码」（一方随机生成），而不是「一端显示、另一端输入」。
+//
+// v1.11：码升级为 6 位大小写不敏感的字母+数字（纯数字 1M 组合太弱）。
+// **归一化必须两端逐字节一致**，否则派生出不同 pairHash、进不同房间——这正是
+// 今天版本不匹配踩过的坑，所以规则写死：转大写 + 只留 [A-Z0-9]。
+function normalizeCode(code) {
+  return String(code || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+function codeValid(code) {
+  return /^[A-Z0-9]{6}$/.test(normalizeCode(code));
+}
+// 生成用字符集排除易混的 I O L 0 1（纯 UX；输入端不受限，只要归一化一致）。
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function generateCode() {
+  const b = nodeCrypto.randomBytes(6);
+  let s = "";
+  for (let i = 0; i < 6; i++) s += CODE_ALPHABET[b[i] % CODE_ALPHABET.length];
+  return s;
+}
 function secretFromCode(code) {
-  return nodeCrypto.createHash("sha256").update("netdisplay-pair:" + code).digest("base64");
+  return nodeCrypto.createHash("sha256").update("netdisplay-pair:" + normalizeCode(code)).digest("base64");
 }
 
 // HELLO.screen：期望分辨率/scale/fps/码率（协议 v1.2 §3.3）
@@ -384,9 +401,9 @@ async function handleCmd(m) {
 }
 
 function doPair(code, addr) {
-  const clean = String(code || "").replace(/\s/g, "");
-  if (!/^\d{6}$/.test(clean)) {
-    return toast("配对码错误，请核对后重试（应为 6 位数字）");
+  const clean = normalizeCode(code);
+  if (!codeValid(clean)) {
+    return toast("配对码错误，请核对后重试（6 位字母或数字）");
   }
   const secret = secretFromCode(clean);
   const id = "pair-" + nodeCrypto.createHash("sha256").update(secret).digest("hex").slice(0, 12);
@@ -397,7 +414,7 @@ function doPair(code, addr) {
     return toast("这台设备已经配过对了");
   }
   devices.push({
-    id, secret, code: clean, name: "", alias: null, online: false,
+    id, secret, name: "", alias: null, online: false,
     addr: (addr || "").trim() || null,
   });
   saveDevices(devices);
@@ -641,7 +658,6 @@ function connect() {
 }
 
 function dialPeer(d) {
-  plainCodeTried = false; // 每次重新拨号都允许再回退一次
   const ip = d.addr ? String(d.addr).split(":")[0].trim() : "";
   const hash = pairHashHex();
   if (!hash) return setStatus("这台设备还没配对好，请重新添加", true);
@@ -1017,12 +1033,11 @@ function onFrame(type, payload) {
         setTimeout(() => { if (!sock) startListening(); }, backoff);
         return;
       }
-      if (r === "code_not_found" && !plainCodeTried && dd && dd.code) {
-        plainCodeTried = true;
-        console.log("[recv] pairHash 房间无人，回退用明文码再试一次（对端可能是老版本）");
-        teardown(null, true);
-        return connectRelayCli(dd.code);
-      }
+      // v1.11：删掉了「pairHash 扑空→回退明文码」的交接期兼容。它治不了病：
+      // 老 0.3.0 的 sender 用**随机**码注册明文房，回退到用户输的码根本对不上；
+      // 而且码格式已改成字母数字，纯数字明文房更不可能碰上。留着只给人「能兼容」
+      // 的错觉——今天就是这个错觉让我先去猜网络/锁屏而不是先想版本。跨大版本不
+      // 互通、必须同版本，写进协议更诚实。
       const msg = {
         code_not_found: "配对码不存在或已过期",
         rate_limited: "尝试过于频繁，稍后再试",
