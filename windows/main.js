@@ -10,6 +10,22 @@
 "use strict";
 const { app, BrowserWindow, ipcMain, screen, Tray, nativeImage, desktopCapturer, clipboard } = require("electron");
 const path = require("path");
+const fs = require("fs");
+
+// 打包版双击启动时，引擎日志（[recv]/[sender]/…）本来无处可看——排障时只能靠猜，
+// 这一整天就是吃了这个亏。把它落到 userData/netdisplay.log，现场出问题能直接读文件。
+// 每次启动截断重来，避免无限增长；只记我们自己的前缀，不带 Chromium 噪音。
+let logStream = null;
+function initLog() {
+  try {
+    const p = path.join(app.getPath("userData"), "netdisplay.log");
+    logStream = fs.createWriteStream(p, { flags: "w" });
+    logStream.write(`=== NetDisplay ${app.getVersion()} 启动 ===\n`);
+  } catch {}
+}
+function fileLog(line) {
+  if (logStream) { try { logStream.write(line + "\n"); } catch {} }
+}
 
 const argv = process.argv.slice(1);
 const arg = (name) => {
@@ -106,7 +122,10 @@ function createEngine() {
   // 只能开 devtools 看——而现场联调恰恰是最需要日志的时候。过滤器只认我们自己
   // 的前缀，不会把 Chromium 的噪音带出来。
   engineWin.webContents.on("console-message", (_e, _lvl, message) => {
-    if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE|^PROBE_RESULT/.test(message)) console.log(message);
+    if (/^\[sender\]|^\[recv\]|^SEND_STATS|^RECV_STATS|^SEND_SOURCE|^PROBE_RESULT/.test(message)) {
+      console.log(message);
+      fileLog(message); // 落文件，打包版排障靠它
+    }
   });
 }
 
@@ -188,6 +207,7 @@ const send = (win, ch, payload) => {
 const broadcast = (ch, payload) => { send(panelWin, ch, payload); send(trayWin, ch, payload); };
 
 app.whenReady().then(() => {
+  initLog();
   createEngine();
   if (!uiEnabled) return;
 

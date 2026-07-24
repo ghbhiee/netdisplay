@@ -423,12 +423,13 @@ function doPair(code, addr) {
   role.clearPairing(); // 换了对象就别拿旧 peerId 算角色
   pushState();
 
-  // 配对不是「在本地记一笔」就完了——用户此刻最想知道的是「成了没有、对面是谁」。
-  // 而这不需要造一套独立的握手：v1.4 早就把连接和投射解耦了，待命连接本来就会
-  // 交换 HELLO，HELLO 里本来就带 deviceId 和 name。所以直接起待命连接，
-  // 等 HELLO 到了再 promote + 报出对方名字。
-  toast("配对中，等待对方…");
-  setRecvSvc(true);
+  // 配对只是「建立关系」，不替用户决定方向。以前这里顺手 setRecvSvc(true) 让本机
+  // 立刻进入接收待命——想法是借待命连接的 HELLO 拿对方名字（配对完成握手）。但那套
+  // host/guest 握手还没实装，auto-recv 反而把 firstContact 的角色编排在「刚配完对、
+  // 双方都还没选方向」时就触发了：两端都待命→都 join→都开房→握手后秒断。用户在 GUI
+  // 里「配一下就不行」正是它。方向交回给用户：配完对，点「开始投射」或「接收」。
+  // 「配对成功显示对方名字」等 host/guest 握手正式做出来再补（和 Mac 对齐接口）。
+  toast(addr ? `已配对，可开始投射或接收（对方地址 ${addr}）` : "已配对，点「开始投射」或「接收」即可连上对方");
 }
 
 // A 位（监听/注册）时，对端 HELLO 只到 sender.js，renderer 的 onFrame 看不到。
