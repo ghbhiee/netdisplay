@@ -166,8 +166,17 @@ func writeFrame(c net.Conn, t byte, payload []byte) error {
 }
 
 func sendErr(c net.Conn, reason string) {
+	log.Printf("ERR → %s: %s", c.RemoteAddr(), reason)
 	b, _ := json.Marshal(map[string]string{"reason": reason})
 	writeFrame(c, tError, b)
+}
+
+// shortKey trims a room key for readable logs (h:<hex64> or c:<code>).
+func shortKey(k string) string {
+	if len(k) > 20 {
+		return k[:20] + "…"
+	}
+	return k
 }
 
 func handle(c net.Conn) {
@@ -232,6 +241,7 @@ func handle(c net.Conn) {
 			replaces: replaces, lastReplace: lastReplace,
 		}
 		mu.Unlock()
+		log.Printf("REGISTER room=%s from=%s persistent=%v (waiting for join)", shortKey(key), c.RemoteAddr(), persistent)
 		if persistent {
 			c.SetReadDeadline(time.Time{}) // 持久待命，不超时
 		} else {
@@ -261,12 +271,13 @@ func handle(c net.Conn) {
 			delete(rooms, key)
 		}
 		mu.Unlock()
+		log.Printf("JOIN room=%s from=%s roomFound=%v", shortKey(key), c.RemoteAddr(), ok)
 		if !ok {
 			sendErr(c, "code_not_found")
 			c.Close()
 			return
 		}
-		pair(r.sender, c)
+		pair(key, r.sender, c)
 		return
 	default:
 		sendErr(c, "bad_request")
@@ -274,7 +285,7 @@ func handle(c net.Conn) {
 	}
 }
 
-func pair(sender, receiver net.Conn) {
+func pair(key string, sender, receiver net.Conn) {
 	ok, _ := json.Marshal(map[string]bool{"ok": true})
 	sender.SetReadDeadline(time.Time{})
 	if writeFrame(sender, tPaired, ok) != nil || writeFrame(receiver, tPaired, ok) != nil {
@@ -282,29 +293,34 @@ func pair(sender, receiver net.Conn) {
 		receiver.Close()
 		return
 	}
-	log.Printf("paired %s <-> %s", sender.RemoteAddr(), receiver.RemoteAddr())
-	done := make(chan struct{}, 2)
-	pipe := func(dst, src net.Conn) {
+	start := time.Now()
+	log.Printf("PAIRED room=%s sender=%s receiver=%s", shortKey(key), sender.RemoteAddr(), receiver.RemoteAddr())
+	done := make(chan string, 2)
+	var bytesSR, bytesRS int64
+	pipe := func(dst, src net.Conn, who string, counter *int64) {
 		buf := make([]byte, 256*1024)
 		for {
 			src.SetReadDeadline(time.Now().Add(idleTTL))
 			n, err := src.Read(buf)
 			if n > 0 {
+				*counter += int64(n)
 				if _, werr := dst.Write(buf[:n]); werr != nil {
-					break
+					done <- who + "-write-fail"
+					return
 				}
 			}
 			if err != nil {
-				break
+				done <- who + ":" + err.Error()
+				return
 			}
 		}
-		done <- struct{}{}
 	}
-	go pipe(sender, receiver)
-	go pipe(receiver, sender)
-	<-done
+	go pipe(sender, receiver, "S→R", &bytesSR)
+	go pipe(receiver, sender, "R→S", &bytesRS)
+	first := <-done
 	sender.Close()
 	receiver.Close()
 	<-done
-	log.Printf("session closed")
+	log.Printf("session closed room=%s after=%s firstClose=%s bytes(S→R=%d R→S=%d)",
+		shortKey(key), time.Since(start).Round(time.Millisecond), first, bytesSR, bytesRS)
 }
