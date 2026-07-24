@@ -1,6 +1,6 @@
 {
   "name": "netdisplay-windows",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "NetDisplay Windows client: send this PC's screen/window to another machine, or receive as an extra display",
   "main": "main.js",
   "scripts": {
@@ -18,13 +18,21 @@
   "build": {
     "appId": "com.netdisplay.windows",
     "productName": "NetDisplay",
-    "directories": { "output": "dist" },
-    "files": ["main.js", "src/**", "assets/**", "package.json"],
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "main.js",
+      "src/**",
+      "assets/**",
+      "package.json"
+    ],
     "win": {
-      "target": ["portable"],
+      "target": [
+        "portable"
+      ],
       "icon": "assets/icon.png",
       "artifactName": "NetDisplay-${version}-portable.exe"
     }
   }
 }
-

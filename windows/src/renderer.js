@@ -448,8 +448,17 @@ async function startCast() {
   if (!d) return toast("还没有配对设备，先点「＋ 添加设备」");
   if (uiRole === "receiving") return toast("正在接收对方画面，不能同时投射");
 
+  // 投射与接收互斥（设计明确）。开投前必须把接收服务彻底关掉：不只是状态置 off，
+  // 还要停掉自动重连——否则 scheduleReconnect 会在投射期间偷偷再拨一条接收连接，
+  // 和 sender 的注册连接同时存在于同一个房间，自己和自己配对、瞬间互断。
+  // 今天用户「配上就断」的真凶之一就是这个收发不互斥。
+  recvSvc = "off";
+  manualDisconnect = true; // 抑制这次以及后续的自动重连
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+
   enterSwitching(async () => {
     applySource();
+    manualDisconnect = false; // switching 内部的有意断开各自管理
     const pos = role.myPosition(deviceId);
     // 规范第 4 条：A 位本就是 sender，直接开投；B 位必须反转角色重建连接。
     if (sock) {
@@ -493,6 +502,9 @@ function stopToStandby() {
 function setRecvSvc(on) {
   recvSvc = on ? "waiting" : "off";
   if (on) {
+    // 对称的互斥：开接收前先停投射，否则 sender 的注册连接和接收的 join 连接
+    // 会同处一个房间自我配对。
+    if (sender.isSending()) { sender.stopSender(); if (uiRole === "casting") uiRole = "standby"; }
     manualDisconnect = false;
     reconnectDelay = 1000;
     if (!selectedDevice()) { recvSvc = "off"; pushState(); return toast("还没有配对设备，先点「＋ 添加设备」"); }
