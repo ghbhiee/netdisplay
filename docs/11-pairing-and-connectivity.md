@@ -56,3 +56,26 @@ tags: [netdisplay, pairing, connectivity, spec]
 
 - **Mac + relay**：Mac 端 Claude 实装（relay 加 0x44/0x45 + 记录；Mac 配对流程改双向；连通性探测）。
 - **Windows**：按本文实装配对双向（PAIR_ANNOUNCE/CONFIRMED）、连通性显示、高级设置改弹窗。
+
+## 5. 在线/就绪状态（presence，用户要求）——设备行显示对方状态
+
+用户要求：配对设备行不仅显示怎么连（§2 直连/中转），还要显示**对方现在什么状态**——
+「对方在投射（可接收）」「对方待接收（可投射）」「对方离线」等。这样投之前就知道对方在不在、能不能收。
+
+**机制（relay 中转 presence）**：app 开着时，对每个配对设备维持一个到 relay 的 **presence 通道**，
+上报本机对该配对的状态；relay 把对端状态转给你。
+
+- 状态取值：`idle`（空闲）/ `casting`（投射中）/ `recv-waiting`（接收服务开着待命）/ `receiving`（正在接收）。
+- 协议（v1.14，写入 02）：
+  - `PRESENCE (0x48, client→relay)`：`{v, pairHash, deviceId, state, token}`。状态变化或首次上报时发。
+  - `PEER_PRESENCE (0x49, relay→client)`：`{peerDeviceId, peerState}`。relay 在同 pairHash 有对端 present 时，
+    把对端状态推给你；对端掉线/TTL → `peerState:"offline"`。
+- relay：按 pairHash 记 `{deviceId → (conn,state)}`；任一端状态变或进出 → 给同房间对端推 PEER_PRESENCE。
+  presence 连接带 keepalive；掉了对端显示离线。
+- 客户端设备行显示（结合 §2 连通性）：
+  - 对端 `recv-waiting` → 「对方待接收 · 可投射 · 中转可用 Xms」
+  - 对端 `casting` → 「对方在投射 · 可接收」
+  - 连上后 → 「已连接 · 直连/中转 Xms」
+  - 对端 offline → 「对方离线」
+
+分工：Mac 端 Claude 出协议 + relay + Mac；Windows 实装 Windows presence 上报 + 显示。
