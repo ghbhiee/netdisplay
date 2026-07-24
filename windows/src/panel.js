@@ -28,6 +28,8 @@ const ui = {
   pairOpen: false,
   relayOpen: false,
   pairErr: false,
+  pairing: false,   // 配对弹窗内「等待对方输入配对码…」态
+  pairMsg: "",      // 配对失败原因
 };
 
 // 契约「画质取值表」：发出去和比对选中态一律用内部值，中文只是标签。
@@ -386,8 +388,20 @@ function setIfIdle(input, value) {
 
 function renderModals() {
   show($("pairModal"), ui.pairOpen);
-  show($("pairErr"), ui.pairErr);
-  $("pairCode").classList.toggle("err", ui.pairErr);
+  // 配对全程在弹窗里（安全要求）：点「配对」后进入「等待对方…」态，只有服务器确认
+  // 双向才落地设备、关窗；关窗=取消 announce、什么都不存。
+  const waiting = ui.pairing;
+  show($("pairErr"), ui.pairErr || waiting);
+  $("pairErr").classList.toggle("err", ui.pairErr && !waiting);
+  $("pairErr").textContent = waiting
+    ? "等待对方输入相同的配对码…（关闭可取消）"
+    : (ui.pairMsg || "配对码错误，请核对后重试（6 位字母或数字）");
+  $("pairCode").classList.toggle("err", ui.pairErr && !waiting);
+  $("pairCode").disabled = waiting;
+  $("pairAddr").disabled = waiting;
+  $("btnGenCode").disabled = waiting;
+  $("btnPairSubmit").textContent = waiting ? "等待对方…" : "配对";
+  $("btnPairSubmit").classList.toggle("off", waiting);
 
   show($("relayModal"), ui.relayOpen);
   const ok = S.relay.status === "ok";
@@ -412,13 +426,17 @@ function relayStatusText() {
 
 // ---------- 弹窗开合 ----------
 function openPair() {
-  ui.pairOpen = true; ui.pairErr = false;
+  ui.pairOpen = true; ui.pairErr = false; ui.pairing = false; ui.pairMsg = "";
   $("pairCode").value = "";
   $("pairAddr").value = "";
   render();
   setTimeout(() => $("pairCode").focus(), 0);
 }
-function closePair() { ui.pairOpen = false; ui.pairErr = false; render(); }
+function closePair() {
+  if (ui.pairing) cmd("pair-cancel"); // 关窗即取消 announce、什么都不存
+  ui.pairOpen = false; ui.pairErr = false; ui.pairing = false; ui.pairMsg = "";
+  render();
+}
 function openRelay() { ui.relayOpen = true; render(); }
 function closeRelay() { ui.relayOpen = false; render(); }
 
@@ -426,11 +444,22 @@ function closeRelay() { ui.relayOpen = false; render(); }
 // 引擎统一做（两端必须逐字节一致），这里只做本地校验挡一下明显的错。
 function normCode(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function submitPair() {
+  if (ui.pairing) return; // 已经在等对方了，别重复发
   const code = normCode($("pairCode").value);
-  if (!/^[A-Z0-9]{6}$/.test(code)) { ui.pairErr = true; render(); return; }
+  if (!/^[A-Z0-9]{6}$/.test(code)) { ui.pairErr = true; ui.pairMsg = ""; render(); return; }
   cmd("pair", { code, addr: ($("pairAddr").value || "").trim() });
-  closePair(); // 结果由引擎的 nd-toast + 设备列表体现
+  // 不关弹窗——进入「等待对方…」态，announce 在引擎里挂着。等 nd-pair-done：
+  // 成功才落地设备+关窗，失败显示原因，关窗则取消。
+  ui.pairing = true; ui.pairErr = false; ui.pairMsg = "";
+  render();
 }
+
+// 配对结果：成功→关窗（设备已由引擎落地）；失败→退出等待态、显示原因
+ipcRenderer.on("nd-pair-done", (_e, r) => {
+  if (!ui.pairOpen) return;
+  if (r && r.ok) { ui.pairing = false; closePair(); }
+  else { ui.pairing = false; ui.pairErr = true; ui.pairMsg = (r && r.message) || "配对失败"; render(); }
+});
 
 // 中转设置只剩弹窗一个入口（docs/11 §3），不再有内嵌表单，所以只读 mRelay* 。
 function saveRelay() {

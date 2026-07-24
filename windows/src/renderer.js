@@ -246,8 +246,8 @@ function uiState() {
       conn: x.id === selectedId ? (connected ? "on" : connecting ? "connecting" : "off") : "off",
       transport: x.id === selectedId && connected ? currentTransport : null,
       rttMs: x.id === selectedId && connected ? lastRttMs : null,
-      // docs/11：未确认对端前是「等待对方…」，不是「已配对」
-      pairStatus: x.pairStatus || (x.peerDeviceId ? "paired" : "waiting"),
+      // 存进列表就意味着 PAIR_CONFIRMED 过（配对全程在弹窗内完成），一律 paired。
+      pairStatus: "paired",
     })),
     selectedId,
     sources: sourceList.map((s) => ({ id: s.id, name: s.name, kind: s.kind })),
@@ -349,7 +349,6 @@ async function handleCmd(m) {
     }
     case "unpair": {
       const d = deviceById(m.id);
-      stopPairAnnounce(m.id); // 别再替一个已删的设备挂着 announce
       devices = devices.filter((x) => x.id !== m.id);
       saveDevices(devices);
       if (selectedId === m.id) {
@@ -365,6 +364,8 @@ async function handleCmd(m) {
     }
     case "pair":
       return doPair(m.code, m.addr);
+    case "pair-cancel": // 关窗/取消：停 announce、什么都不存
+      return cancelPendingPair();
     case "pick-source":
       pickSel = m.id || "";
       localStorage.setItem("pickSel", pickSel);
@@ -402,142 +403,115 @@ async function handleCmd(m) {
   }
 }
 
+// ===== 配对：announce 全程在弹窗里进行（安全要求，Mac #176） =====
+// 点「配对」→ 弹窗内 announce + 显示「等待对方输入配对码…」；**只有收到 PAIR_CONFIRMED
+// 才把设备存进列表**（带对方名）；**关窗/取消 = 取消 announce、什么都不存**。
+// 防两件事：① 关窗后 announce 还挂着，配对码被别人撞上；② 未确认的配对混进设备列表。
+let pendingPair = null; // { pairHash, secret, code, addr, id, sock, timer, cancelled }
+
+function cancelPendingPair() {
+  const p = pendingPair;
+  pendingPair = null;
+  if (!p) return;
+  p.cancelled = true;
+  clearTimeout(p.timer);
+  try { p.sock && p.sock.destroy(); } catch {}
+}
+
 function doPair(code, addr) {
   const clean = normalizeCode(code);
-  if (!codeValid(clean)) {
-    return toast("配对码错误，请核对后重试（6 位字母或数字）");
-  }
+  if (!codeValid(clean)) return toast("配对码错误，请核对后重试（6 位字母或数字）");
   const secret = secretFromCode(clean);
   const id = "pair-" + nodeCrypto.createHash("sha256").update(secret).digest("hex").slice(0, 12);
   if (deviceById(id)) {
     selectedId = id;
     localStorage.setItem("selectedId", id);
     pushState();
+    ipcRenderer.send("nd-pair-done", { ok: true }); // 已配过 → 关弹窗
     return toast("这台设备已经配过对了");
   }
-  devices.push({
-    id, secret, name: "", alias: null, online: false,
-    addr: (addr || "").trim() || null,
-    pairStatus: "waiting", // waiting=已宣告等对方 / paired=服务器确认双向
-  });
-  saveDevices(devices);
-  selectedId = id;
-  localStorage.setItem("selectedId", id);
-  role.clearPairing(); // 换了对象就别拿旧 peerId 算角色
-  pushState();
-
-  // docs/11 §1：配对 = **双向**。只在本地存个码、只探测中转可达，**不算配对**。
-  // 两端各发 PAIR_ANNOUNCE，服务器见到同 pairHash 不同 deviceId 的两个 → 双发
-  // PAIR_CONFIRMED（含对端 deviceId+name）并记录这对。对端还没输码就一直等。
-  toast("等待对方输入相同的配对码…");
-  startPairAnnounce(id);
+  cancelPendingPair();
+  const hash = nodeCrypto.createHash("sha256").update(Buffer.from(secret, "base64")).digest("hex");
+  pendingPair = { pairHash: hash, secret, code: clean, addr: (addr || "").trim() || null, id, sock: null, timer: null, cancelled: false };
+  announcePending();
 }
 
-// ===== PAIR_ANNOUNCE 双向配对（docs/11 §1，协议 0x44/0x45，relay v1.12） =====
-// 每个设备一条 announce 连接：向 relay 宣告「我在用这个码配对」，挂着等 CONFIRMED。
-// 对端一旦也 announce 同一个 pairHash（不同 deviceId），双方各收对端 {deviceId,name}。
-const pairAnnounces = new Map(); // deviceId → { sock, timer, cancelled }
-
-function stopPairAnnounce(id) {
-  const a = pairAnnounces.get(id);
-  if (!a) return;
-  a.cancelled = true;
-  clearTimeout(a.timer);
-  try { a.sock && a.sock.destroy(); } catch {}
-  pairAnnounces.delete(id);
-}
-
-function startPairAnnounce(id) {
-  stopPairAnnounce(id); // 同一设备只留一条
-  const d = deviceById(id);
-  if (!d) return;
-  const hash = nodeCrypto.createHash("sha256").update(Buffer.from(d.secret, "base64")).digest("hex");
+function announcePending() {
+  const p = pendingPair;
+  if (!p || p.cancelled) return;
   const [host, portStr] = (prefs.relayServer || "").trim().split(":");
-  if (!host) return;
+  if (!host) { cancelPendingPair(); return ipcRenderer.send("nd-pair-done", { ok: false, message: "未设置中转服务器（到中转设置里填）" }); }
   const port = +portStr || 47700;
-  const state = { sock: null, timer: null, cancelled: false };
-  pairAnnounces.set(id, state);
-
-  const attempt = () => {
-    if (state.cancelled) return;
-    const sock = net.createConnection(port, host, () => {
-      sock.setNoDelay(true);
-      const msg = { v: 1, pairHash: hash, deviceId, name: localName };
-      const tok = (prefs.token || "").trim();
-      if (tok) msg.token = tok;
-      sock.write(buildFrame(T.PAIR_ANNOUNCE, msg));
-      console.log(`[recv] 已宣告配对（等对方输入同码）pairHash ${hash.slice(0, 12)}…`);
-    });
-    state.sock = sock;
-    const parser = new FrameParser((t, pl) => {
-      if (t === T.PAIR_CONFIRMED) {
-        let info = {};
-        try { info = JSON.parse(pl.toString()); } catch {}
-        onPairConfirmed(id, info);
-      } else if (t === T.RELAY_ERROR) {
-        let reason = ""; try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
-        // token 错这类硬错就别死循环重连，报出来让用户改设置
-        if (reason === "unauthorized") {
-          stopPairAnnounce(id);
-          toast("配对失败：访问 Token 不正确 —— 到中转设置里核对");
-        }
+  const sock = net.createConnection(port, host, () => {
+    sock.setNoDelay(true);
+    const msg = { v: 1, pairHash: p.pairHash, deviceId, name: localName };
+    const tok = (prefs.token || "").trim();
+    if (tok) msg.token = tok;
+    sock.write(buildFrame(T.PAIR_ANNOUNCE, msg));
+    console.log(`[recv] 配对弹窗内已宣告，等对方输入同码 pairHash ${p.pairHash.slice(0, 12)}…`);
+  });
+  p.sock = sock;
+  const parser = new FrameParser((t, pl) => {
+    if (t === T.PAIR_CONFIRMED) {
+      let info = {}; try { info = JSON.parse(pl.toString()); } catch {}
+      confirmPending(info);
+    } else if (t === T.RELAY_ERROR) {
+      let reason = ""; try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
+      if (reason === "unauthorized") {
+        cancelPendingPair();
+        ipcRenderer.send("nd-pair-done", { ok: false, message: "访问 Token 不正确 — 到中转设置里核对" });
       }
-    });
-    sock.on("data", (b) => { try { parser.feed(b); } catch {} });
-    // 对端没来时 relay 会按 TTL 关掉，或网络抖动断开 → 稍后重发，继续等
-    const retry = () => {
-      if (state.cancelled) return;
-      state.timer = setTimeout(attempt, 3000);
-    };
-    sock.on("close", retry);
-    sock.on("error", () => {}); // close 会跟着触发，统一在那重试
-  };
-  attempt();
+    }
+  });
+  sock.on("data", (b) => { try { parser.feed(b); } catch {} });
+  sock.on("close", () => {
+    if (pendingPair !== p || p.cancelled) return; // 已确认/已取消就别重发
+    p.timer = setTimeout(announcePending, 3000); // TTL 到/网络抖动断开 → 重发，继续等
+  });
+  sock.on("error", () => {}); // close 会跟着触发，统一在那重发
 }
 
-function onPairConfirmed(id, info) {
-  const d = deviceById(id);
-  if (!d) return;
-  stopPairAnnounce(id); // 拿到确认就不用再挂着了
-  d.pairStatus = "paired";
-  if (info.peerDeviceId) {
-    d.peerDeviceId = info.peerDeviceId;
-    role.rememberPeer(info.peerDeviceId); // 真配对确认，角色编排也认这个对端
-  }
-  if (info.peerName) d.name = String(info.peerName).slice(0, 40);
-  d.online = true;
+function confirmPending(info) {
+  const p = pendingPair;
+  if (!p) return;
+  cancelPendingPair();
+  // 现在才把设备存进列表——服务器确认了对端真用了同一个码，这才叫配对成功。
+  const dev = {
+    id: p.id, secret: p.secret,
+    name: info.peerName ? String(info.peerName).slice(0, 40) : "",
+    alias: null, online: true, addr: p.addr,
+    pairStatus: "paired", peerDeviceId: info.peerDeviceId || null,
+  };
+  devices.push(dev);
   saveDevices(devices);
+  selectedId = dev.id;
+  localStorage.setItem("selectedId", dev.id);
+  role.clearPairing();
+  if (info.peerDeviceId) role.rememberPeer(info.peerDeviceId);
   pushState();
-  // 到这一刻「配对成功」才名副其实：服务器确认对端真用了同一个码。
-  toast(`已与「${deviceLabel(d)}」配对成功`);
+  ipcRenderer.send("nd-pair-done", { ok: true });
+  toast(`已与「${deviceLabel(dev)}」配对成功`);
 }
 
 // A 位（监听/注册）时，对端 HELLO 只到 sender.js，renderer 的 onFrame 看不到。
 // 不接这个出口的话，「配对成功、显示对方名字」只在 B 位那一侧发生，J1 1.2 会一半通过
 // 一半不通过——而且看起来像是「对方实现有问题」。
+// A 位（投射端）时对端 HELLO 只到 sender.js。设备已经是「配对确认过」的了（存进列表
+// 就意味着 PAIR_CONFIRMED 过），这里只趁真连上刷新一下对方名字/在线态，不再「配对成功」。
 sender.setPeerHelloHandler((h) => {
   try {
     if (h.deviceId) role.rememberPeer(h.deviceId);
     const d = selectedDevice();
     if (!d) return;
-    if (h.name) d.name = String(h.name).slice(0, 40);
+    if (h.name && !d.alias) d.name = String(h.name).slice(0, 40); // 别名优先
     d.online = true;
     saveDevices(devices);
     peerName = deviceLabel(d);
-    promotePaired(d);
     pushState();
   } catch (e) {
     console.log("[recv] 处理对端 HELLO 出错: " + ((e && e.stack) || e));
   }
 });
-
-// 首次拿到对端 HELLO = 配对真正完成。此前设备是「记下了但没见过对方」的状态。
-function promotePaired(d) {
-  if (!d || d.paired) return;
-  d.paired = true;
-  saveDevices(devices);
-  toast(`已与「${deviceLabel(d)}」配对成功`);
-}
 
 // ===== 三个动作：开投 / 回待命 / 开关接收服务 =====
 async function startCast() {
@@ -980,11 +954,10 @@ function onFrame(type, payload) {
         peerName = "";
         const dd = selectedDevice();
         if (dd) {
-          if (h.name) dd.name = String(h.name).slice(0, 40);
+          if (h.name && !dd.alias) dd.name = String(h.name).slice(0, 40); // 别名优先
           dd.online = true;
           saveDevices(devices);
           peerName = deviceLabel(dd);
-          promotePaired(dd); // 名字已拿到，这时候报「配对成功」才名副其实
         } else if (h.name) peerName = String(h.name).slice(0, 40);
         if (h.deviceId) {
           const known = role.getPeerId();
@@ -1438,15 +1411,8 @@ window.addEventListener("keyup", (e) => {
   if (a.autoConnect) connectDirectCli(a.autoConnect, true);
   else if (a.connect) connectDirectCli(a.connect, false);
   else if (a.relay != null) connectRelayCli(a.relay);
-  // 启动不再自动开接收服务。新配对模型：配对≠连接，方向由用户显式选（投射/接收）。
-  // 以前这里 setRecvSvc(true)，用户一开程序设备就卡「连接中…」，正是他截图看到的——
-  // 而且这会在他还没决定投还是收时就建连接，把角色编排提前触发。启动只做待命展示。
-  // 但**没配完的配对要续上**：上次关程序时对端还没输码的设备，重开继续 announce 等它。
-  else if (!isCliRun(a)) {
-    for (const d of devices) {
-      if (d.pairStatus === "waiting" && !d.peerDeviceId) startPairAnnounce(d.id);
-    }
-  }
+  // 启动不再自动开接收服务，也不续 announce：配对全程在弹窗里完成、确认才存，
+  // 所以列表里的设备都是已确认的，没有「半途未确认」要续。方向由用户显式选。
   if (a.exitAfter) {
     setTimeout(() => {
       const t = stats.total;

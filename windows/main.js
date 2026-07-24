@@ -253,6 +253,8 @@ ipcMain.on("nd-cmd", (_e, m) => {
   send(engineWin, "nd-cmd", m);
 });
 ipcMain.on("nd-toast", (_e, text) => broadcast("nd-toast", text));
+// 配对结果（成功/失败）：引擎 → 主面板弹窗，好让它关掉「等待对方…」并落地或报错
+ipcMain.on("nd-pair-done", (_e, r) => send(panelWin, "nd-pair-done", r));
 
 // 主面板是无边框的，最小化/关闭只能自己画，也就只能自己发消息
 ipcMain.on("nd-win", (_e, action) => {
