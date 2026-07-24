@@ -24,7 +24,7 @@ final class ReceiverRelayClient {
     private var relayParser = FrameParser()
     private var paired = false
     private var session: ReceiverSession?
-    private var backoff: Double = 1
+    private var backoff: Double = 2   // start ≥2s so waiting-for-caster retries stay under the relay's per-IP JOIN limit
     private var reconnectWork: DispatchWorkItem?
     private var stopped = false
 
@@ -78,7 +78,8 @@ final class ReceiverRelayClient {
                 let join = RelayJoin(v: 1, role: "receiver", code: joinCode,
                                      pairHash: joinHash, token: self.token)
                 c.send(Wire.encodeJSON(.relayJoin, join))
-                self.backoff = 1
+                // NB: don't reset backoff here — a TCP connect that then hits
+                // code_not_found must keep backing off. Reset only on RELAY_PAIRED.
                 if joinHash != nil {
                     Log.info("relay-receive: JOIN with pairHash (code-free), waiting to pair")
                 } else {
@@ -107,6 +108,7 @@ final class ReceiverRelayClient {
         case .relayPaired:
             Log.info("relay-receive: PAIRED — handing off to receiver session")
             paired = true
+            backoff = 2   // successful pair → reset wait for any future drop
             guard let conn else { return }
             let leftover = relayParser.drainRemaining()
             let rs = ReceiverSession(host: host, port: port, name: name, deviceId: deviceId,
@@ -122,7 +124,16 @@ final class ReceiverRelayClient {
             rs.attach(conn: conn, leftover: leftover)
         case .relayError:
             let reason = (try? JSONDecoder().decode(RelayError.self, from: frame.payload))?.reason ?? "?"
-            Log.error("relay-receive: RELAY_ERROR \(reason)"); conn?.close()
+            Log.error("relay-receive: RELAY_ERROR \(reason)")
+            conn?.close()   // self-close doesn't fire onClose → retry explicitly below
+            switch reason {
+            case "code_not_found":
+                scheduleReconnect()      // caster not up yet — wait with backoff (no hammering)
+            case "rate_limited":
+                backoff = 60; scheduleReconnect()   // shared-IP limit: back off hard
+            default:
+                break                    // unauthorized / room_occupied → fatal, don't retry
+            }
         default:
             break
         }
