@@ -30,7 +30,6 @@ let switchingDirection = false; // 正在为「换投射方向」而重建连接
 let reconnectTimer = null;
 let reconnectDelay = 1000;
 
-let firstContact = false; // 首次接触（还不知道对端 deviceId）：join 扑空要改成 register
 let sharedSecret = null; // --secret：联调用共享固定密钥（优先于持久保存的）
 let sharedHash = null; // --pairhash：直接指定房间
 
@@ -519,7 +518,6 @@ function onPairConfirmed(id, info) {
 sender.setPeerHelloHandler((h) => {
   try {
     if (h.deviceId) role.rememberPeer(h.deviceId);
-    firstContact = false;
     const d = selectedDevice();
     if (!d) return;
     if (h.name) d.name = String(h.name).slice(0, 40);
@@ -699,42 +697,18 @@ function connectAuto() {
   }, 2500);
 }
 
-// A 位待命：同时开两条入口等对方来连——47800 供局域网直连，中转按 pairHash 注册。
-// 用户不必选「直连还是中转」，对方用哪种都能连上。
-async function startListening() {
-  const d = selectedDevice();
-  setStatus("正在待命，等对方连接…");
-  await sender.startSender(sendStatus); // 监听 47800
-  const server = prefs.relayServer.trim();
-  if (server) {
-    await sender.startSenderRelay(sendStatus, {
-      server, token: prefs.token.trim() || undefined,
-      secret: (d && d.secret) || undefined, // 同码 → 同 pairHash → 同一个房间
-    });
-  }
-  pushState();
-  setStatus("待命中，等对方投射过来");
-}
-
-// 谁监听谁拨号由 role.js 按 deviceId 字典序定（Option A 编排），不再问用户。
-// 用户问的是「谁投给谁」，那由 startCast 决定；这里只负责把连接建起来。
+// connect() 只在**接收**语境下被调用（开启接收服务/续连/重连）。显式方向模型下，
+// 接收方一律 JOIN 对方房间，投射方一律 register——方向由用户点「投射/接收」定死。
+//
+// ⚠️ 这里曾用 role.myPosition（deviceId 字典序）决定 register 还是 join：那是旧的
+// 「自动判方向」编排。结果接收端只要排在「A 位」就会去 **register**，和投射方两个
+// register 在同一房间互相顶替，永远撮合不上——**Mac→Windows 完全不通就是栽在这**。
+// 现在删掉编排：接收 = 一定 join。
 function connect() {
   if (sock) teardown(null, true); // 「应用并重连」：先静默断开再按当前设置重连
   const d = selectedDevice();
   if (!d) return setStatus("还没有配对设备", true);
-
-  const pos = role.myPosition(deviceId);
-  if (pos === "A") return startListening();
-
-  // pos === null：刚配完对，还没交换过 HELLO，两端都不知道对端 deviceId，
-  // 也就都算不出该谁监听。照「不是 A 就拨号」处理的话**两端都会拨号、没人注册**，
-  // 双双拿到 code_not_found —— 用户输了正确的码却被告知「配对码不存在」。
-  // 解法不需要新协议：先 join，扑空就改为 register 并等着。两端跑同一个算法，
-  // 房间空就当房主、有人就进去。
-  if (pos === null) firstContact = true;
-
-  // B 位：我去拨对方。先停掉可能还开着的待命，否则会在中转上留一个没人用的
-  // 注册，用户看不见也不知道，还占着房间。
+  // 收发互斥：开始接收前先停掉可能还开着的投射注册，否则自己和自己同房间打架。
   if (sender.isSending()) { sender.stopSender(); pushState(); }
   return dialPeer(d);
 }
@@ -1004,7 +978,6 @@ function onFrame(type, payload) {
         if (h.lanAddrs) setTimeout(() => tryUpgradeToDirect(h.lanAddrs), 200);
         // v1.10：对端自报的设备名。别名仍然优先——那是本机用户自己起的。
         peerName = "";
-        firstContact = false; // 见到对端了，之后按 deviceId 算角色
         const dd = selectedDevice();
         if (dd) {
           if (h.name) dd.name = String(h.name).slice(0, 40);
@@ -1092,31 +1065,20 @@ function onFrame(type, payload) {
       break;
     case T.RELAY_ERROR: {
       const r = JSON.parse(payload.toString()).reason;
-      // 交接期兼容：新版两端各自从码算 pairHash 进同一个房间（协议 §3.7），
-      // 老版则是「发送方用明文码注册、接收方用明文码 join」。用户很可能先拿到
-      // 一端的新版——那时两边输一样的码却各进各的房间，撮合不上，而两边日志
-      // 都正常，用户只会看到「配对码不存在」。所以 pairHash 没找到房间时，
-      // 自动再用明文码试一次。等两端都升级后这条路自然不会被走到。
-      const dd = selectedDevice();
-      // 首次接触：房间是空的说明对端还没到，那就由我来当房主等它。
-      // 两端跑同一个算法，谁先到谁开房间，后到的进来，不需要预先约定角色。
-      if (r === "code_not_found" && firstContact) {
-        firstContact = false;
+      // 接收方 JOIN 时房间空 = 对方**还没开始投射**，不是配对码错。这时不该报
+      // 「配对码不存在」吓用户，也不该改去 register 抢当房主（那是旧自动编排的错，
+      // 会和真投射方两个 register 打架）。正确做法：安静地等一会儿再 join，直到
+      // 对方开投。界面显示「等待对方投射…」。
+      if (r === "code_not_found" && recvSvc === "waiting" && !manualDisconnect) {
         teardown(null, true);
-        // 随机退避：两端同时发现房间空会同时 register，relay 的替换语义下
-        // 后者顶掉前者；错开一点就不会撞上 flapping 保护（15s 内替换 >3 次）。
-        const backoff = 60 + Math.floor(Math.random() * 240);
-        console.log(`[recv] 房间还没人，改为开房等待（${backoff}ms 后）`);
-        setTimeout(() => { if (!sock) startListening(); }, backoff);
+        setStatus("等待对方开始投射…");
+        if (!reconnectTimer) {
+          reconnectTimer = setTimeout(() => { reconnectTimer = null; if (recvSvc === "waiting") connect(); }, 2000);
+        }
         return;
       }
-      // v1.11：删掉了「pairHash 扑空→回退明文码」的交接期兼容。它治不了病：
-      // 老 0.3.0 的 sender 用**随机**码注册明文房，回退到用户输的码根本对不上；
-      // 而且码格式已改成字母数字，纯数字明文房更不可能碰上。留着只给人「能兼容」
-      // 的错觉——今天就是这个错觉让我先去猜网络/锁屏而不是先想版本。跨大版本不
-      // 互通、必须同版本，写进协议更诚实。
       const msg = {
-        code_not_found: "配对码不存在或已过期",
+        code_not_found: "对方还没开始投射，或配对码不匹配",
         rate_limited: "尝试过于频繁，稍后再试",
         unauthorized: "token 不正确（在设置里填写中转服务器的访问令牌）",
       }[r] || r;
