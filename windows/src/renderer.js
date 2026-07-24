@@ -60,15 +60,19 @@ function sendControl(action) {
   if (sock && !sock.destroyed) sock.write(buildFrame(T.CONTROL, { action }));
 }
 
-function scheduleReconnect(why) {
+// 接收待命时的自动重试。**必须指数退避**，否则对端还没开投时会每 2s 狂刷 JOIN，
+// 把中转打到 rate_limited——而且两台走同一个 Clash 出口，per-IP 限流会连累对方，
+// 对端永远 join 不进来（用户现场 netdisplay.log 实锤）。
+// 只在 recvSvc==="waiting" 时重连：投射有 sender 自己的重连，别在这儿复活一条接收 join。
+function scheduleReconnect(why, minDelay) {
   if (manualDisconnect || reconnectTimer) return;
-  // 自动重连需要「无需人工输入即可重建」：中转/自动模式 + 已持久配对
-  if (mode === "direct" || !pairSecret()) return;
-  setStatus(`${why || "连接断开"} — ${Math.round(reconnectDelay / 1000)}s 后自动重连…`);
+  if (recvSvc !== "waiting" || !pairSecret()) return;
+  if (minDelay) reconnectDelay = Math.max(reconnectDelay, minDelay);
+  setStatus(`${why || "连接断开"} — ${Math.round(reconnectDelay / 1000)}s 后重试…`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    reconnectDelay = Math.min(30000, reconnectDelay * 2);
-    connect();
+    reconnectDelay = Math.min(30000, reconnectDelay * 2); // 2→4→8→…→30s 封顶
+    if (recvSvc === "waiting") connect();
   }, reconnectDelay);
 }
 
@@ -1034,20 +1038,26 @@ function onFrame(type, payload) {
     }
     case T.RELAY_PAIRED:
       setStatus("配对成功，握手中…");
+      reconnectDelay = 1000; // 连上了就把退避复位，下次断开从头来
       sendHello();
       break;
     case T.RELAY_ERROR: {
       const r = JSON.parse(payload.toString()).reason;
-      // 接收方 JOIN 时房间空 = 对方**还没开始投射**，不是配对码错。这时不该报
-      // 「配对码不存在」吓用户，也不该改去 register 抢当房主（那是旧自动编排的错，
-      // 会和真投射方两个 register 打架）。正确做法：安静地等一会儿再 join，直到
-      // 对方开投。界面显示「等待对方投射…」。
+      // 接收方 JOIN 时房间空 = 对方**还没开始投射**，不是配对码错。安静地退避重试，
+      // 直到对方开投。**关键：指数退避**（scheduleReconnect），不能固定 2s 狂刷——
+      // 狂刷会把中转打到 rate_limited，而两台同一个 Clash 出口、per-IP 限流会连累
+      // 对端也 join 不进来。用户现场 netdisplay.log 就是这个死循环。
       if (r === "code_not_found" && recvSvc === "waiting" && !manualDisconnect) {
         teardown(null, true);
         setStatus("等待对方开始投射…");
-        if (!reconnectTimer) {
-          reconnectTimer = setTimeout(() => { reconnectTimer = null; if (recvSvc === "waiting") connect(); }, 2000);
-        }
+        scheduleReconnect("等待对方开始投射", 2000);
+        return;
+      }
+      // 已经被限流：退避到 60s 起，别火上浇油。
+      if (r === "rate_limited" && recvSvc === "waiting" && !manualDisconnect) {
+        teardown(null, true);
+        setStatus("中转繁忙，稍后自动重试…");
+        scheduleReconnect("中转繁忙", 60000);
         return;
       }
       const msg = {
