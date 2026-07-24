@@ -1,6 +1,6 @@
 {
   "name": "netdisplay-windows",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "NetDisplay Windows client: send this PC's screen/window to another machine, or receive as an extra display",
   "main": "main.js",
   "scripts": {
