@@ -66,6 +66,15 @@ function toast(msg) {
 const selected = () => (S.devices || []).find((d) => d.id === S.selectedId) || null;
 const transportText = (d) => (d.transport === "relay" ? "中转" : d.transport === "direct" ? "直连" : "");
 
+// docs/11 §5：设备行要让用户一眼看出「对方在不在、能不能投」——用户明确要的。
+const PEER_STATE_TEXT = {
+  "recv-waiting": "对方已开接收 · 可投射",
+  receiving: "对方正在接收",
+  casting: "对方正在投射 · 可接收",
+  idle: "对方在线 · 空闲",
+  offline: "对方离线",
+};
+
 function deviceStatus(d) {
   if (d.conn === "on") {
     const parts = ["已连接"];
@@ -75,10 +84,9 @@ function deviceStatus(d) {
     return parts.join(" · ");
   }
   if (d.conn === "connecting") return "连接中…";
-  // docs/11：服务器确认对端也输了同码前，是「等待对方…」，不是「未连接」——
-  // 「未连接」会让人以为配好了只是没连，其实还没配成。
   if (d.pairStatus === "waiting") return "等待对方输入配对码…";
-  return d.online ? "未连接" : "离线";
+  // 没连上时显示对端 presence：比干巴巴的「未连接」有用得多
+  return PEER_STATE_TEXT[d.peerState] || (d.online ? "未连接" : "对方离线");
 }
 
 // ---------- 状态接入 ----------
@@ -163,7 +171,10 @@ function castBlockReason() {
   if (S.role === "receiving") return "正在接收对方画面，先断开投屏才能投射";
   if (S.role === "switching") return "正在切换，请稍候";
   if (S.role === "casting") return "已经在投射了";
-  if (!sel.online) return "「" + sel.name + "」当前离线，无法投射";
+  // presence 说对方离线就别让投（用户要求）。宽松处理：只有明确 offline 才挡——
+  // 对端还没上报 presence 时不拦，免得老版本对端把按钮永久锁死。
+  if (sel.peerState === "offline") return "「" + sel.name + "」当前不在线，无法投射（等对方打开程序）";
+  if (sel.peerState === "receiving") return "「" + sel.name + "」正在接收别的画面";
   return null;
 }
 

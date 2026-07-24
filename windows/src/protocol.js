@@ -25,6 +25,10 @@ const T = {
   // 直连判据 = 收到 PROBE_ACK 且回显匹配，**不是** TCP connect 成功（TUN 会骗）。
   PROBE: 0x46, // 探测方→响应器，payload = 8 字节随机数
   PROBE_ACK: 0x47, // 响应器→探测方，原样回显那 8 字节
+  // docs/11 §5：presence。app 开着时对配对设备维持一条 presence 连接向 relay 报状态，
+  // relay 转给对端。用户要的「对方在不在线、接收服务开没开、能不能投」靠它。
+  PRESENCE: 0x48, // client→relay {v, pairHash, deviceId, name, state, token}
+  PEER_PRESENCE: 0x49, // relay→client {peerDeviceId, peerName, peerState}
 };
 
 const MAX_PAYLOAD = 16 * 1024 * 1024;

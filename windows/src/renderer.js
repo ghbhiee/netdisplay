@@ -222,6 +222,7 @@ let peerName = "";
 
 function setRole(r) {
   uiRole = r;
+  reportPresence(); // 状态一变就补报，让对端及时看到（idle/casting/recv-waiting/receiving）
   pushState();
 }
 
@@ -252,6 +253,9 @@ function uiState() {
       rttMs: x.id === selectedId && connected ? lastRttMs : null,
       // 存进列表就意味着 PAIR_CONFIRMED 过（配对全程在弹窗内完成），一律 paired。
       pairStatus: "paired",
+      // docs/11 §5 presence：对端此刻在干嘛（offline/idle/casting/recv-waiting/receiving）。
+      // 只有选中设备维持 presence 连接，其余显示 offline（没连就不知道）。
+      peerState: x.id === selectedId ? peerState : "offline",
     })),
     selectedId,
     sources: sourceList.map((s) => ({ id: s.id, name: s.name, kind: s.kind })),
@@ -333,6 +337,7 @@ async function handleCmd(m) {
     case "select-device":
       selectedId = m.id;
       localStorage.setItem("selectedId", m.id || "");
+      startPresence(); // 换设备 → presence 连接跟着换
       return pushState();
     case "connect":
       selectedId = m.id;
@@ -493,6 +498,7 @@ function confirmPending(info) {
   role.clearPairing();
   if (info.peerDeviceId) role.rememberPeer(info.peerDeviceId);
   pushState();
+  startPresence(); // 配对成功即开始互报状态
   ipcRenderer.send("nd-pair-done", { ok: true });
   toast(`已与「${deviceLabel(dev)}」配对成功`);
 }
@@ -516,6 +522,89 @@ sender.setPeerHelloHandler((h) => {
     console.log("[recv] 处理对端 HELLO 出错: " + ((e && e.stack) || e));
   }
 });
+
+// ===== presence（docs/11 §5，协议 0x48/0x49，relay v1.14） =====
+// app 开着时对**选中设备**维持一条 presence 连接：报自己状态、收对端状态。
+// 用户要的就是这个：「对方在不在线、接收服务开没开、能不能投」。
+let presenceSock = null;
+let presenceTimer = null;
+let presenceDevId = null; // 当前 presence 连的是哪台设备
+let peerState = "offline"; // 对端状态：offline/idle/casting/recv-waiting/receiving
+
+// 本机当前该上报的状态
+function myPresenceState() {
+  if (uiRole === "casting") return "casting";
+  if (uiRole === "receiving") return "receiving";
+  if (recvSvc === "waiting") return "recv-waiting";
+  return "idle";
+}
+
+function stopPresence() {
+  clearTimeout(presenceTimer);
+  presenceTimer = null;
+  presenceDevId = null;
+  if (presenceSock) { try { presenceSock.destroy(); } catch {} presenceSock = null; }
+  if (peerState !== "offline") { peerState = "offline"; pushState(); }
+}
+
+function startPresence() {
+  const d = selectedDevice();
+  if (!d || !d.secret) return stopPresence();
+  // 换设备了就重连；同一台就别重复开
+  if (presenceSock && presenceDevId === d.id) return;
+  stopPresence();
+  presenceDevId = d.id;
+
+  const hash = nodeCrypto.createHash("sha256").update(Buffer.from(d.secret, "base64")).digest("hex");
+  const [host, portStr] = (prefs.relayServer || "").trim().split(":");
+  if (!host) return;
+  const port = +portStr || 47700;
+  const myId = d.id;
+
+  const connect = () => {
+    if (presenceDevId !== myId) return; // 期间换了设备
+    const sock = net.createConnection(port, host, () => {
+      sock.setNoDelay(true);
+      sendPresence(sock, hash);
+    });
+    presenceSock = sock;
+    const parser = new FrameParser((t, pl) => {
+      if (t === T.PEER_PRESENCE) {
+        let info = {}; try { info = JSON.parse(pl.toString()); } catch {}
+        const next = info.peerState || "offline";
+        if (next !== peerState) { peerState = next; pushState(); }
+        // 顺带刷新对方名字（别名优先）
+        const dd = deviceById(myId);
+        if (dd && info.peerName && !dd.alias) { dd.name = String(info.peerName).slice(0, 40); saveDevices(devices); }
+      }
+    });
+    sock.on("data", (b) => { try { parser.feed(b); } catch {} });
+    sock.on("close", () => {
+      if (presenceSock === sock) presenceSock = null;
+      if (presenceDevId !== myId) return;
+      if (peerState !== "offline") { peerState = "offline"; pushState(); }
+      presenceTimer = setTimeout(connect, 5000); // 断了慢慢重连，别狂刷（同 IP 限流的教训）
+    });
+    sock.on("error", () => {});
+  };
+  connect();
+}
+
+function sendPresence(sock, hash) {
+  if (!sock || sock.destroyed) return;
+  const msg = { v: 1, pairHash: hash, deviceId, name: localName, state: myPresenceState() };
+  const tok = (prefs.token || "").trim();
+  if (tok) msg.token = tok;
+  try { sock.write(buildFrame(T.PRESENCE, msg)); } catch {}
+}
+
+// 本机状态一变就补报一次，让对端及时看到
+function reportPresence() {
+  const d = deviceById(presenceDevId);
+  if (!presenceSock || !d) return;
+  const hash = nodeCrypto.createHash("sha256").update(Buffer.from(d.secret, "base64")).digest("hex");
+  sendPresence(presenceSock, hash);
+}
 
 // ===== 三个动作：开投 / 回待命 / 开关接收服务 =====
 async function startCast() {
@@ -592,6 +681,7 @@ function setRecvSvc(on) {
     setRole("standby");
     toast("接收服务已关闭");
   }
+  reportPresence(); // recv-waiting ↔ idle 的变化也要让对端看到
   pushState();
 }
 
@@ -1003,10 +1093,15 @@ function onFrame(type, payload) {
       projActive = !!st.active;
       if (projActive) {
         setIdleUI(false, st.label || "");
+        setRole("receiving"); // 有画面了 → 接收窗口自动出来
         ipcRenderer.send("win-show"); // 投射来了自动显示到前台
       } else {
         setIdleUI(true);
         waitingKey = true; // 下次恢复必从关键帧开始
+        // 对方点了停止 → **接收窗口要关掉**，不能留一个空窗杵在那（用户提的）。
+        // 但接收服务继续退避等着：对方再开投，PROJECTION_STATE/首帧会把窗口重开。
+        // 用户主动关那个窗口 = 停接收服务（见 winClose → drop-stream）。
+        if (uiRole === "receiving") setRole("standby");
       }
       break;
     }
@@ -1423,6 +1518,8 @@ window.addEventListener("keyup", (e) => {
   else if (a.relay != null) connectRelayCli(a.relay);
   // 启动不再自动开接收服务，也不续 announce：配对全程在弹窗里完成、确认才存，
   // 所以列表里的设备都是已确认的，没有「半途未确认」要续。方向由用户显式选。
+  // 但 presence 要开：用户要能一眼看到对方在不在线、接收服务开没开。
+  if (!isCliRun(a) && selectedDevice()) startPresence();
   if (a.exitAfter) {
     setTimeout(() => {
       const t = stats.total;
