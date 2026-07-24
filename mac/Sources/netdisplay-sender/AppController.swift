@@ -162,10 +162,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             host: rhost, port: rport, token: config.relayToken.isEmpty ? nil : config.relayToken,
             code: nil, pairHashOverride: hash,
             name: senderName, deviceId: deviceId, screen: screen, codecs: ["hevc422", "hevc", "h264"])
-        client.onReady = { d, c in
+        client.onReady = { [weak self] d, c in
             guard let d = d else { return }
             win.configure(width: d.width, height: d.height, title: "NetDisplay — \(device.displayName) 的画面")
-            DispatchQueue.main.async { [weak self] in self?.model.receiveStarted() }   // 自动进入接收
+            let transport = self?.model.connectivity[device.secret] ?? "中转"
+            win.setBadge("接收中 · \(transport) · \(c.wire)")
+            DispatchQueue.main.async { self?.model.receiveStarted() }   // 自动进入接收
         }
         client.onResize = { w, h in win.configure(width: w, height: h, title: "NetDisplay — \(device.displayName) 的画面") }
         client.onProjectionState = { a, l, k in win.setLabel(a ? (l ?? k) : "等待投射…") }

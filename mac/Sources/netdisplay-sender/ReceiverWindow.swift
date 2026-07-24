@@ -11,10 +11,20 @@ final class ReceiverWindow: NSObject, NSWindowDelegate {
     private let renderer = FrameRenderer()
     private var configured = false
     private var baseTitle = "NetDisplay"
+    private var badge: NSTextField?
     /// Called (on main) when the user closes the window — so receiving can stop.
     var onClose: (() -> Void)?
 
     func windowWillClose(_ notification: Notification) { onClose?() }
+
+    /// Bottom-left floating status badge (design §5): 「接收中 · 中转 · 3ms」.
+    func setBadge(_ text: String?) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let b = self.badge else { return }
+            b.stringValue = text ?? ""
+            b.isHidden = (text?.isEmpty ?? true)
+        }
+    }
 
     /// Update the window title suffix from PROJECTION_STATE (which source / paused).
     func setLabel(_ text: String?) {
@@ -51,6 +61,25 @@ final class ReceiverWindow: NSObject, NSWindowDelegate {
                 img.contentsGravity = .resizeAspect
                 img.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
                 view.layer?.addSublayer(img)
+                // Bottom-left status badge (design §5).
+                let badge = NSTextField(labelWithString: "")
+                badge.font = .systemFont(ofSize: 11, weight: .medium)
+                badge.textColor = .white
+                badge.drawsBackground = true
+                badge.backgroundColor = NSColor.black.withAlphaComponent(0.55)
+                badge.wantsLayer = true
+                badge.layer?.cornerRadius = 6
+                badge.alignment = .center
+                badge.isHidden = true
+                badge.translatesAutoresizingMaskIntoConstraints = false
+                view.addSubview(badge)
+                NSLayoutConstraint.activate([
+                    badge.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+                    badge.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
+                    badge.heightAnchor.constraint(equalToConstant: 22),
+                ])
+                self.badge = badge
+
                 win.contentView = view
                 win.center()
                 win.makeKeyAndOrderFront(nil)
