@@ -21,6 +21,10 @@ const T = {
   // 不同 deviceId 的两个就给双方回 CONFIRMED（含对端 deviceId+name）并记下这对。
   PAIR_ANNOUNCE: 0x44, // client→relay {v, pairHash, deviceId, name, token}
   PAIR_CONFIRMED: 0x45, // relay→client {peerDeviceId, peerName}
+  // 02 §3.8：连通性探测。47800 常驻响应器读到 PROBE 就原样回 PROBE_ACK（回显 8 字节）。
+  // 直连判据 = 收到 PROBE_ACK 且回显匹配，**不是** TCP connect 成功（TUN 会骗）。
+  PROBE: 0x46, // 探测方→响应器，payload = 8 字节随机数
+  PROBE_ACK: 0x47, // 响应器→探测方，原样回显那 8 字节
 };
 
 const MAX_PAYLOAD = 16 * 1024 * 1024;
