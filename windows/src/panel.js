@@ -21,7 +21,6 @@ let S = EMPTY_STATE;
 const ui = {
   tab: "cast",
   qualityOpen: false,
-  advOpen: false,
   renamingId: null,   // 正在行内重命名的设备
   renameVal: "",
   confirmId: null,    // 正在二次确认解除配对的设备
@@ -370,12 +369,14 @@ function renderLocalName() {
 }
 
 function renderAdvanced() {
-  $("advChev").textContent = ui.advOpen ? "▾" : "▸";
-  show($("advBody"), ui.advOpen);
-  // 正在输入的框不要被引擎推来的值覆盖
-  setIfIdle($("advRelayAddr"), S.relay.addr || "");
-  setIfIdle($("advRelayToken"), S.relay.token || "");
-  $("advForce").classList.toggle("on", !!S.relay.forceRelay);
+  // 中转设置改成弹窗（docs/11 §3）：主面板只留一个入口，显示当前中转状态点+文案。
+  const st = S.relay.status;
+  const dot = $("relayEntryDot");
+  dot.className = "relay-entry-dot" + (st === "ok" ? " ok" : st === "error" ? " err" : "");
+  $("relayEntryText").textContent =
+    !S.relay.addr ? "中转设置" :
+    st === "ok" ? "中转设置 · 可用" + (typeof S.relay.rttMs === "number" ? " · " + S.relay.rttMs + "ms" : "") :
+    st === "error" ? "中转设置 · 连不上" : "中转设置";
 }
 
 function setIfIdle(input, value) {
@@ -431,17 +432,22 @@ function submitPair() {
   closePair(); // 结果由引擎的 nd-toast + 设备列表体现
 }
 
-function saveRelay(fromModal) {
-  const addr = (fromModal ? $("mRelayAddr") : $("advRelayAddr")).value.trim();
-  const token = (fromModal ? $("mRelayToken") : $("advRelayToken")).value;
-  cmd("relay-save", { addr, token, forceRelay: !!S.relay.forceRelay });
-  if (fromModal) closeRelay();
+// 中转设置只剩弹窗一个入口（docs/11 §3），不再有内嵌表单，所以只读 mRelay* 。
+function saveRelay() {
+  cmd("relay-save", {
+    addr: $("mRelayAddr").value.trim(),
+    token: $("mRelayToken").value,
+    forceRelay: !!S.relay.forceRelay,
+  });
+  closeRelay();
 }
 
-function toggleForceRelay(fromModal) {
-  const addr = (fromModal ? $("mRelayAddr") : $("advRelayAddr")).value.trim();
-  const token = (fromModal ? $("mRelayToken") : $("advRelayToken")).value;
-  cmd("relay-save", { addr, token, forceRelay: !S.relay.forceRelay });
+function toggleForceRelay() {
+  cmd("relay-save", {
+    addr: $("mRelayAddr").value.trim(),
+    token: $("mRelayToken").value,
+    forceRelay: !S.relay.forceRelay,
+  });
 }
 
 // ---------- 事件绑定（静态节点，只绑一次） ----------
@@ -469,7 +475,7 @@ $("btnRecvSvc").addEventListener("click", () => {
 });
 
 $("qualityHead").addEventListener("click", () => { ui.qualityOpen = !ui.qualityOpen; render(); });
-$("advHead").addEventListener("click", () => { ui.advOpen = !ui.advOpen; render(); });
+$("btnOpenRelay").addEventListener("click", openRelay); // 中转设置改弹窗
 
 $("btnAddDevice").addEventListener("click", openPair);
 
@@ -488,13 +494,6 @@ $("localNameInput").addEventListener("keydown", (e) => {
   if (e.key === "Escape") { ui.localEditing = false; render(); }
 });
 $("localNameInput").addEventListener("blur", () => { ui.localEditing = false; render(); });
-
-// 高级设置没有保存按钮（设计稿如此）：失焦或回车即提交
-for (const id of ["advRelayAddr", "advRelayToken"]) {
-  $(id).addEventListener("change", () => saveRelay(false));
-  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") $(id).blur(); });
-}
-$("advForce").addEventListener("click", () => toggleForceRelay(false));
 
 $("btnPairClose").addEventListener("click", closePair);
 $("pairModal").addEventListener("click", (e) => { if (e.target === $("pairModal")) closePair(); });
@@ -522,10 +521,10 @@ $("btnGenCode").addEventListener("click", () => {
 
 $("btnRelayClose").addEventListener("click", closeRelay);
 $("relayModal").addEventListener("click", (e) => { if (e.target === $("relayModal")) closeRelay(); });
-$("btnRelaySave").addEventListener("click", () => saveRelay(true));
-$("mForce").addEventListener("click", () => toggleForceRelay(true));
+$("btnRelaySave").addEventListener("click", () => saveRelay());
+$("mForce").addEventListener("click", () => toggleForceRelay());
 for (const id of ["mRelayAddr", "mRelayToken"]) {
-  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") saveRelay(true); });
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") saveRelay(); });
 }
 
 document.addEventListener("keydown", (e) => {

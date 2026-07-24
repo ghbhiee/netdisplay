@@ -148,7 +148,15 @@
     color:var(--text);outline:none;width:140px}
   .link-btn.sm{font-size:11px}
 
-  /* ===== 高级设置 ===== */
+  /* ===== 中转设置入口（弹窗式） ===== */
+  .relay-entry{display:flex;align-items:center;gap:9px;padding:10px 12px;border:1px solid var(--line);
+    border-radius:8px;background:var(--panel2);cursor:pointer;font-size:13px}
+  .relay-entry:hover{border-color:var(--accent)}
+  .relay-entry-dot{width:8px;height:8px;border-radius:50%;background:var(--sub);flex-shrink:0}
+  .relay-entry-dot.ok{background:var(--ok)}
+  .relay-entry-dot.err{background:var(--err)}
+  .relay-entry-arrow{margin-left:auto;color:var(--sub)}
+  /* ===== 中转设置弹窗内的表单 ===== */
   .arow{display:flex;align-items:center;gap:10px}
   .arow .alabel{font-size:12px;color:var(--sub);width:80px;flex-shrink:0}
   .ainput{flex:1;min-width:0;font-size:12px;padding:6px 9px;border:1px solid var(--line);border-radius:6px;
@@ -317,28 +325,11 @@
     </div>
   </div>
 
-  <!-- ===== 高级设置 ===== -->
-  <div class="fold">
-    <div id="advHead" class="fold-head">
-      <span id="advChev" class="chev">▸</span>
-      <div class="fold-title">高级设置</div>
-      <div class="fold-note">一般无需改动</div>
-    </div>
-    <div id="advBody" class="fold-body hidden" style="gap:10px">
-      <div class="arow">
-        <div class="alabel">中转服务器</div>
-        <input id="advRelayAddr" class="ainput" type="text" spellcheck="false" placeholder="relay.example.com:7000">
-      </div>
-      <div class="arow">
-        <div class="alabel">访问 Token</div>
-        <input id="advRelayToken" class="ainput" type="password">
-      </div>
-      <div class="arow">
-        <div class="alabel">强制走中转</div>
-        <div id="advForce" class="toggle"><div class="knob"></div></div>
-        <div class="toggle-note">仅在网络禁止直连时开启</div>
-      </div>
-    </div>
+  <!-- ===== 中转设置入口（docs/11 §3：改成弹窗，不再内嵌折叠） ===== -->
+  <div id="btnOpenRelay" class="relay-entry">
+    <span class="relay-entry-dot" id="relayEntryDot"></span>
+    <span id="relayEntryText">中转设置</span>
+    <span class="relay-entry-arrow">›</span>
   </div>
 
 </div>
