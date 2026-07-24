@@ -17,6 +17,10 @@ const T = {
   RELAY_JOIN: 0x41,
   RELAY_PAIRED: 0x42,
   RELAY_ERROR: 0x43,
+  // docs/11：服务器撮合的双向配对。两端各发 ANNOUNCE，relay 见到同 pairHash、
+  // 不同 deviceId 的两个就给双方回 CONFIRMED（含对端 deviceId+name）并记下这对。
+  PAIR_ANNOUNCE: 0x44, // client→relay {v, pairHash, deviceId, name, token}
+  PAIR_CONFIRMED: 0x45, // relay→client {peerDeviceId, peerName}
 };
 
 const MAX_PAYLOAD = 16 * 1024 * 1024;

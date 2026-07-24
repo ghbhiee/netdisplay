@@ -247,6 +247,8 @@ function uiState() {
       conn: x.id === selectedId ? (connected ? "on" : connecting ? "connecting" : "off") : "off",
       transport: x.id === selectedId && connected ? currentTransport : null,
       rttMs: x.id === selectedId && connected ? lastRttMs : null,
+      // docs/11：未确认对端前是「等待对方…」，不是「已配对」
+      pairStatus: x.pairStatus || (x.peerDeviceId ? "paired" : "waiting"),
     })),
     selectedId,
     sources: sourceList.map((s) => ({ id: s.id, name: s.name, kind: s.kind })),
@@ -348,6 +350,7 @@ async function handleCmd(m) {
     }
     case "unpair": {
       const d = deviceById(m.id);
+      stopPairAnnounce(m.id); // 别再替一个已删的设备挂着 announce
       devices = devices.filter((x) => x.id !== m.id);
       saveDevices(devices);
       if (selectedId === m.id) {
@@ -416,6 +419,7 @@ function doPair(code, addr) {
   devices.push({
     id, secret, name: "", alias: null, online: false,
     addr: (addr || "").trim() || null,
+    pairStatus: "waiting", // waiting=已宣告等对方 / paired=服务器确认双向
   });
   saveDevices(devices);
   selectedId = id;
@@ -423,23 +427,90 @@ function doPair(code, addr) {
   role.clearPairing(); // 换了对象就别拿旧 peerId 算角色
   pushState();
 
-  // 新配对模型（用户拍板、两端一致）：**配对 = 本地存码 + 向 relay 认证，不建
-  // 客户端间连接、不定 host/guest。** 经过中转本就不存在「谁连谁」——配对阶段只
-  // 确认「服务器可达 + token 有效」，真正的连接留到用户显式投射/接收时才建立，
-  // 方向天然无歧义。对方名字在首次投射的 HELLO 时才填进设备列表。
-  // （之前那句 auto-recv 的病根就是「配对时不该触发连接」，删对了，这里补上认证。）
-  toast("正在检测中转…");
-  relayAuth((ok, message) => {
-    const dd = deviceById(id);
-    if (!dd) return; // 检测期间被解除了配对
-    dd.authed = !!ok;
-    saveDevices(devices);
-    pushState();
-    // 措辞要诚实：自配对认证只证明「中转可达 + token 有效」，**不代表对端也输了同一个码**。
-    // 说「配对成功」会误导——用户会以为两台已经连上了。真正「和对方连上」只在投射时成立。
-    toast(ok ? "中转已就绪，点「开始投射」或「接收」即可连对方"
-             : `配对码已保存，但中转不可用：${message}（投射/接收时会再试）`);
-  });
+  // docs/11 §1：配对 = **双向**。只在本地存个码、只探测中转可达，**不算配对**。
+  // 两端各发 PAIR_ANNOUNCE，服务器见到同 pairHash 不同 deviceId 的两个 → 双发
+  // PAIR_CONFIRMED（含对端 deviceId+name）并记录这对。对端还没输码就一直等。
+  toast("等待对方输入相同的配对码…");
+  startPairAnnounce(id);
+}
+
+// ===== PAIR_ANNOUNCE 双向配对（docs/11 §1，协议 0x44/0x45，relay v1.12） =====
+// 每个设备一条 announce 连接：向 relay 宣告「我在用这个码配对」，挂着等 CONFIRMED。
+// 对端一旦也 announce 同一个 pairHash（不同 deviceId），双方各收对端 {deviceId,name}。
+const pairAnnounces = new Map(); // deviceId → { sock, timer, cancelled }
+
+function stopPairAnnounce(id) {
+  const a = pairAnnounces.get(id);
+  if (!a) return;
+  a.cancelled = true;
+  clearTimeout(a.timer);
+  try { a.sock && a.sock.destroy(); } catch {}
+  pairAnnounces.delete(id);
+}
+
+function startPairAnnounce(id) {
+  stopPairAnnounce(id); // 同一设备只留一条
+  const d = deviceById(id);
+  if (!d) return;
+  const hash = nodeCrypto.createHash("sha256").update(Buffer.from(d.secret, "base64")).digest("hex");
+  const [host, portStr] = (prefs.relayServer || "").trim().split(":");
+  if (!host) return;
+  const port = +portStr || 47700;
+  const state = { sock: null, timer: null, cancelled: false };
+  pairAnnounces.set(id, state);
+
+  const attempt = () => {
+    if (state.cancelled) return;
+    const sock = net.createConnection(port, host, () => {
+      sock.setNoDelay(true);
+      const msg = { v: 1, pairHash: hash, deviceId, name: localName };
+      const tok = (prefs.token || "").trim();
+      if (tok) msg.token = tok;
+      sock.write(buildFrame(T.PAIR_ANNOUNCE, msg));
+      console.log(`[recv] 已宣告配对（等对方输入同码）pairHash ${hash.slice(0, 12)}…`);
+    });
+    state.sock = sock;
+    const parser = new FrameParser((t, pl) => {
+      if (t === T.PAIR_CONFIRMED) {
+        let info = {};
+        try { info = JSON.parse(pl.toString()); } catch {}
+        onPairConfirmed(id, info);
+      } else if (t === T.RELAY_ERROR) {
+        let reason = ""; try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
+        // token 错这类硬错就别死循环重连，报出来让用户改设置
+        if (reason === "unauthorized") {
+          stopPairAnnounce(id);
+          toast("配对失败：访问 Token 不正确 —— 到中转设置里核对");
+        }
+      }
+    });
+    sock.on("data", (b) => { try { parser.feed(b); } catch {} });
+    // 对端没来时 relay 会按 TTL 关掉，或网络抖动断开 → 稍后重发，继续等
+    const retry = () => {
+      if (state.cancelled) return;
+      state.timer = setTimeout(attempt, 3000);
+    };
+    sock.on("close", retry);
+    sock.on("error", () => {}); // close 会跟着触发，统一在那重试
+  };
+  attempt();
+}
+
+function onPairConfirmed(id, info) {
+  const d = deviceById(id);
+  if (!d) return;
+  stopPairAnnounce(id); // 拿到确认就不用再挂着了
+  d.pairStatus = "paired";
+  if (info.peerDeviceId) {
+    d.peerDeviceId = info.peerDeviceId;
+    role.rememberPeer(info.peerDeviceId); // 真配对确认，角色编排也认这个对端
+  }
+  if (info.peerName) d.name = String(info.peerName).slice(0, 40);
+  d.online = true;
+  saveDevices(devices);
+  pushState();
+  // 到这一刻「配对成功」才名副其实：服务器确认对端真用了同一个码。
+  toast(`已与「${deviceLabel(d)}」配对成功`);
 }
 
 // A 位（监听/注册）时，对端 HELLO 只到 sender.js，renderer 的 onFrame 看不到。
@@ -1408,6 +1479,12 @@ window.addEventListener("keyup", (e) => {
   // 启动不再自动开接收服务。新配对模型：配对≠连接，方向由用户显式选（投射/接收）。
   // 以前这里 setRecvSvc(true)，用户一开程序设备就卡「连接中…」，正是他截图看到的——
   // 而且这会在他还没决定投还是收时就建连接，把角色编排提前触发。启动只做待命展示。
+  // 但**没配完的配对要续上**：上次关程序时对端还没输码的设备，重开继续 announce 等它。
+  else if (!isCliRun(a)) {
+    for (const d of devices) {
+      if (d.pairStatus === "waiting" && !d.peerDeviceId) startPairAnnounce(d.id);
+    }
+  }
   if (a.exitAfter) {
     setTimeout(() => {
       const t = stats.total;

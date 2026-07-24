@@ -74,6 +74,9 @@ function deviceStatus(d) {
     return parts.join(" · ");
   }
   if (d.conn === "connecting") return "连接中…";
+  // docs/11：服务器确认对端也输了同码前，是「等待对方…」，不是「未连接」——
+  // 「未连接」会让人以为配好了只是没连，其实还没配成。
+  if (d.pairStatus === "waiting") return "等待对方输入配对码…";
   return d.online ? "未连接" : "离线";
 }
 
