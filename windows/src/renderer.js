@@ -393,10 +393,12 @@ async function handleCmd(m) {
       setPref("forceRelay", !!m.forceRelay);
       relayHealth = { status: "unset", rttMs: null, message: "正在检测…" };
       pushState();
-      probeRelay(); // 改完立刻重测，别让界面继续显示上一套设置的结论
-      return toast("中转设置已保存，正在检测可用性…");
+      // 改了地址/token → 重开 presence 连接，连上/被拒会驱动 relayHealth（③）。
+      startPresence();
+      return toast("中转设置已保存，正在检测…");
     case "probe-relay":
-      return probeRelay();
+      startPresence();
+      return;
     case "local-name":
       localName = (m.name || "").trim() || os.hostname();
       localStorage.setItem("localName", localName);
@@ -550,8 +552,7 @@ function stopPresence() {
 function startPresence() {
   const d = selectedDevice();
   if (!d || !d.secret) return stopPresence();
-  // 换设备了就重连；同一台就别重复开
-  if (presenceSock && presenceDevId === d.id) return;
+  // 总是重开：换设备要重连，改中转地址/token 也要重连（relay-save 会调这里）。
   stopPresence();
   presenceDevId = d.id;
 
@@ -561,11 +562,17 @@ function startPresence() {
   const port = +portStr || 47700;
   const myId = d.id;
 
+  let tokenBad = false; // token 错就别死循环重连
   const connect = () => {
-    if (presenceDevId !== myId) return; // 期间换了设备
+    if (presenceDevId !== myId || tokenBad) return; // 期间换了设备 / token 错
+    const t0 = performance.now();
     const sock = net.createConnection(port, host, () => {
       sock.setNoDelay(true);
       sendPresence(sock, hash);
+      // ③ presence-as-health：连上就证明「中转可达 + token 有效」，中转状态直接用它驱动，
+      // 不再单独做自配对探测（那个每次 register+join 随机房，是限流风暴的来源）。
+      relayHealth = { status: "ok", rttMs: Math.round(performance.now() - t0), message: null };
+      pushState();
     });
     presenceSock = sock;
     const parser = new FrameParser((t, pl) => {
@@ -573,16 +580,24 @@ function startPresence() {
         let info = {}; try { info = JSON.parse(pl.toString()); } catch {}
         const next = info.peerState || "offline";
         if (next !== peerState) { peerState = next; pushState(); }
-        // 顺带刷新对方名字（别名优先）
         const dd = deviceById(myId);
         if (dd && info.peerName && !dd.alias) { dd.name = String(info.peerName).slice(0, 40); saveDevices(devices); }
+      } else if (t === T.RELAY_ERROR) {
+        let reason = ""; try { reason = JSON.parse(pl.toString()).reason || ""; } catch {}
+        if (reason === "unauthorized") {
+          tokenBad = true; // 停止重连，别猛敲（Mac onUnauthorized 同款）
+          relayHealth = { status: "error", rttMs: null, message: "访问 Token 不正确 — 到中转设置里核对" };
+          pushState();
+        }
       }
     });
     sock.on("data", (b) => { try { parser.feed(b); } catch {} });
     sock.on("close", () => {
       if (presenceSock === sock) presenceSock = null;
-      if (presenceDevId !== myId) return;
+      if (presenceDevId !== myId || tokenBad) return;
       if (peerState !== "offline") { peerState = "offline"; pushState(); }
+      // 连不上也是一种中转状态
+      if (relayHealth.status !== "ok") { relayHealth = { status: "error", rttMs: null, message: "连不上中转服务器" }; pushState(); }
       presenceTimer = setTimeout(connect, 5000); // 断了慢慢重连，别狂刷（同 IP 限流的教训）
     });
     sock.on("error", () => {});
@@ -1452,7 +1467,8 @@ window.addEventListener("keyup", (e) => {
     }, 7000);
     return;
   }
-  if (!isCliRun(a)) probeRelay(); // 联调跑批时别多开两条连接干扰计数
+  // 中转健康不再自配对探测（限流风暴的来源）——presence 连接连上就说明可达+token 有效，
+  // 由它驱动 relayHealth（见 startPresence）。这里只在没有任何设备、连不了 presence 时兜底。
   // 测试：--send-window <名字子串> 选中匹配的窗口作为投射源
   if (a.sendWindow) {
     sender.requireWindow(a.sendWindow); // 声明后不允许悄悄退回整屏
