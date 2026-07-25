@@ -169,11 +169,12 @@ final class ReceiverSession {
             Log.error("handshake rejected: \(ack.reason ?? "?")"); close(); return
         }
         chosenCodec = VideoCodec(rawValue: ack.codec ?? "h264") ?? .h264
-        // Persist the peer-issued pairSecret so future relay JOINs can go code-free.
-        if let secret = ack.pairSecret, !secret.isEmpty {
-            PairStore.saveSecret(secret, slot: "receiver")
-            Log.info("pairing: stored peer pairSecret (relay JOIN will be code-free next time)")
-        }
+        // NOTE(v1.16): we deliberately do **not** persist ack.pairSecret any more.
+        // In the current model a device's secret comes from the shared pairing code
+        // (§3.7) and *is* its relay room. Overwriting it with the sender-issued
+        // pairSecret silently moved this device into a different room, so the pair
+        // worked exactly once and then never matched again (Windows hit this; kept
+        // here as a landmine because the GUI happens to pass pairHashOverride).
         makeDecoder(codec: chosenCodec)
         if let d = ack.display {
             statLock.lock(); streamW = d.width; streamH = d.height; statLock.unlock()

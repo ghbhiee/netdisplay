@@ -147,6 +147,11 @@ struct HelloAck: Codable {
         let height: Int  // encoded/streamed pixel height (framebuffer)
         let fps: Int
         let scale: Int?  // HiDPI factor: logical points = width/scale (Receiver windowed sizing)
+        // v1.16: how the Receiver should present this stream.
+        //   "extend" — 跟随对方屏幕: full-size second display (fullscreen / virtual monitor)
+        //   "window" — 用户指定了分辨率或投射的是单窗口: show in a normal window
+        // Absent = "extend" (old senders). Chosen by the Sender; see 02 §3.10.
+        let mode: String?
     }
     let version: Int
     let accepted: Bool
@@ -157,13 +162,14 @@ struct HelloAck: Codable {
 }
 
 struct VideoConfig: Codable {
-    // Required: codec/width/height. Optional (absent = unchanged): fps/bitrateMbps.
+    // Required: codec/width/height. Optional (absent = unchanged): fps/bitrateMbps/mode.
     // Receivers must tolerate missing optional fields + unknown fields (02 §5, v1.8).
     let codec: String
     let width: Int
     let height: Int
     let fps: Int?
     let bitrateMbps: Int?
+    let mode: String?   // v1.16: "extend" | "window" — same meaning as HelloAck.Display.mode
 }
 
 struct ByeMsg: Codable {

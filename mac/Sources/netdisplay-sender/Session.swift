@@ -172,6 +172,7 @@ final class Session {
 
         let pipe: StreamPipeline?
         let outW: Int, outH: Int, outScale: Int, label: String, kind: String
+        var outMode = "window"   // 02 §3.10: only 跟随对方屏幕 earns a full extended display
 
         if source.stage, let app = source.windowApp {
             // Stage-follow: put the chosen window on an off-main stage, then project
@@ -197,19 +198,27 @@ final class Session {
                                                prioritizeQuality: source.prioritizeQuality, codec: chosenCodec)
             guard let p = pipe else { rejectOrIdle("无法投射窗口 '\(app)'（未找到可见窗口）"); return }
             outW = p.pixelWidth; outH = p.pixelHeight; outScale = 1
+            outMode = "window"   // 单窗口投射永远是窗口模式（02 §3.10）
             label = "\(app) 窗口 \(outW)×\(outH)"; kind = "window"
-            p.onReconfigure = { [weak self] nw, nh in self?.sendVideoConfig(width: nw, height: nh, fps: fps) }
+            p.onReconfigure = { [weak self] nw, nh in
+                self?.sendVideoConfig(width: nw, height: nh, fps: fps, mode: "window")
+            }
         } else {
-            // Whole desktop → virtual display.
-            let w = (source.override.width ?? hello.screen.width) & ~1
-            let h = (source.override.height ?? hello.screen.height) & ~1
+            // Whole desktop → virtual display. Resolution policy (02 §3.10):
+            //   跟随对方屏幕 (no override) → the peer's own screen size, presented as a
+            //     full second display ("extend").
+            //   用户指定分辨率 → clamped to never exceed the peer's screen, presented in
+            //     a window ("window").
+            let sized = Session.targetSize(override: source.override, peer: hello.screen)
             let scale = max(1, source.override.scale ?? hello.screen.scale)
-            pipe = StreamPipeline(name: "NetDisplay", pixelWidth: w, pixelHeight: h, scale: scale,
+            pipe = StreamPipeline(name: "NetDisplay", pixelWidth: sized.w, pixelHeight: sized.h, scale: scale,
                                   fps: fps, bitrateBps: effBitrate, deviceSeed: deviceId,
                                   prioritizeQuality: source.prioritizeQuality, codec: chosenCodec)
             guard let p = pipe else { rejectOrIdle("failed to create virtual display"); return }
-            outW = w; outH = h; outScale = scale
-            label = "整个桌面 \(w)×\(h)"; kind = "desktop"
+            outW = sized.w; outH = sized.h; outScale = scale
+            outMode = sized.mode
+            label = "整个桌面 \(sized.w)×\(sized.h)" + (sized.clamped ? "（已按对方屏幕缩到上限）" : "")
+            kind = "desktop"
             _ = p
         }
         guard let p = pipe, !ended else { return }
@@ -219,12 +228,12 @@ final class Session {
         // First projection uses HELLO_ACK; later switches use VIDEO_CONFIG (no reconnect).
         if !helloAckSent {
             let ack = HelloAck(version: Proto.version, accepted: true,
-                               display: .init(width: outW, height: outH, fps: fps, scale: outScale),
+                               display: .init(width: outW, height: outH, fps: fps, scale: outScale, mode: outMode),
                                codec: chosenCodec.wire, reason: nil, pairSecret: PairStore.ensureSecret())
             conn.send(Wire.encodeJSON(.helloAck, ack))
             helloAckSent = true
         } else {
-            sendVideoConfig(width: outW, height: outH, fps: fps)
+            sendVideoConfig(width: outW, height: outH, fps: fps, mode: outMode)
         }
         conn.send(Wire.encodeJSON(.projectionState, ProjectionState(active: true, label: label, sourceKind: kind)))
         Log.info("session: projecting \(label)")
@@ -256,16 +265,19 @@ final class Session {
         }
         pipeline?.stop()
         p.onEncoded = { [weak self] pts, key, data in self?.sendVideoFrame(ptsUs: pts, isKeyframe: key, annexB: data) }
-        p.onReconfigure = { [weak self] nw, nh in self?.sendVideoConfig(width: nw, height: nh, fps: fps) }
+        p.onReconfigure = { [weak self] nw, nh in
+            self?.sendVideoConfig(width: nw, height: nh, fps: fps, mode: "window")
+        }
         self.pipeline = p
         currentStageWindowID = r.window.windowID; currentStagePid = r.pid
         let name = r.window.owningApplication?.applicationName ?? "窗口"
         if !helloAckSent {
             conn.send(Wire.encodeJSON(.helloAck, HelloAck(version: Proto.version, accepted: true,
-                display: .init(width: r.pixelWidth, height: r.pixelHeight, fps: fps, scale: 1), codec: chosenCodec.wire, reason: nil, pairSecret: PairStore.ensureSecret())))
+                display: .init(width: r.pixelWidth, height: r.pixelHeight, fps: fps, scale: 1, mode: "window"),
+                codec: chosenCodec.wire, reason: nil, pairSecret: PairStore.ensureSecret())))
             helloAckSent = true
         } else {
-            sendVideoConfig(width: r.pixelWidth, height: r.pixelHeight, fps: fps)
+            sendVideoConfig(width: r.pixelWidth, height: r.pixelHeight, fps: fps, mode: "window")
         }
         conn.send(Wire.encodeJSON(.projectionState, ProjectionState(active: true, label: "\(name) \(r.pixelWidth)×\(r.pixelHeight)", sourceKind: "window")))
         Log.info("session: stage projecting \(name) \(r.pixelWidth)×\(r.pixelHeight)")
@@ -320,10 +332,35 @@ final class Session {
         conn.send(Wire.encode(.videoFrame, payload), tracked: true)
     }
 
-    private func sendVideoConfig(width: Int, height: Int, fps: Int) {
-        let cfg = VideoConfig(codec: chosenCodec.wire, width: width, height: height, fps: fps, bitrateMbps: effectiveBitrate() / 1_000_000)
+    private func sendVideoConfig(width: Int, height: Int, fps: Int, mode: String = "window") {
+        let cfg = VideoConfig(codec: chosenCodec.wire, width: width, height: height, fps: fps,
+                              bitrateMbps: effectiveBitrate() / 1_000_000, mode: mode)
         conn.send(Wire.encodeJSON(.videoConfig, cfg))
-        Log.info("session: sent VIDEO_CONFIG \(width)x\(height)")
+        Log.info("session: sent VIDEO_CONFIG \(width)x\(height) mode=\(mode)")
+    }
+
+    /// 02 §3.10 — the single resolution rule, sender-side.
+    ///
+    /// - **跟随对方屏幕** (no width/height override): stream at the peer's own screen
+    ///   size and present it as a full second display (`extend`).
+    /// - **用户指定了分辨率**: honour it, but **never exceed the peer's screen** —
+    ///   clamp each axis — and present it in a window (`window`), because a display
+    ///   smaller than the panel only makes sense windowed.
+    ///
+    /// Returns even pixel dimensions (encoders need /2) plus whether we clamped.
+    static func targetSize(override o: DisplayOverride,
+                           peer: HelloReceiver.Screen) -> (w: Int, h: Int, mode: String, clamped: Bool) {
+        let follow = (o.width == nil && o.height == nil)
+        var w = o.width ?? peer.width
+        var h = o.height ?? peer.height
+        var clamped = false
+        if !follow {
+            if peer.width > 0, w > peer.width { w = peer.width; clamped = true }
+            if peer.height > 0, h > peer.height { h = peer.height; clamped = true }
+        }
+        w = max(2, w) & ~1
+        h = max(2, h) & ~1
+        return (w, h, follow ? "extend" : "window", clamped)
     }
 
     private func sendByeAndClose(_ reason: String) {

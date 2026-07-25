@@ -558,6 +558,34 @@ case "relay-health":
     }
     dispatchMain()
 
+case "resolution-selftest":
+    // 02 §3.10 resolution rule: follow-peer ⇒ extend at peer size; explicit ⇒ window,
+    // clamped to never exceed the peer's screen; dimensions always even.
+    var rok = true
+    func rcheck(_ cond: Bool, _ what: String) {
+        if !cond { rok = false; Log.error("resolution-selftest FAIL: \(what)") }
+        else { Log.info("resolution-selftest ok: \(what)") }
+    }
+    let peer = HelloReceiver.Screen(width: 1920, height: 1080, scale: 1, fps: 60, bitrateMbps: nil)
+    // 1) 跟随对方屏幕 → peer size, extend
+    let a1 = Session.targetSize(override: DisplayOverride(width: nil, height: nil, scale: nil, fps: nil), peer: peer)
+    rcheck(a1.w == 1920 && a1.h == 1080 && a1.mode == "extend" && !a1.clamped,
+           "跟随对方 → 1920x1080 extend (got \(a1.w)x\(a1.h) \(a1.mode))")
+    // 2) 用户选的分辨率小于对方屏幕 → 原样，window
+    let a2 = Session.targetSize(override: DisplayOverride(width: 1280, height: 720, scale: nil, fps: nil), peer: peer)
+    rcheck(a2.w == 1280 && a2.h == 720 && a2.mode == "window" && !a2.clamped,
+           "指定 1280x720 → window 不裁剪 (got \(a2.w)x\(a2.h) \(a2.mode))")
+    // 3) 用户选的分辨率超过对方屏幕 → 自动修正到上限，window
+    let a3 = Session.targetSize(override: DisplayOverride(width: 2560, height: 1440, scale: nil, fps: nil), peer: peer)
+    rcheck(a3.w == 1920 && a3.h == 1080 && a3.mode == "window" && a3.clamped,
+           "指定 2560x1440 超过对方 1920x1080 → 修正到 1920x1080 window (got \(a3.w)x\(a3.h) clamped=\(a3.clamped))")
+    // 4) 奇数尺寸 → 偶数化（编码器要求）
+    let odd = HelloReceiver.Screen(width: 1367, height: 769, scale: 1, fps: 60, bitrateMbps: nil)
+    let a4 = Session.targetSize(override: DisplayOverride(width: nil, height: nil, scale: nil, fps: nil), peer: odd)
+    rcheck(a4.w % 2 == 0 && a4.h % 2 == 0, "奇数分辨率偶数化 (got \(a4.w)x\(a4.h))")
+    Log.info("resolution-selftest \(rok ? "PASS" : "FAIL")")
+    exit(rok ? 0 : 1)
+
 case "paircode-selftest":
     // Verify §3.7 pairing-code→room derivation is byte-identical to Windows.
     let ok = PairCode.selftest()

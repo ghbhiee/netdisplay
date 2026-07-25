@@ -191,7 +191,9 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard let d = d else { return }
             win.configure(width: d.width, height: d.height, title: "NetDisplay — \(device.displayName) 的画面")
             let transport = self?.model.connectivity[device.secret] ?? "中转"
-            win.setBadge("接收中 · \(transport) · \(c.wire)")
+            // 02 §3.10: the sender decides 扩展屏(extend) vs 窗口(window); show which.
+            let modeLabel = (d.mode ?? "extend") == "extend" ? "扩展屏" : "窗口"
+            win.setBadge("接收中 · \(transport) · \(modeLabel) \(d.width)×\(d.height) · \(c.wire)")
             DispatchQueue.main.async { self?.model.receiveStarted() }   // 自动进入接收
         }
         client.onResize = { w, h in win.configure(width: w, height: h, title: "NetDisplay — \(device.displayName) 的画面") }
