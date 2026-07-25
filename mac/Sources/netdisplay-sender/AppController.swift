@@ -38,13 +38,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        if let icon = AppAssets.icon, let small = icon.copy() as? NSImage {
-            small.size = NSSize(width: 18, height: 18)   // the NetDisplay (Windows) logo, colored
-            small.isTemplate = false
-            statusItem.button?.image = small
-        } else {
-            statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "NetDisplay")
-        }
+        // Menu-bar icon stays the original template SF Symbol (adapts to light/dark
+        // menu bar). The NetDisplay logo is used for the app/Finder + About only.
+        statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "NetDisplay")
 
         panel = MainPanelWindow(model: model)
         panel.config = config
