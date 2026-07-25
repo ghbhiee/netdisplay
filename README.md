@@ -115,23 +115,30 @@ Windows 本身没有系统级的虚拟显示器 API（Mac 有 `CGVirtualDisplay`
 装了 VDD 会多出一块**系统认为真实存在**的显示器，把它投射出去，才是真正的**扩展屏**（可以往上拖窗口、放不同内容）。
 
 - 装在哪台：**要投射出去的那台 Windows**（发送方）。**接收方不用装。**
-- 项目地址：**https://github.com/VirtualDrivers/Virtual-Display-Driver** （MIT，驱动已签名）
+- 项目地址：**https://github.com/VirtualDrivers/Virtual-Display-Driver**
+  （IddCx 间接显示驱动，Windows 10/11，MIT，开源免费）
+- **驱动是已签名的**（SignPath Foundation 提供的免费签名），**不需要**关闭「驱动程序强制签名」。
+  网上一些老教程要你进测试模式/禁用签名强制——对这个驱动**不必要**，也不该那么做。
 
 ### 安装步骤
 
-1. 装 [Microsoft Visual C++ 运行库](https://aka.ms/vs/17/release/vc_redist.x64.exe)（VDD 依赖，缺了安装器会报错）。
-2. 安装 VDD，二选一：
+1. 装 [Microsoft Visual C++ 运行库](https://aka.ms/vs/17/release/vc_redist.x64.exe)（依赖 `vcruntime140`，缺了会报错）。
+2. 下载 VDD，二选一：
    ```powershell
    winget install --id=VirtualDrivers.Virtual-Display-Driver -e
    ```
-   或到它的 [Releases](https://github.com/VirtualDrivers/Virtual-Display-Driver/releases) 下载压缩包解压。
+   或到 [Releases](https://github.com/VirtualDrivers/Virtual-Display-Driver/releases) 下载压缩包解压
+   （免安装便携版）。**ARM64** 设备需要用官方说明里的手动安装方式。
 3. 以**管理员**身份运行 **Virtual Driver Control (VDC)**，点 **Install**。
-4. **重启**（驱动安装惯例）。
-5. 在「设置 → 系统 → 显示」里应能看到多出来的显示器；把它设为**扩展**这些显示器（不要选「复制」）。
-   在 VDC 里可以调这块虚拟屏的分辨率/刷新率。
-6. 打开 NetDisplay →「投射本机」→ 在投射内容里选**那块虚拟屏** → 开始投射。
+4. 在「设置 → 系统 → 显示」里会多出一块显示器；把它设为「**扩展这些显示器**」（**不要**选「复制」）。
+   这块虚拟屏的分辨率/刷新率可以在 VDC 里加或调整。
+5. 打开 NetDisplay →「投射本机」→ 投射内容的「整块屏幕」下会多出 `Screen 1 / Screen 2`——
+   选**那块虚拟屏** → 开始投射。
 
 装好后，往那块虚拟屏拖窗口，对面就能看到——这才是「多一块显示器」而不是「复制一块」。
+
+> ⚠️ **升级显卡/芯片组驱动前，先在 VDC 里卸载 VDD**，否则可能出现黑屏或显示优先级冲突。
+> 万一真黑屏：进**安全模式** → 设备管理器 → 卸载该虚拟显示适配器。
 
 ## 目录结构
 
