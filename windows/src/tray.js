@@ -20,28 +20,11 @@ const SUB_W = 170;
 const SUB_GAP = 4;
 const WIN_W = PAD * 2 + MENU_W + SUB_GAP + SUB_W;
 
-// 画质：发出去和存回来的一律是内部值，中文只用于显示（见 UI-CONTRACT「画质取值表」）。
-// res 的分隔符必须是半角小写 x——引擎要 split("x") 拆编码宽高，全角 × 会拆出 NaN。
-const RES_OPTS = [
-  { v: "auto", label: "跟随对方" },
-  { v: "1920x1080", label: "1920×1080" },
-  { v: "2560x1440", label: "2560×1440" },
-];
-const SCALE_OPTS = [
-  { v: "1", label: "100%" },
-  { v: "1.5", label: "150%" },
-  { v: "2", label: "200%" },
-];
-// 三档预设联动主面板的帧率/码率（契约里没有 trayQuality 字段，预设名反推自 quality）
-const PRESETS = [
-  { name: "流畅优先", desc: "30fps · 低码率", fps: "30", rate: "auto" },
-  { name: "平衡", desc: "60fps · 自动", fps: "60", rate: "auto" },
-  { name: "清晰优先", desc: "60fps · 20Mbps", fps: "60", rate: "20" },
-];
+// 画质设置已移到投射方（docs/02 §3.10），接收侧托盘不再有分辨率/缩放/预设。
 const WIN_ICONS = ["▦", "◨", "▤", "◧", "◫", "▧", "▥", "▨", "▩", "◪", "◩"];
 
 let S = null;          // 引擎状态快照
-let sub = null;        // 唯一的 UI 状态："more" | "moreq" | null
+let sub = null;        // 唯一的 UI 状态："more" | null（更多窗口二级菜单）
 
 // ---------- 小工具 ----------
 
@@ -144,19 +127,8 @@ function render() {
   renderDevices(devices, s, { casting, receiving, svcOff });
   show($("addDevItem"), devices.length === 0);
 
-  // --- 第四节：显示设置 ---
-  const q = s.quality || {};
-  // 引擎万一回的是数字（60 而不是 "60"），严格比较会静默地全都不选中——统一成字符串再比
-  const qv = (k) => (q[k] == null ? "" : String(q[k]));
-  renderChips($("resChips"), RES_OPTS, qv("res"), "res");
-  renderChips($("scaleChips"), SCALE_OPTS, qv("scale"), "scale");
-  const preset = PRESETS.find((p) => p.fps === qv("fps") && p.rate === qv("rate"));
-  text($("qualityName"), preset ? preset.name : "自定义");
-  renderPresets(preset);
-
   // 二级菜单：只允许开一个，且开着的那个必须完整落在菜单高度内（见 clampSub）
   show($("moreWinMenu"), sub === "more" && srcOn);
-  show($("moreQMenu"), sub === "moreq");
 
   requestAnimationFrame(() => { clampSub(); reportSize(); });
 }
@@ -233,41 +205,10 @@ function renderDevices(devices, s, f) {
   }
 }
 
-function renderChips(box, opts, cur, key) {
-  box.innerHTML = "";
-  for (const o of opts) {
-    const c = document.createElement("span");
-    c.className = "chip" + (cur === o.v ? " on" : "");
-    c.textContent = o.label;
-    c.addEventListener("click", () => cmd("quality", { key, value: o.v }));
-    box.appendChild(c);
-  }
-}
-
-function renderPresets(cur) {
-  const box = $("moreQMenu");
-  box.innerHTML = "";
-  for (const p of PRESETS) {
-    box.appendChild(row("subrow", [
-      { cls: "mark", text: cur && cur.name === p.name ? "✓" : "" },
-      { cls: "name", text: p.name },
-      { cls: "desc", text: p.desc },
-    ], () => {
-      // 预设 = 帧率 + 码率两项的组合，契约里没有「预设」这个命令
-      cmd("quality", { key: "fps", value: p.fps });
-      cmd("quality", { key: "rate", value: p.rate });
-    }));
-  }
-  box.appendChild(row("subrow", [
-    { cls: "mark", text: "" },
-    { cls: "name", text: "帧率 / 码率（主面板）…" },
-  ], () => { cmd("open-panel", { section: "quality" }); closeTray(); }));
-}
-
 // 二级菜单默认与触发行齐平，但两个触发行都靠菜单底部，直接弹会溢出到菜单外
 // （窗口是透明的，溢出部分会被裁掉）。这里往上顶，让它始终落在菜单内。
 function clampSub() {
-  for (const el of [$("moreWinMenu"), $("moreQMenu")]) {
+  for (const el of [$("moreWinMenu")]) {
     if (el.classList.contains("hide")) continue;
     el.style.top = "0px";
     const menuBottom = $("menu").getBoundingClientRect().bottom - 5;
@@ -313,7 +254,6 @@ $("recvItem").addEventListener("click", () => {
 // 配对要输 6 位码，托盘弹窗放不下这个表单，交给主面板
 $("addDevItem").addEventListener("click", () => { cmd("open-panel", { section: "pair" }); closeTray(); });
 $("moreWinBtn").addEventListener("click", () => setSub("more"));
-$("moreQBtn").addEventListener("click", () => setSub("moreq"));
 $("relayItem").addEventListener("click", () => { cmd("open-panel", { section: "relay" }); closeTray(); });
 $("openPanelItem").addEventListener("click", () => { cmd("open-panel"); closeTray(); });
 $("quitItem").addEventListener("click", () => cmd("quit"));
@@ -329,8 +269,7 @@ document.addEventListener("mousedown", (e) => {
 document.addEventListener("click", (e) => {
   if (!sub) return;
   if (!$("menu").contains(e.target)) return;
-  const inSub = $("moreWinMenu").contains(e.target) || $("moreQMenu").contains(e.target)
-    || $("moreWinBtn").contains(e.target) || $("moreQBtn").contains(e.target);
+  const inSub = $("moreWinMenu").contains(e.target) || $("moreWinBtn").contains(e.target);
   if (inSub) return;
   sub = null;
   render();

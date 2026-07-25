@@ -188,19 +188,13 @@ function secretFromCode(code) {
   return nodeCrypto.createHash("sha256").update("netdisplay-pair:" + normalizeCode(code)).digest("base64");
 }
 
-// HELLO.screen：期望分辨率/scale/fps/码率（协议 v1.2 §3.3）
+// HELLO.screen：上报本机真实屏幕尺寸，供投射方决定串流分辨率/呈现模式（docs/02 §3.10）。
+// 接收侧不再挑分辨率/缩放/码率——那些一律由投射方决定，接收方设了也会被覆盖。
 function desiredScreen() {
-  const res = prefs.res;
-  const scale = +prefs.scale || 1;
-  let width, height;
-  if (res === "auto") ({ width, height } = config.screen);
-  else [width, height] = res.split("x").map(Number);
-  width &= ~1; // scaleFactor 换算可能出奇数（如 1707.33×1.5→2561），编码尺寸必须为偶
+  let { width, height } = config.screen;
+  width &= ~1; // scaleFactor 换算可能出奇数，编码尺寸必须为偶
   height &= ~1;
-  const out = { width, height, scale, fps: +prefs.fps || 60 };
-  const br = prefs.rate === "auto" ? 0 : Math.round(+prefs.rate);
-  if (br > 0) out.bitrateMbps = br;
-  return out;
+  return { width, height, scale: +config.screen.scale || 1, fps: 60 };
 }
 
 function setStatus(msg, isErr) {

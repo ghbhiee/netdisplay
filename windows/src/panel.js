@@ -11,7 +11,6 @@ const EMPTY_STATE = {
   role: "standby", recvSvc: "off",
   devices: [], selectedId: null,
   sources: [], pickSel: "",
-  quality: { res: "", scale: "", fps: "", rate: "" },
   relay: { addr: "", token: "", forceRelay: false, status: "unset", rttMs: null },
   localName: "", peerName: "", castSourceName: "", theme: "light",
 };
@@ -20,7 +19,6 @@ let S = EMPTY_STATE;
 // ===== 纯 UI 状态（不含任何业务信息，刷新丢了也无所谓） =====
 const ui = {
   tab: "cast",
-  qualityOpen: false,
   renamingId: null,   // 正在行内重命名的设备
   renameVal: "",
   confirmId: null,    // 正在二次确认解除配对的设备
@@ -33,15 +31,8 @@ const ui = {
   pairTab: "relay", // 配对方式：relay（配对码）/ direct（对方 IP）
 };
 
-// 契约「画质取值表」：发出去和比对选中态一律用内部值，中文只是标签。
-// res 的分隔符必须是半角小写 x —— 引擎拿它 split("x") 拆编码宽高，全角 × 会拆出 NaN，
-// 而 NaN 要一路走到编码器才炸，报错和真正原因隔着十万八千里。
-const QUALITY_DEFS = [
-  { key: "res", label: "分辨率", opts: [["auto", "跟随对方"], ["1920x1080", "1920×1080"], ["2560x1440", "2560×1440"]] },
-  { key: "scale", label: "缩放", opts: [["1", "100%"], ["1.5", "150%"], ["2", "200%"]] },
-  { key: "fps", label: "帧率", opts: [["30", "30 fps"], ["60", "60 fps"]] },
-  { key: "rate", label: "码率", opts: [["auto", "自动"], ["10", "10 Mbps"], ["20", "20 Mbps"]] },
-];
+// 画质设置已从接收侧移除：分辨率/呈现模式一律由投射方决定（docs/02 §3.10），
+// 接收方设了也会被发送方覆盖，摆着只会冲突。投射页仍保留画质选择。
 
 // 设计稿里程序窗口是 Unicode 占位图标（拿不到真实应用图标时的兜底）
 const WIN_GLYPHS = ["▦", "◨", "▤", "◧", "◫", "▧", "▥", "▨", "▩", "◪", "◩"];
@@ -97,7 +88,6 @@ function applyState(next) {
   S = Object.assign({}, EMPTY_STATE, next, {
     devices: Array.isArray(next.devices) ? next.devices : [],
     sources: Array.isArray(next.sources) ? next.sources : [],
-    quality: Object.assign({}, EMPTY_STATE.quality, next.quality),
     relay: Object.assign({}, EMPTY_STATE.relay, next.relay),
   });
 
@@ -124,7 +114,6 @@ window.ndOpen = openFromOutside;
 function openFromOutside(what) {
   if (what === "pair") openPair();
   else if (what === "relay") openRelay();
-  else if (what === "quality") { ui.tab = "recv"; ui.qualityOpen = true; render(); }
 }
 
 // ---------- 渲染 ----------
@@ -135,7 +124,6 @@ function render() {
   renderTabs();
   renderCastPage();
   renderRecvPage();
-  renderQuality();
   renderDevices();
   renderLocalName();
   renderAdvanced();
@@ -260,34 +248,6 @@ function renderRecvPage() {
   btn.className = cls;
 }
 
-let qualityBuilt = false;
-function renderQuality() {
-  $("qualityChev").textContent = ui.qualityOpen ? "▾" : "▸";
-  show($("qualityBody"), ui.qualityOpen);
-
-  const box = $("qualityGroups");
-  if (!qualityBuilt) {
-    for (const g of QUALITY_DEFS) {
-      const row = el("div", "qrow");
-      row.appendChild(el("div", "qlabel", g.label));
-      const opts = el("div", "qopts");
-      for (const [value, label] of g.opts) {
-        const b = el("button", "qopt", label);
-        b.dataset.key = g.key;
-        b.dataset.value = value;
-        b.addEventListener("click", () => cmd("quality", { key: g.key, value }));
-        opts.appendChild(b);
-      }
-      row.appendChild(opts);
-      box.appendChild(row);
-    }
-    qualityBuilt = true;
-  }
-  for (const b of box.querySelectorAll(".qopt")) {
-    const cur = S.quality[b.dataset.key];
-    b.classList.toggle("on", cur != null && String(cur) === b.dataset.value);
-  }
-}
 
 function renderDevices() {
   const list = $("devList");
@@ -577,7 +537,6 @@ $("btnRecvSvc").addEventListener("click", () => {
   cmd("recv-svc", { on: S.recvSvc !== "waiting" });
 });
 
-$("qualityHead").addEventListener("click", () => { ui.qualityOpen = !ui.qualityOpen; render(); });
 $("btnOpenRelay").addEventListener("click", openRelay); // 中转设置改弹窗
 
 $("btnAddDevice").addEventListener("click", openPair);
