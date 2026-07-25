@@ -156,6 +156,22 @@
   .relay-entry-dot.ok{background:var(--ok)}
   .relay-entry-dot.err{background:var(--err)}
   .relay-entry-arrow{margin-left:auto;color:var(--sub)}
+  /* 设备行：中转/直连徽章 + 刷新按钮 */
+  .name-row{display:flex;align-items:center;gap:6px}
+  .badge{font-size:10px;padding:1px 6px;border-radius:4px;line-height:1.4;flex-shrink:0}
+  .b-relay{background:var(--accent-weak,rgba(59,111,224,.12));color:var(--accent)}
+  .b-direct{background:var(--ok-weak,rgba(29,158,85,.14));color:var(--ok)}
+  .btn-icon{background:none;border:1px solid var(--line);border-radius:6px;color:var(--sub);
+    cursor:pointer;font-size:13px;padding:2px 7px;flex-shrink:0}
+  .btn-icon:hover{color:var(--accent);border-color:var(--accent)}
+  /* 配对弹窗双 tab */
+  .pair-tabs{display:flex;background:var(--panel2);border-radius:8px;padding:3px;margin-bottom:14px}
+  .pair-tab{flex:1;border:none;background:none;color:var(--sub);font-size:13px;font-weight:600;
+    padding:6px 0;border-radius:6px;cursor:pointer}
+  .pair-tab.on{background:var(--panel);color:var(--text)}
+  .relay-status{display:flex;align-items:center;gap:8px;font-size:12px}
+  .relay-status .dot{width:8px;height:8px;border-radius:50%;background:var(--sub);flex-shrink:0}
+  .relay-status .dot.ok{background:var(--ok)} .relay-status .dot.err{background:var(--err)}
   /* ===== 中转设置弹窗内的表单 ===== */
   .arow{display:flex;align-items:center;gap:10px}
   .arow .alabel{font-size:12px;color:var(--sub);width:80px;flex-shrink:0}
@@ -343,19 +359,40 @@
       <button id="btnPairClose" class="btn-x">✕</button>
     </div>
     <div class="modal-col">
-      <div>
+      <!-- docs/11 §6：两种配对方式 -->
+      <div class="pair-tabs">
+        <button id="pairTabRelay" class="pair-tab on">经中转（配对码）</button>
+        <button id="pairTabDirect" class="pair-tab">直连（对方 IP）</button>
+      </div>
+
+      <!-- 经中转 -->
+      <div id="pairPaneRelay">
         <div class="field-label">配对码 — 两台电脑输入相同的码</div>
         <div class="code-row">
           <input id="pairCode" class="code-input" type="text" maxlength="7" placeholder="6 位字母+数字" spellcheck="false">
           <button id="btnGenCode" class="btn-gen">随机生成</button>
         </div>
         <div class="field-hint">一方随机生成后，另一方输入相同的配对码。</div>
+        <!-- 点配对前先看中转可用性 -->
+        <div id="pairRelayStatus" class="relay-status" style="margin-top:10px">
+          <div id="pairRelayDot" class="dot"></div>
+          <div id="pairRelayText" class="txt">检测中转…</div>
+          <button id="pairRelaySetup" class="btn-txt hidden" style="color:var(--accent)">设置中转</button>
+        </div>
       </div>
-      <div>
-        <div class="field-label">对方地址（可选）</div>
-        <input id="pairAddr" class="field-input" type="text" placeholder="可留空，由对方填写" spellcheck="false">
-        <div class="field-hint">双方都留空时，将通过中转服务器建立连接。</div>
+
+      <!-- 直连 -->
+      <div id="pairPaneDirect" class="hidden">
+        <div class="field-label">对方的局域网 IP</div>
+        <input id="pairDirectIp" class="field-input" type="text" placeholder="例如 192.168.1.20" spellcheck="false">
+        <div class="field-label" style="margin-top:10px">配对码 — 两台都填相同的码</div>
+        <div class="code-row">
+          <input id="pairDirectCode" class="code-input" type="text" maxlength="7" placeholder="6 位字母+数字" spellcheck="false">
+          <button id="btnGenCodeDirect" class="btn-gen">随机生成</button>
+        </div>
+        <div class="field-hint">两端同一局域网时用；跨网络请用「经中转」。</div>
       </div>
+
       <div id="pairErr" class="err-text hidden">配对码错误，请核对后重试（6 位字母或数字）</div>
       <button id="btnPairSubmit" class="btn-primary">配对</button>
     </div>

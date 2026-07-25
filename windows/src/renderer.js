@@ -153,6 +153,8 @@ let devices = loadDevices();
 let selectedId = localStorage.getItem("selectedId") || (devices[0] && devices[0].id) || null;
 
 const deviceById = (id) => devices.find((d) => d.id === id) || null;
+const deviceTransport = (d) => (d && d.transport) || "relay"; // 老数据没这字段 → 视为中转
+const hasRelayDevice = () => devices.some((d) => deviceTransport(d) === "relay");
 function deviceLabel(d) {
   if (!d) return "";
   // 协议 §3.6：别名 > 对端 name > deviceId 前 8 位。绝不显示空白。
@@ -249,15 +251,17 @@ function uiState() {
       name: deviceLabel(x),
       online: !!x.online,
       conn: x.id === selectedId ? (connected ? "on" : connecting ? "connecting" : "off") : "off",
-      transport: x.id === selectedId && connected ? currentTransport : null,
+      transport: x.id === selectedId && connected ? currentTransport : null, // 当前连接走的路
+      pairTransport: deviceTransport(x), // 配对方式（中转/直连）——设备行徽章用
       rttMs: x.id === selectedId && connected ? lastRttMs : null,
       // 存进列表就意味着 PAIR_CONFIRMED 过（配对全程在弹窗内完成），一律 paired。
       pairStatus: "paired",
       // docs/11 §5 presence：对端此刻在干嘛（offline/idle/casting/recv-waiting/receiving）。
-      // 只有选中设备维持 presence 连接，其余显示 offline（没连就不知道）。
-      peerState: x.id === selectedId ? peerState : "offline",
+      // 只有选中且中转设备维持 presence 连接，其余显示 offline（没连就不知道）。
+      peerState: x.id === selectedId && deviceTransport(x) === "relay" ? peerState : "offline",
     })),
     selectedId,
+    hasRelay: hasRelayDevice(), // 没有任何中转设备 → 界面隐藏「中转设置」、不探测中转（docs/11 §6 ④）
     sources: sourceList.map((s) => ({ id: s.id, name: s.name, kind: s.kind })),
     pickSel,
     quality: { res: prefs.res, scale: prefs.scale, fps: prefs.fps, rate: prefs.rate },
@@ -375,6 +379,13 @@ async function handleCmd(m) {
       return doPair(m.code, m.addr);
     case "pair-cancel": // 关窗/取消：停 announce、什么都不存
       return cancelPendingPair();
+    case "refresh-device": { // ⟳ 手动刷新（docs/11 §6 ④）
+      const d = deviceById(m.id || selectedId);
+      if (!d) return;
+      if (deviceTransport(d) === "relay") { startPresence(); toast("正在刷新中转状态…"); }
+      else toast("直连设备刷新（DirectProbe）待批二实现");
+      return;
+    }
     case "pick-source":
       pickSel = m.id || "";
       localStorage.setItem("pickSel", pickSel);
@@ -492,6 +503,7 @@ function confirmPending(info) {
     name: info.peerName ? String(info.peerName).slice(0, 40) : "",
     alias: null, online: true, addr: p.addr,
     pairStatus: "paired", peerDeviceId: info.peerDeviceId || null,
+    transport: "relay", // 经中转配对（docs/11 §6 / docs/02 §3.9）。直连配对在批二填 "direct"
   };
   devices.push(dev);
   saveDevices(devices);
@@ -551,7 +563,9 @@ function stopPresence() {
 
 function startPresence() {
   const d = selectedDevice();
-  if (!d || !d.secret) return stopPresence();
+  // presence 只对**中转**设备维持（docs/11 §6 ⑤）：直连设备靠实时 DirectProbe，不建 relay 连接；
+  // 没有 relay 设备时连中转都不该碰。
+  if (!d || !d.secret || deviceTransport(d) !== "relay") return stopPresence();
   // 总是重开：换设备要重连，改中转地址/token 也要重连（relay-save 会调这里）。
   stopPresence();
   presenceDevId = d.id;

@@ -30,6 +30,7 @@ const ui = {
   pairErr: false,
   pairing: false,   // 配对弹窗内「等待对方输入配对码…」态
   pairMsg: "",      // 配对失败原因
+  pairTab: "relay", // 配对方式：relay（配对码）/ direct（对方 IP）
 };
 
 // 契约「画质取值表」：发出去和比对选中态一律用内部值，中文只是标签。
@@ -323,10 +324,22 @@ function renderDevices() {
       row.appendChild(no);
     } else {
       const grow = el("div", "grow");
-      grow.appendChild(el("div", "name", d.name));
+      const nameRow = el("div", "name-row");
+      nameRow.appendChild(el("span", "name", d.name));
+      // 中转/直连徽章（docs/11 §6 ④）
+      nameRow.appendChild(el("span", "badge " + (d.pairTransport === "direct" ? "b-direct" : "b-relay"),
+        d.pairTransport === "direct" ? "直连" : "中转"));
+      grow.appendChild(nameRow);
       grow.appendChild(el("div", "st" + (d.conn === "on" ? " ok" : ""), deviceStatus(d)));
       row.appendChild(grow);
 
+      // 选中行给一个 ⟳ 手动刷新（中转→重连 presence 重测）
+      if (S.selectedId === d.id) {
+        const rf = el("button", "btn-icon", "⟳");
+        rf.title = "刷新对方状态";
+        rf.addEventListener("click", (e) => { e.stopPropagation(); cmd("refresh-device", { id: d.id }); });
+        row.appendChild(rf);
+      }
       if (d.conn === "on") {
         const off = el("button", "btn-ghost", "断开");
         off.addEventListener("click", (e) => { e.stopPropagation(); cmd("disconnect", { id: d.id }); });
@@ -382,6 +395,9 @@ function renderLocalName() {
 }
 
 function renderAdvanced() {
+  // docs/11 §6 ④：没有任何走中转的配对时，隐藏「中转设置」入口（也不探测中转）。
+  show($("btnOpenRelay"), !!S.hasRelay);
+  if (!S.hasRelay) return;
   // 中转设置改成弹窗（docs/11 §3）：主面板只留一个入口，显示当前中转状态点+文案。
   const st = S.relay.status;
   const dot = $("relayEntryDot");
@@ -402,17 +418,44 @@ function renderModals() {
   // 配对全程在弹窗里（安全要求）：点「配对」后进入「等待对方…」态，只有服务器确认
   // 双向才落地设备、关窗；关窗=取消 announce、什么都不存。
   const waiting = ui.pairing;
+  const relayTab = ui.pairTab === "relay";
+  // tab 切换
+  $("pairTabRelay").classList.toggle("on", relayTab);
+  $("pairTabDirect").classList.toggle("on", !relayTab);
+  show($("pairPaneRelay"), relayTab);
+  show($("pairPaneDirect"), !relayTab);
+
   show($("pairErr"), ui.pairErr || waiting);
   $("pairErr").classList.toggle("err", ui.pairErr && !waiting);
   $("pairErr").textContent = waiting
     ? "等待对方输入相同的配对码…（关闭可取消）"
     : (ui.pairMsg || "配对码错误，请核对后重试（6 位字母或数字）");
-  $("pairCode").classList.toggle("err", ui.pairErr && !waiting);
   $("pairCode").disabled = waiting;
-  $("pairAddr").disabled = waiting;
   $("btnGenCode").disabled = waiting;
+
+  // 经中转：点配对前先看中转可用性（docs/11 §6 ①）
+  let relayReady = true;
+  if (relayTab) {
+    const st = S.relay.status, addr = S.relay.addr;
+    const dot = $("pairRelayDot"), setup = $("pairRelaySetup");
+    if (!addr) {
+      dot.className = "dot"; $("pairRelayText").textContent = "尚未设置中转服务";
+      show(setup, true); relayReady = false;
+    } else if (st === "ok") {
+      dot.className = "dot ok";
+      $("pairRelayText").textContent = "中转 · 可用" + (typeof S.relay.rttMs === "number" ? " · " + S.relay.rttMs + "ms" : "");
+      show(setup, false);
+    } else if (st === "error") {
+      dot.className = "dot err"; $("pairRelayText").textContent = S.relay.message || "中转 · 连不上";
+      show(setup, true); relayReady = false;
+    } else {
+      dot.className = "dot"; $("pairRelayText").textContent = "检测中转…"; show(setup, false); relayReady = false;
+    }
+  }
+
+  const canSubmit = waiting ? false : (relayTab ? relayReady : true);
   $("btnPairSubmit").textContent = waiting ? "等待对方…" : "配对";
-  $("btnPairSubmit").classList.toggle("off", waiting);
+  $("btnPairSubmit").classList.toggle("off", !canSubmit);
 
   show($("relayModal"), ui.relayOpen);
   const ok = S.relay.status === "ok";
@@ -439,7 +482,8 @@ function relayStatusText() {
 function openPair() {
   ui.pairOpen = true; ui.pairErr = false; ui.pairing = false; ui.pairMsg = "";
   $("pairCode").value = "";
-  $("pairAddr").value = "";
+  $("pairDirectIp").value = "";
+  $("pairDirectCode").value = "";
   render();
   setTimeout(() => $("pairCode").focus(), 0);
 }
@@ -456,9 +500,18 @@ function closeRelay() { ui.relayOpen = false; render(); }
 function normCode(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g, ""); }
 function submitPair() {
   if (ui.pairing) return; // 已经在等对方了，别重复发
+  if (ui.pairTab === "direct") {
+    // 直连配对（PAIR_HELLO）在批二做——同局域网功能，跨网络的用户用不上。
+    const ip = ($("pairDirectIp").value || "").trim();
+    const code = normCode($("pairDirectCode").value);
+    if (!ip || !/^[A-Z0-9]{6}$/.test(code)) { ui.pairErr = true; ui.pairMsg = "直连需要填对方 IP + 6 位配对码"; render(); return; }
+    ui.pairErr = true; ui.pairMsg = "直连配对即将支持（下一版）；跨网络请用「经中转」";
+    render();
+    return;
+  }
   const code = normCode($("pairCode").value);
   if (!/^[A-Z0-9]{6}$/.test(code)) { ui.pairErr = true; ui.pairMsg = ""; render(); return; }
-  cmd("pair", { code, addr: ($("pairAddr").value || "").trim() });
+  cmd("pair", { code });
   // 不关弹窗——进入「等待对方…」态，announce 在引擎里挂着。等 nd-pair-done：
   // 成功才落地设备+关窗，失败显示原因，关窗则取消。
   ui.pairing = true; ui.pairErr = false; ui.pairMsg = "";
@@ -538,26 +591,35 @@ $("localNameInput").addEventListener("blur", () => { ui.localEditing = false; re
 $("btnPairClose").addEventListener("click", closePair);
 $("pairModal").addEventListener("click", (e) => { if (e.target === $("pairModal")) closePair(); });
 $("btnPairSubmit").addEventListener("click", submitPair);
-$("pairCode").addEventListener("input", () => {
-  const box = $("pairCode");
-  // 边打边归一化成大写字母数字；保留一个空格分组显示（123 456 更好念）
-  const n = normCode(box.value).slice(0, 6);
-  box.value = n.length > 3 ? n.slice(0, 3) + " " + n.slice(3) : n;
-  if (ui.pairErr) { ui.pairErr = false; render(); }
-});
-$("pairCode").addEventListener("keydown", (e) => { if (e.key === "Enter") submitPair(); });
-$("pairAddr").addEventListener("keydown", (e) => { if (e.key === "Enter") submitPair(); });
-$("btnGenCode").addEventListener("click", () => {
-  // 生成用排除易混字符（I O L 0 1）的字母表，纯 UX；输入端不受限。
+$("pairTabRelay").addEventListener("click", () => { ui.pairTab = "relay"; ui.pairErr = false; ui.pairMsg = ""; render(); });
+$("pairTabDirect").addEventListener("click", () => { ui.pairTab = "direct"; ui.pairErr = false; ui.pairMsg = ""; render(); });
+$("pairRelaySetup").addEventListener("click", openRelay); // 「设置中转」内联打开中转设置
+
+// 生成用排除易混字符（I O L 0 1）的字母表，纯 UX；输入端不受限。
+function genCodeInto(id) {
   const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
   const buf = new Uint8Array(6);
   crypto.getRandomValues(buf);
   let s = "";
   for (let i = 0; i < 6; i++) s += ALPHABET[buf[i] % ALPHABET.length];
-  $("pairCode").value = s.slice(0, 3) + " " + s.slice(3);
-  ui.pairErr = false;
-  render();
-});
+  $(id).value = s.slice(0, 3) + " " + s.slice(3);
+  ui.pairErr = false; render();
+}
+// 边打边归一化成大写字母数字；保留一个空格分组显示（123 456 更好念）
+function wireCodeInput(id) {
+  $(id).addEventListener("input", () => {
+    const box = $(id);
+    const n = normCode(box.value).slice(0, 6);
+    box.value = n.length > 3 ? n.slice(0, 3) + " " + n.slice(3) : n;
+    if (ui.pairErr) { ui.pairErr = false; render(); }
+  });
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") submitPair(); });
+}
+wireCodeInput("pairCode");
+wireCodeInput("pairDirectCode");
+$("pairDirectIp").addEventListener("keydown", (e) => { if (e.key === "Enter") submitPair(); });
+$("btnGenCode").addEventListener("click", () => genCodeInto("pairCode"));
+$("btnGenCodeDirect").addEventListener("click", () => genCodeInto("pairDirectCode"));
 
 $("btnRelayClose").addEventListener("click", closeRelay);
 $("relayModal").addEventListener("click", (e) => { if (e.target === $("relayModal")) closeRelay(); });
