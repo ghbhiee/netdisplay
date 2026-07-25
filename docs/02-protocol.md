@@ -9,6 +9,7 @@ tags: [netdisplay, handoff, protocol, spec]
 > 修改协议必须先改这里并在下方 changelog 记录，再改代码。
 >
 > Changelog:
+> - 2026-07-24 v1.15 **直连（直接输 IP）配对 `PAIR_HELLO`(0x4A)（§3.9, docs/11 §6）**：配对弹窗给「经中转（配对码）/ 直连（对方 IP）」切换。直连不经 relay：发起方拨对方 `:47800`，发 `PAIR_HELLO{v,deviceId,name,secret}`（`secret`=本地随机生成的 32 字节 base64，兼作日后回退中转的房间密钥）；对端的常驻 47800 响应器（就是 §3.8 那个）先读一帧，见 `PAIR_HELLO` → 保存该设备 + 回一帧自己的 `PAIR_HELLO{v,deviceId,name}`（**不带 secret**），发起方收到回帧即 `.paired`（3s 超时）。两端由此各自存下对方 deviceId/name/IP，之后同一局域网优先直连、否则回中转。响应器仍与 PROBE、直连投射会话共存（peek 首帧分派：PROBE→ACK / PAIR_HELLO→配对 / HELLO→会话）。**用户两台机共用 Clash 出口 IP=跨网，直连永远不通，这条是局域网特性**。（Mac 端 Claude 已实装+回环自检 PASS；Windows 待实装）
 > - 2026-07-23 v1.13 **连通性探测 `PROBE`(0x46)/`PROBE_ACK`(0x47)（§3.8, docs/11 §2）**：UI 显示「当前直连/中转哪条通」，优先直连。**直连判据 = 收到对端 PROBE_ACK，不是 TCP connect 成功**（Clash TUN 会对不可达地址假成功，两端老坑）。两端在 47800 常驻一个轻量探测响应器：收到 PROBE(8 字节随机回显) 立即原样回 PROBE_ACK，无需会话状态，与直连投射会话共存（先读一帧，PROBE 就回 ACK、HELLO 就进会话）。设了对方 IP 才探直连；没设不探不显示。中转探测=自配对随机房收 RELAY_PAIRED。显示优先级：直连通→「直连·通 Xms」，否则中转结果。两端判据必须一字不差。（Mac 端 Claude，用户要求；Windows 待实装）
 > - 2026-07-23 v1.12 **双向配对撮合 `PAIR_ANNOUNCE`(0x44)/`PAIR_CONFIRMED`(0x45)**（docs/11）：让「已配对」名副其实——只有**另一台也用同一个码连上**才算配对成功，不是各自本地存码/只探测中转。两端配对时各发 `PAIR_ANNOUNCE{v,pairHash,deviceId,name,token}`；relay 按 pairHash 暂存(TTL 2min)，见到**同 pairHash、不同 deviceId** 的第二个 announce → 给双方各发 `PAIR_CONFIRMED{peerDeviceId,peerName}` 并在内存记录该对；**同 deviceId 去重、绝不自撮合**；token 校验同 REGISTER/JOIN。谁先发起都行。已部署 15 并双客户端实测通过。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.11 **配对码升级为 6 位字母+数字（§3.7）**：旧版 6 位纯数字（1M）太弱 → 6 位大小写不敏感字母+数字（31^6≈887M）。派生前先 `normalize`（转大写+仅留 [A-Z0-9]）再走原 §3.7 哈希；自检向量更新为 code `"K7M2QX"`。生成用无歧义字符集 `ABCDEFGHJKMNPQRSTUVWXYZ23456789`。**随之废弃 §3.7「code_not_found→明文码回退」那条交接兼容**：码格式一变，老 0.3.0 的 6 位纯数字明文房永远对不上，回退已无意义（两端确认都上新版）。（Mac 端 Claude，用户要求）
@@ -73,6 +74,7 @@ tags: [netdisplay, handoff, protocol, spec]
 | 0x47 | PROBE_ACK | 对端→探测方 | 原样回显 PROBE 的 8 字节 | v1.13 |
 | 0x48 | PRESENCE | Client→Relay | JSON `{v,pairHash,deviceId,name,state,token}` | v1.14 |
 | 0x49 | PEER_PRESENCE | Relay→Client | JSON `{peerDeviceId,peerName,peerState}` | v1.14 |
+| 0x4A | PAIR_HELLO | 双方→对端:47800 | JSON `{v,deviceId,name,secret?}` | v1.15 |
 
 未知 type：**跳过该帧继续解析**（向前兼容），但应记日志。
 
@@ -231,6 +233,27 @@ token 有效）。
 
 **显示优先级**：设了 IP 且直连通 → 「直连 · 通 Xms」；否则 → 中转结果「中转 · 可用 Xms /
 连不上 / token 错」。真正投射选路同优先级（直连优先、回落中转；判据同上）。
+
+### 3.9 直连（直接输 IP）配对（v1.15）——`PAIR_HELLO`
+
+配对弹窗提供两种方式的切换：**经中转（配对码）**（§3.7 + PAIR_ANNOUNCE 撮合）或
+**直连（对方 IP）**。直连方式**完全不经 relay**，适合两端在同一局域网：
+
+1. 发起方在弹窗填对方局域网 IP（如 `192.168.1.23`），本地 `PairCode.randomSecret()` 生成
+   一个 32 字节随机 base64 `secret`（**这对没有共享码**，故由发起方造一个密钥并带给对端；
+   它同时兼作日后这对回落中转时的房间密钥）。
+2. 发起方拨对方 `IP:47800`，发一帧 `PAIR_HELLO{v:1, deviceId, name, secret}`。
+3. 对端常驻的 47800 响应器（§3.8 那个）peek 首帧，识别 `PAIR_HELLO(0x4A)` →
+   **保存该设备**（deviceId/name/来源 IP/secret），并**回一帧** `PAIR_HELLO{v:1, deviceId, name}`
+   （**responder 端不带 secret**，仅回自己身份）。
+4. 发起方收到对端的回帧 → `.paired(peerDeviceId, peerName)`，把对方存进设备列表（含 IP）。
+   **3s 内无回帧 = 直连失败**（对方 IP 不通或没开程序）。
+
+首帧分派（同一个 47800 响应器）：`PROBE`→回 `PROBE_ACK`；`PAIR_HELLO`→做上面的直连配对；
+`HELLO`→进入直连投射会话（§3.1）。**两端 `PAIR_HELLO` 的 JSON 字段名/类型必须一致。**
+
+> 注意：**用户那两台机共用 Clash 出口 IP（同一公网 IP）= 跨网**，直连 47800 永远打不通，
+> 他们实际只会用「经中转（配对码）」。直连是给**真·同局域网**用户的路径。
 
 ## 4. VIDEO_FRAME（0x10）payload 格式
 

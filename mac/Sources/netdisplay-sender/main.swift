@@ -449,6 +449,35 @@ case "probe-selftest":
     }
     dispatchMain()
 
+case "directpair-selftest":
+    // Start the responder, then direct-pair 127.0.0.1 (docs/11 §6). The responder
+    // should fire onPairRequest and reply with its identity → DirectPair .paired.
+    // Use a private port so a running NetDisplay.app (owns :47800) can't intercept.
+    let testPort: UInt16 = UInt16(args.int("port", 47899))
+    let resp = ProbeResponder(port: testPort)
+    resp.myDeviceId = "resp-device"
+    resp.myName = "Responder"
+    var gotRequest = false
+    resp.onPairRequest = { peerId, peerName, addr, secret in
+        gotRequest = true
+        Log.info("directpair-selftest: responder got PAIR_HELLO from \(peerName) id=\(peerId) addr=\(addr) secret=\(secret.prefix(8))…")
+    }
+    resp.start()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+        DirectPair.pair(host: "127.0.0.1", port: testPort, deviceId: "init-device", name: "Initiator",
+                        secret: PairCode.randomSecret()) { r in
+            switch r {
+            case .paired(let id, let n):
+                let ok = gotRequest && id == "resp-device" && n == "Responder"
+                Log.info("directpair-selftest \(ok ? "PASS" : "FAIL") — peer id=\(id) name=\(n) request=\(gotRequest)")
+                exit(ok ? 0 : 1)
+            case .fail(let why):
+                Log.info("directpair-selftest: FAIL — \(why)"); exit(1)
+            }
+        }
+    }
+    dispatchMain()
+
 case "pair-test":
     // Exercise the mutual-pairing client: announce a code's room, wait for a peer.
     let code = args.str("code", "TEST99")

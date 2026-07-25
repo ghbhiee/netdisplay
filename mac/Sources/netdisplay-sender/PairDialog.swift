@@ -19,6 +19,8 @@ final class PairDialog: NSObject, NSWindowDelegate {
     private var genTarget: GenCodeTarget?
     private var announce: PairAnnounce?
     private var result: PairedDevice?
+    private var mode = 0   // 0 = 经中转（配对码）, 1 = 直连（对方 IP）
+    private let hint = UI.label("", size: 11, color: Theme.sub)
 
     private init(config: AppConfig, deviceId: String, name: String) {
         self.config = config; self.deviceId = deviceId; self.localName = name
@@ -31,7 +33,7 @@ final class PairDialog: NSObject, NSWindowDelegate {
 
     private func present() -> PairedDevice? {
         let W: CGFloat = 360
-        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: W, height: 280),
+        win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: W, height: 320),
                        styleMask: [.titled, .closable], backing: .buffered, defer: false)
         win.title = "配对"; win.backgroundColor = Theme.panel; win.delegate = self
         let root = FlippedView(); root.wantsLayer = true; root.layer?.backgroundColor = Theme.panel.cgColor
@@ -52,8 +54,12 @@ final class PairDialog: NSObject, NSWindowDelegate {
         addrField.placeholderString = "对方地址（可选，可留空由对方填写）"
         addrField.translatesAutoresizingMaskIntoConstraints = false
 
-        let title = UI.label("配对码 — 两台电脑输入相同的码", size: 12, weight: .semibold, color: Theme.sub)
-        let hint1 = UI.label("一方随机生成后，另一方输入相同的配对码。对方也输入后才算配对成功。", size: 11, color: Theme.sub)
+        let title = UI.label("配对方式", size: 12, weight: .semibold, color: Theme.sub)
+        let seg = NSSegmentedControl(labels: ["经中转（配对码）", "直连（对方 IP）"],
+                                     trackingMode: .selectOne, target: self, action: #selector(modeChanged(_:)))
+        seg.selectedSegment = 0
+        seg.translatesAutoresizingMaskIntoConstraints = false
+        hint.stringValue = "一方随机生成配对码，另一方输入相同的码；对方也输入后才算配对成功。"
 
         let cancel = UI.button("取消", fill: Theme.panel2, textColor: Theme.text, border: Theme.line,
                                radius: 6, size: 13, weight: .regular, target: self, action: #selector(cancelClicked))
@@ -64,13 +70,14 @@ final class PairDialog: NSObject, NSWindowDelegate {
         let codeRow = UI.hstack([codeField, genBtn], spacing: 8); codeRow.translatesAutoresizingMaskIntoConstraints = false
         let btnRow = UI.hstack([NSView(), cancel, okBtn], spacing: 8); btnRow.translatesAutoresizingMaskIntoConstraints = false
 
-        let stack = UI.vstack([title, codeRow, hint1, addrField, statusLabel, btnRow], spacing: 10)
+        let stack = UI.vstack([title, seg, codeRow, addrField, hint, statusLabel, btnRow], spacing: 10)
         stack.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(stack)
         NSLayoutConstraint.activate([
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor, constant: 18),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor, constant: -18),
             stack.topAnchor.constraint(equalTo: root.topAnchor, constant: 18),
+            seg.widthAnchor.constraint(equalTo: stack.widthAnchor),
             codeRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             btnRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             codeField.heightAnchor.constraint(equalToConstant: 34),
@@ -79,6 +86,7 @@ final class PairDialog: NSObject, NSWindowDelegate {
             addrField.heightAnchor.constraint(equalToConstant: 26),
             okBtn.widthAnchor.constraint(equalToConstant: 72), cancel.widthAnchor.constraint(equalToConstant: 60),
         ])
+        applyMode()   // set initial field enable/placeholder for 经中转
 
         NSApp.activate(ignoringOtherApps: true); win.center()
         let resp = NSApp.runModal(for: win)
@@ -87,7 +95,31 @@ final class PairDialog: NSObject, NSWindowDelegate {
         return resp == .OK ? result : nil
     }
 
+    /// Toggle field states + hint for the current mode (called on load + change).
+    private func applyMode() {
+        if mode == 0 {   // 经中转（配对码）
+            codeField.isEnabled = true; genBtn.isEnabled = true
+            addrField.placeholderString = "对方地址（可选，可留空由对方填写）"
+            hint.stringValue = "一方随机生成配对码，另一方输入相同的码；对方也输入后才算配对成功。"
+        } else {         // 直连（对方 IP）
+            codeField.isEnabled = false; genBtn.isEnabled = false
+            addrField.placeholderString = "对方局域网 IP，例如 192.168.1.23"
+            hint.stringValue = "直连不经中转：填对方在同一局域网的 IP，双方都要开着程序。"
+        }
+        statusLabel.stringValue = ""
+    }
+
+    @objc private func modeChanged(_ sender: NSSegmentedControl) {
+        mode = sender.selectedSegment
+        applyMode()
+    }
+
     @objc private func pairClicked() {
+        mode == 0 ? pairViaRelay() : pairDirect()
+    }
+
+    /// 经中转：announce the pair-code room, wait for the peer to enter the same code.
+    private func pairViaRelay() {
         let code = PairCode.normalize(codeField.stringValue)
         guard code.count == 6 else {
             statusLabel.textColor = Theme.err
@@ -97,7 +129,7 @@ final class PairDialog: NSObject, NSWindowDelegate {
         let secret = PairCode.secret(fromCode: code)
         guard let hash = PairStore.pairHash(fromSecret: secret) else { return }
         let addr = addrField.stringValue.trimmingCharacters(in: .whitespaces)
-        codeField.isEditable = false; genBtn.isEnabled = false; okBtn.isEnabled = false
+        codeField.isEnabled = false; genBtn.isEnabled = false; okBtn.isEnabled = false
         statusLabel.textColor = Theme.accent
         statusLabel.stringValue = "⏳ 等待对方输入配对码…（关闭窗口即取消）"
         announce = PairAnnounce.start(server: config.relayServer,
@@ -111,10 +143,39 @@ final class PairDialog: NSObject, NSWindowDelegate {
                 NSApp.stopModal(withCode: .OK)
             case .failed(let reason):
                 self.announce = nil
-                self.codeField.isEditable = true; self.genBtn.isEnabled = true; self.okBtn.isEnabled = true
+                self.codeField.isEnabled = true; self.genBtn.isEnabled = true; self.okBtn.isEnabled = true
                 self.statusLabel.textColor = Theme.err
                 self.statusLabel.stringValue = reason == "unauthorized"
                     ? "中转 token 错误，请到「中转设置」改" : "配对失败：\(reason)"
+            }
+        }
+    }
+
+    /// 直连：dial the peer's IP:47800 and exchange PAIR_HELLO (no relay). The
+    /// generated secret doubles as a relay-room fallback should direct later drop.
+    private func pairDirect() {
+        let addr = addrField.stringValue.trimmingCharacters(in: .whitespaces)
+        let host = addr.split(separator: ":").first.map(String.init) ?? addr
+        guard !host.isEmpty else {
+            statusLabel.textColor = Theme.err
+            statusLabel.stringValue = "请输入对方的 IP 地址"
+            return
+        }
+        let secret = PairCode.randomSecret()
+        okBtn.isEnabled = false
+        statusLabel.textColor = Theme.accent
+        statusLabel.stringValue = "⏳ 正在直连 \(host)…"
+        DirectPair.pair(host: host, deviceId: deviceId, name: localName, secret: secret) { [weak self] r in
+            guard let self else { return }
+            switch r {
+            case .paired(let peerId, let peerName):
+                self.result = PairedDevice(deviceId: peerId, secret: secret, code: "",
+                                           name: peerName, addr: addr)
+                NSApp.stopModal(withCode: .OK)
+            case .fail(let reason):
+                self.okBtn.isEnabled = true
+                self.statusLabel.textColor = Theme.err
+                self.statusLabel.stringValue = "直连失败：\(reason)"
             }
         }
     }

@@ -52,6 +52,16 @@ enum PairCode {
         PairStore.pairHash(fromSecret: secret(fromCode: code))
     }
 
+    /// A fresh random 32-byte secret (base64). Used for **direct (IP) pairing**
+    /// (docs/11 §6): there is no shared code, so the initiator mints the secret and
+    /// hands it to the peer over PAIR_HELLO. It also serves as the relay-room key
+    /// should the pair later need to fall back to 中转.
+    static func randomSecret() -> String {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        return Data(bytes).base64EncodedString()
+    }
+
     /// Verify byte-parity with the cross-end self-test vector. Returns true on match.
     static func selftest() -> Bool {
         let s = secret(fromCode: "K7M2QX")

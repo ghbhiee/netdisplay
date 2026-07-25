@@ -35,6 +35,7 @@ enum MsgType: UInt8 {
     case probeAck = 0x47
     case presence = 0x48       // v1.14: peer presence
     case peerPresence = 0x49
+    case pairHello = 0x4A      // v1.15: direct (IP) pairing handshake, peer↔peer on 47800
 }
 
 // MARK: - Frame encoding
@@ -205,6 +206,15 @@ struct RelayError: Codable {
 struct PairConfirmed: Codable {
     let peerDeviceId: String
     let peerName: String
+}
+
+// v1.15 direct (IP) pairing handshake — sent both ways on 47800. The initiator
+// includes `secret` (a relay-room fallback); the responder echoes without one.
+struct PairHello: Codable {
+    let v: Int
+    let deviceId: String
+    let name: String
+    let secret: String?
 }
 
 // MARK: - VIDEO_FRAME payload builder (§4)

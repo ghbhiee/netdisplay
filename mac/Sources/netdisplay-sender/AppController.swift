@@ -57,7 +57,20 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         wireModel()
         refreshAppList()
-        probeResponder.start()          // answer peers' direct-connectivity probes
+        probeResponder.myDeviceId = deviceId
+        probeResponder.myName = senderName
+        probeResponder.onPairRequest = { [weak self] peerId, peerName, addr, secret in
+            // A peer direct-paired with us (docs/11 §6) → save the device.
+            DispatchQueue.main.async {
+                guard let self else { return }
+                let dev = PairedDevice(deviceId: peerId, secret: secret, code: "", name: peerName, addr: addr)
+                DeviceStore.upsert(dev)
+                self.model.devices = DeviceStore.load()
+                self.model.select(secret: dev.secret)
+                Log.info("pair(direct): 已配对 \(peerName) @ \(addr)")
+            }
+        }
+        probeResponder.start()          // answer peers' direct-connectivity probes + direct pairing
         panel.show()
         checkRelay()
         probeConnectivityForSelected()
