@@ -1098,11 +1098,11 @@ function onFrame(type, payload) {
       if (!ack.accepted) return teardown("对端拒绝: " + (ack.reason || "unknown"));
       console.log("[recv] HELLO_ACK: " + payload.toString());
       sessionCodec = CODEC_MAP[ack.codec] ? ack.codec : "h264"; // v1.3 协商结果
-      if (ack.pairSecret) { // v1.4 持久配对：存到这台设备上，之后免输码
-        const d = selectedDevice();
-        if (d) { d.secret = ack.pairSecret; saveDevices(devices); }
-        else localStorage.setItem("pairSecret", ack.pairSecret);
-      }
+      // 老 v1.4 会用 HELLO_ACK.pairSecret 覆盖本机设备 secret；新的「码即房间」模型里
+      // secret = 配对码推出的房间钥匙，绝不能被对端 ACK 改写——否则两端掉进不同房间，
+      // presence 永远撮合不上、彻底投不了（就是 pair-61e7 secret 被 2o8zsYCh→ob3pIktw 覆盖那次）。
+      // 仅在「当前没有已配对设备」的临时直连时，留作免输码回退。
+      if (ack.pairSecret && !selectedDevice()) localStorage.setItem("pairSecret", ack.pairSecret);
       reconnectDelay = 1000; // 连接成功，重置退避
       startStreaming(ack.display);
       break;

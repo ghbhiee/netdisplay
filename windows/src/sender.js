@@ -216,7 +216,8 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
           display: { width: size.width, height: size.height, fps },
           codec: codecName,
         };
-        if (relayMode) ack.pairSecret = getPairSecret();
+        // 不再下发 pairSecret：新模型 secret=配对码房间钥匙，下发会让对端接收侧误覆盖
+        // 自己的 secret、掉进别的房间（与 renderer HELLO_ACK 处同一个坑，对称）。
         sock.write(buildFrame(T.HELLO_ACK, ack));
         sock.write(buildFrame(T.PROJECTION_STATE, {
           active: true,
@@ -353,9 +354,7 @@ async function startSession(sock, receiverHello, relayMode) {
     display: { width, height, fps },
     codec: codecName, // v1.3/v1.6 协商结果
   };
-  // v1.4 持久配对下发。注意：只指定了 --pairhash（无 secret）时不能下发本机 secret——
-  // 对端存下它后算出的 hash 与当前房间不符，下次就连不上了。
-  if (relayMode && !(overrideHash && !overrideSecret)) ack.pairSecret = getPairSecret();
+  // 不再下发 pairSecret（同上：会让对端接收侧覆盖自己的房间 secret）。
   sock.write(buildFrame(T.HELLO_ACK, ack));
   sock.write(
     buildFrame(T.PROJECTION_STATE, {
