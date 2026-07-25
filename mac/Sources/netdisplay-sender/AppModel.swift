@@ -25,6 +25,10 @@ final class AppModel {
     var devices: [PairedDevice] = []
     var selectedSecret: String?
     var selected: PairedDevice? { devices.first { $0.secret == selectedSecret } }
+    /// Any paired device that goes through the relay — gates whether 中转设置 shows
+    /// and whether we keep a relay presence/health channel at all (docs/11 §6, user
+    /// req: no relay pairing ⇒ hide 中转设置, don't probe the relay).
+    var hasRelayDevice: Bool { devices.contains { $0.usesRelay } }
     /// Secrets currently announcing on the relay, waiting for the peer to enter the
     /// same code (docs/11 mutual pairing). Shown as 「等待对方输入配对码…」.
     var pairing: Set<String> = []

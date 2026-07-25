@@ -44,6 +44,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel.config = config
         panel.onAddDevice = { [weak self] in self?.addDevice() }
         panel.onRelaySettings = { [weak self] in self?.editRelaySettings() }
+        panel.onRefreshDevice = { [weak self] d in self?.refreshDevice(d) }
         panel.onConfigChange = { [weak self] cfg in
             self?.config = cfg
             self?.sender.update(cfg)   // persists + applies live if streaming
@@ -59,17 +60,6 @@ final class AppController: NSObject, NSApplicationDelegate {
         refreshAppList()
         probeResponder.myDeviceId = deviceId
         probeResponder.myName = senderName
-        probeResponder.onPairRequest = { [weak self] peerId, peerName, addr, secret in
-            // A peer direct-paired with us (docs/11 §6) → save the device.
-            DispatchQueue.main.async {
-                guard let self else { return }
-                let dev = PairedDevice(deviceId: peerId, secret: secret, code: "", name: peerName, addr: addr)
-                DeviceStore.upsert(dev)
-                self.model.devices = DeviceStore.load()
-                self.model.select(secret: dev.secret)
-                Log.info("pair(direct): 已配对 \(peerName) @ \(addr)")
-            }
-        }
         probeResponder.start()          // answer peers' direct-connectivity probes + direct pairing
         panel.show()
         checkRelay()
@@ -79,39 +69,48 @@ final class AppController: NSObject, NSApplicationDelegate {
                                         // otherwise the peer never sees our state (docs/11 §5).
     }
 
-    /// docs/11 §2: show how this device connects — prefer direct (only if a peer
-    /// IP is set), else relay. Runs on select / launch; updates the device row.
+    /// docs/11 §2: show how this device connects. Direct pairings realtime-probe
+    /// their IP; relay pairings let the persistent presence channel report status
+    /// (no self-pair storm). Runs on select / launch / manual refresh.
     private func probeConnectivityForSelected() {
-        guard let d = model.selected, let secret = model.selectedSecret else { return }
-        let relayThen = { [weak self] in
+        guard let d = model.selected else { return }
+        if d.usesDirect { probeDirect(d) }
+        // relay device → presence.onConnected drives connectivity; nothing to do here.
+    }
+
+    /// Realtime direct probe of a device's IP (user req: 直连要实时探测).
+    private func probeDirect(_ d: PairedDevice) {
+        guard let addr = d.addr, !addr.isEmpty else { return }
+        let secret = d.secret
+        let host = addr.split(separator: ":").first.map(String.init) ?? addr
+        DirectProbe.probe(host: host) { [weak self] r in
             guard let self else { return }
-            RelayHealth.check(server: self.config.relayServer,
-                              token: self.config.relayToken.isEmpty ? nil : self.config.relayToken) { st in
-                switch st {
-                case .ok(let ms): self.model.connectivity[secret] = "中转 · 可用 \(ms)ms"
-                case .unauthorized: self.model.connectivity[secret] = "中转 · token 错"
-                case .unreachable: self.model.connectivity[secret] = "中转 · 连不上"
-                default: break
-                }
-                self.model.onChange?()
+            switch r {
+            case .ok(let ms): self.model.connectivity[secret] = "直连 · 通 \(ms)ms"
+            case .fail:       self.model.connectivity[secret] = "直连 · 不通"
             }
+            self.model.onChange?()
         }
-        if let addr = d.addr, !addr.isEmpty {
-            let host = addr.split(separator: ":").first.map(String.init) ?? addr
-            DirectProbe.probe(host: host) { [weak self] r in
-                guard let self else { return }
-                switch r {
-                case .ok(let ms): self.model.connectivity[secret] = "直连 · 通 \(ms)ms"; self.model.onChange?()
-                case .fail: relayThen()   // direct not reachable → show relay
-                }
-            }
+    }
+
+    /// ⟳ on a device row: re-probe its status right now.
+    private func refreshDevice(_ d: PairedDevice) {
+        if d.usesDirect {
+            model.connectivity[d.secret] = "直连 · 探测中…"; model.onChange?()
+            probeDirect(d)
         } else {
-            relayThen()   // no IP → don't probe direct
+            // Relay: force a fresh presence connection (re-checks relay + peer online)
+            // and re-measure the 中转设置 button.
+            model.connectivity[d.secret] = "中转 · 检测中…"; model.onChange?()
+            restartPresence()
+            checkRelay()
         }
     }
 
     /// Probe the relay (reachability + token) and reflect it on the 中转设置 button.
+    /// Skipped entirely when no paired device uses the relay (user req).
     private func checkRelay() {
+        guard model.hasRelayDevice else { panel.relayStatus = .unknown; return }
         guard !config.relayServer.isEmpty else { panel.relayStatus = .unknown; return }
         panel.relayStatus = .checking
         RelayHealth.check(server: config.relayServer,
@@ -134,7 +133,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var presence: PresenceClient?
     private func restartPresence() {
         presence?.stop(); presence = nil
-        guard let d = model.selected, let hash = d.pairHash, let secret = model.selectedSecret else { return }
+        guard let d = model.selected, d.usesRelay, let hash = d.pairHash, let secret = model.selectedSecret else { return }
         let p = PresenceClient(server: config.relayServer,
                                token: config.relayToken.isEmpty ? nil : config.relayToken,
                                pairHash: hash, deviceId: deviceId, name: senderName, state: model.presenceState)
@@ -216,14 +215,23 @@ final class AppController: NSObject, NSApplicationDelegate {
     // MARK: - Dialogs
 
     private func addDevice() {
-        // The dialog announces + waits internally and returns a device ONLY once the
-        // peer confirmed with the same code (docs/11 §1 + user's security ask). If
+        // The dialog announces/dials + waits internally and returns a device ONLY once
+        // the peer confirmed with the same code (docs/11 §1/§6 + the security ask). If
         // the user closes/cancels, nothing is saved — the code can't be exploited.
-        guard let dev = PairDialog.run(config: config, deviceId: deviceId, name: senderName) else { return }
+        // `openRelaySettings` lets the 中转 tab configure the relay inline when unset.
+        guard let dev = PairDialog.run(
+            config: config, deviceId: deviceId, name: senderName, responder: probeResponder,
+            openRelaySettings: { [weak self] () -> AppConfig? in
+                guard let self, let newCfg = RelaySettingsDialog.run(config: self.config) else { return nil }
+                self.config = newCfg
+                self.sender.update(newCfg)
+                self.checkRelay()
+                return newCfg
+            }) else { return }
         DeviceStore.upsert(dev)
         model.devices = DeviceStore.load()
         model.select(secret: dev.secret)
-        Log.info("pair: CONFIRMED — 已配对 \(dev.name)")
+        Log.info("pair: CONFIRMED — 已配对 \(dev.name) [\(dev.transport)]")
     }
 
     private func editRelaySettings() {

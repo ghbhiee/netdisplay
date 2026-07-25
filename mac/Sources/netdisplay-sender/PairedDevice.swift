@@ -18,6 +18,13 @@ struct PairedDevice: Codable, Equatable {
     var name: String = ""         // peer-reported display name (HELLO.name)
     var alias: String? = nil      // local rename; wins over `name`
     var addr: String? = nil       // optional last-known LAN address (direct hint)
+    var transport: String = "relay"  // "relay"(经中转) | "direct"(直连对方 IP). Default
+                                      // relay so pre-existing stored devices decode fine.
+
+    /// This device is reached through the relay (needs 中转设置 + presence channel).
+    var usesRelay: Bool { transport != "direct" }
+    /// This device is a direct-IP pairing (realtime probe on `addr`, no relay).
+    var usesDirect: Bool { transport == "direct" }
 
     /// What the UI shows: local alias > peer name (learned at first projection) >
     /// the pairing code (so the row is recognizable before any projection).

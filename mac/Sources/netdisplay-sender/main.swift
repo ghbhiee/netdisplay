@@ -454,18 +454,20 @@ case "directpair-selftest":
     // should fire onPairRequest and reply with its identity → DirectPair .paired.
     // Use a private port so a running NetDisplay.app (owns :47800) can't intercept.
     let testPort: UInt16 = UInt16(args.int("port", 47899))
+    let sharedSecret = PairCode.secret(fromCode: "K7M2QX")   // both sides typed the same code
     let resp = ProbeResponder(port: testPort)
     resp.myDeviceId = "resp-device"
     resp.myName = "Responder"
+    resp.armedSecret = sharedSecret                          // responder is in the 直连 tab, waiting
     var gotRequest = false
-    resp.onPairRequest = { peerId, peerName, addr, secret in
+    resp.onArmedPair = { peerId, peerName, addr in
         gotRequest = true
-        Log.info("directpair-selftest: responder got PAIR_HELLO from \(peerName) id=\(peerId) addr=\(addr) secret=\(secret.prefix(8))…")
+        Log.info("directpair-selftest: responder accepted armed PAIR_HELLO from \(peerName) id=\(peerId) addr=\(addr)")
     }
     resp.start()
     DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
         DirectPair.pair(host: "127.0.0.1", port: testPort, deviceId: "init-device", name: "Initiator",
-                        secret: PairCode.randomSecret()) { r in
+                        secret: sharedSecret) { r in
             switch r {
             case .paired(let id, let n):
                 let ok = gotRequest && id == "resp-device" && n == "Responder"
@@ -474,6 +476,28 @@ case "directpair-selftest":
             case .fail(let why):
                 Log.info("directpair-selftest: FAIL — \(why)"); exit(1)
             }
+        }
+    }
+    dispatchMain()
+
+case "directpair-reject-selftest":
+    // Security: a PAIR_HELLO whose secret ≠ the armed code must be REJECTED — the
+    // responder stays silent, so the initiator times out and nobody is saved.
+    let testPort: UInt16 = UInt16(args.int("port", 47898))
+    let resp = ProbeResponder(port: testPort)
+    resp.myDeviceId = "resp-device"; resp.myName = "Responder"
+    resp.armedSecret = PairCode.secret(fromCode: "K7M2QX")     // armed for one code
+    var accepted = false
+    resp.onArmedPair = { _, _, _ in accepted = true }
+    resp.start()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.5) {
+        DirectPair.pair(host: "127.0.0.1", port: testPort, deviceId: "init", name: "Mallory",
+                        secret: PairCode.secret(fromCode: "ZZ9AAA")) { r in   // WRONG code
+            let rejected: Bool
+            if case .fail = r { rejected = true } else { rejected = false }
+            let ok = rejected && !accepted
+            Log.info("directpair-reject-selftest \(ok ? "PASS" : "FAIL") — rejected=\(rejected) accepted=\(accepted)")
+            exit(ok ? 0 : 1)
         }
     }
     dispatchMain()
@@ -543,11 +567,23 @@ case "paircode-selftest":
 case "panel-demo":
     // Render the redesigned main panel with sample state for visual QA.
     let m = AppModel()
-    m.devices = [
-        PairedDevice(deviceId: "peer-win", secret: "demo-secret-1", name: "LEGION-Y7000P"),
-        PairedDevice(deviceId: "pending:abc", secret: "demo-secret-2", name: "", alias: nil),
-    ]
-    m.selectedSecret = "demo-secret-1"
+    if args.flags["directonly"] != nil {
+        m.devices = [
+            PairedDevice(deviceId: "peer-lan", secret: "demo-secret-3", code: "K7M2QX",
+                         name: "書斎-iMac", addr: "192.168.1.23", transport: "direct"),
+        ]
+        m.selectedSecret = "demo-secret-3"
+        m.connectivity["demo-secret-3"] = "直连 · 通 3ms"
+    } else {
+        m.devices = [
+            PairedDevice(deviceId: "peer-win", secret: "demo-secret-1", name: "LEGION-Y7000P", transport: "relay"),
+            PairedDevice(deviceId: "peer-lan", secret: "demo-secret-2", code: "K7M2QX",
+                         name: "書斎-iMac", addr: "192.168.1.23", transport: "direct"),
+        ]
+        m.selectedSecret = "demo-secret-1"
+        m.peerPresence["demo-secret-1"] = "recv-waiting"
+        m.connectivity["demo-secret-2"] = "直连 · 通 3ms"
+    }
     NSApplication.shared.setActivationPolicy(.regular)
     let panel = MainPanelWindow(model: m)
     panel.appList = ["Safari", "Xcode", "Terminal"]

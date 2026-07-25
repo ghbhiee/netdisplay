@@ -19,6 +19,10 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     var onAddDevice: (() -> Void)?
     /// Called when the user opens 中转设置.
     var onRelaySettings: (() -> Void)?
+    /// Called when the user taps ⟳ on a device row — re-probe its status now
+    /// (relay presence reconnect / direct realtime probe).
+    var onRefreshDevice: ((PairedDevice) -> Void)?
+    private var refreshTargets: [GenCodeTarget] = []   // retain per-row refresh closures
 
     private let W: CGFloat = 430
 
@@ -52,6 +56,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     private func rebuild() {
         guard let window else { return }
         chipTargets.removeAll()
+        refreshTargets.removeAll()
         let root = FlippedView()
         root.wantsLayer = true
         root.layer?.backgroundColor = Theme.panel.cgColor
@@ -91,17 +96,25 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     // MARK: - Bottom row (中转设置 + 主题)
 
     private func bottomRow() -> NSView {
+        let themeBtn = UI.button("◐ 主题", fill: Theme.panel2, textColor: Theme.sub, border: Theme.line,
+                                 radius: 6, size: 12, weight: .regular, target: self, action: #selector(toggleTheme))
+        themeBtn.translatesAutoresizingMaskIntoConstraints = false
+        themeBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
+
+        // 中转设置 only shows when there's a relay-based pairing (user req): a purely
+        // direct-paired setup has no relay to configure or probe.
+        guard model.hasRelayDevice else {
+            themeBtn.widthAnchor.constraint(equalToConstant: 72).isActive = true
+            let row = UI.hstack([NSView(), themeBtn], spacing: 8)
+            return wrapFull(row)
+        }
+        themeBtn.widthAnchor.constraint(equalToConstant: 72).isActive = true
+
         let (label, fg, border) = relayButtonStyle()
         let relayBtn = UI.button(label, fill: .clear, textColor: fg, border: border, radius: 6,
                                  size: 12, weight: .regular, target: self, action: #selector(tapRelaySettings))
         relayBtn.translatesAutoresizingMaskIntoConstraints = false
         relayBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
-
-        let themeBtn = UI.button("◐ 主题", fill: Theme.panel2, textColor: Theme.sub, border: Theme.line,
-                                 radius: 6, size: 12, weight: .regular, target: self, action: #selector(toggleTheme))
-        themeBtn.translatesAutoresizingMaskIntoConstraints = false
-        themeBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        themeBtn.widthAnchor.constraint(equalToConstant: 72).isActive = true
 
         let row = UI.hstack([relayBtn, themeBtn], spacing: 8)
         relayBtn.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -400,10 +413,29 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         else if let conn = model.connectivity[d.secret] { statusText = conn }
         else { statusText = d.nameKnown ? "已配对" : "未连接" }
         let status = UI.label(statusText, size: 11, color: Theme.sub)
-        let inner = UI.hstack([radio, online, name, NSView(), status], spacing: 9)
+        // transport badge so 直连 vs 中转 pairings are distinguishable at a glance.
+        let badge = UI.label(d.usesDirect ? "直连" : "中转", size: 10,
+                             color: d.usesDirect ? Theme.ok : Theme.accent)
+        var items: [NSView] = [radio, online, name, NSView(), badge, status]
+        // ⟳ refresh on the selected row (manual status re-probe, user req).
+        if selected {
+            let t = GenCodeTarget { [weak self] in self?.onRefreshDevice?(d) }
+            refreshTargets.append(t)
+            let refresh = UI.button("⟳", fill: .clear, textColor: Theme.sub, border: Theme.line, radius: 5,
+                                    size: 12, weight: .regular, target: t, action: #selector(GenCodeTarget.fire))
+            refresh.translatesAutoresizingMaskIntoConstraints = false
+            refresh.widthAnchor.constraint(equalToConstant: 26).isActive = true
+            refresh.heightAnchor.constraint(equalToConstant: 22).isActive = true
+            items.append(refresh)
+        }
+        let inner = UI.hstack(items, spacing: 8)
         embed(inner, in: row, padX: 10, padY: 8)
-        let click = ClickCatcher { [weak self] in self?.model.select(secret: d.secret) }
-        row.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false; pin(click, to: row)
+        // Row-click selects — but only overlay the catcher on *unselected* rows, so it
+        // doesn't sit on top of the selected row's ⟳ button and swallow its taps.
+        if !selected {
+            let click = ClickCatcher { [weak self] in self?.model.select(secret: d.secret) }
+            row.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false; pin(click, to: row)
+        }
         return fullWidthView(row)
     }
 

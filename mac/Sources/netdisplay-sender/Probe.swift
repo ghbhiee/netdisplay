@@ -14,9 +14,15 @@ final class ProbeResponder {
     /// Our identity, to reply to a direct PAIR_HELLO (§6).
     var myDeviceId = ""
     var myName = ""
-    /// Called when a peer completes a direct (IP) pairing with us: (peerDeviceId,
-    /// peerName, peerAddr, sharedSecret). The app saves the device.
-    var onPairRequest: ((String, String, String, String) -> Void)?
+    /// Security (mirrors the relay announce flow): an inbound PAIR_HELLO is only
+    /// accepted while the user is actively pairing in the 直连 tab, and only if its
+    /// secret matches the code the user typed. `armedSecret` is that code's secret,
+    /// set while the dialog waits and cleared when it closes. Otherwise a peer who
+    /// knows your IP could pair unasked.
+    var armedSecret: String?
+    /// Fired (any queue) when an armed, code-matching peer direct-pairs with us:
+    /// (peerDeviceId, peerName, peerAddr). The app saves the device + closes the dialog.
+    var onArmedPair: ((String, String, String) -> Void)?
 
     init(port: UInt16 = UInt16(Proto.directPort)) { self.port = port }
 
@@ -48,12 +54,14 @@ final class ProbeResponder {
                 c.send(Wire.encode(.probeAck, frame.payload))
                 DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { self.drop(id, c) }
             case .pairHello:
-                // Direct (IP) pairing: save the peer, reply with our identity (§6).
-                if let ph = try? JSONDecoder().decode(PairHello.self, from: frame.payload) {
+                // Direct (IP) pairing (§6): accept **only while armed** with a matching
+                // code secret. Then save the peer + reply with our identity.
+                if let ph = try? JSONDecoder().decode(PairHello.self, from: frame.payload),
+                   let armed = self.armedSecret, let s = ph.secret, s == armed {
                     let addr = ProbeResponder.remoteHost(nw)
-                    self.onPairRequest?(ph.deviceId, ph.name, addr, ph.secret ?? "")
+                    self.onArmedPair?(ph.deviceId, ph.name, addr)
                     c.send(Wire.encodeJSON(.pairHello, PairHello(v: 1, deviceId: self.myDeviceId, name: self.myName, secret: nil)))
-                }
+                }   // not armed / wrong code → ignore (no save; security)
                 DispatchQueue.global().asyncAfter(deadline: .now() + 0.3) { self.drop(id, c) }
             default:
                 self.drop(id, c)   // HELLO (projection session) not handled here yet

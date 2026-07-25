@@ -9,7 +9,8 @@ tags: [netdisplay, handoff, protocol, spec]
 > 修改协议必须先改这里并在下方 changelog 记录，再改代码。
 >
 > Changelog:
-> - 2026-07-24 v1.15 **直连（直接输 IP）配对 `PAIR_HELLO`(0x4A)（§3.9, docs/11 §6）**：配对弹窗给「经中转（配对码）/ 直连（对方 IP）」切换。直连不经 relay：发起方拨对方 `:47800`，发 `PAIR_HELLO{v,deviceId,name,secret}`（`secret`=本地随机生成的 32 字节 base64，兼作日后回退中转的房间密钥）；对端的常驻 47800 响应器（就是 §3.8 那个）先读一帧，见 `PAIR_HELLO` → 保存该设备 + 回一帧自己的 `PAIR_HELLO{v,deviceId,name}`（**不带 secret**），发起方收到回帧即 `.paired`（3s 超时）。两端由此各自存下对方 deviceId/name/IP，之后同一局域网优先直连、否则回中转。响应器仍与 PROBE、直连投射会话共存（peek 首帧分派：PROBE→ACK / PAIR_HELLO→配对 / HELLO→会话）。**用户两台机共用 Clash 出口 IP=跨网，直连永远不通，这条是局域网特性**。（Mac 端 Claude 已实装+回环自检 PASS；Windows 待实装）
+> - 2026-07-25 v1.15b **直连配对改为「对方 IP + 配对码」+ 响应器需武装（§3.9 更新）**：直连不再用随机 secret，改成**双方都填相同配对码**（派生同一 secret，和中转一致）+ 对方 IP。安全对齐中转的「双方都在配对界面才成」：响应器只有在**用户正处于直连页等待**时被「武装」(armedSecret=该码 secret) 才接受 `PAIR_HELLO`，且只接受 **secret 匹配**的；否则静默忽略（防别人知道你 IP 就来配）。两端各自「武装 + 拨对方」，任一方 PAIR_HELLO 先到即成对。`PAIR_HELLO.secret` 现在=配对码派生的 secret。回环正/负自检均 PASS（错码被拒）。（Mac 端 Claude；Windows 待同步）
+> - 2026-07-24 v1.15 **直连（直接输 IP）配对 `PAIR_HELLO`(0x4A)（§3.9, docs/11 §6）**：配对弹窗给「经中转（配对码）/ 直连（对方 IP）」切换。直连不经 relay：发起方拨对方 `:47800`，发 `PAIR_HELLO{v,deviceId,name,secret}`；对端的常驻 47800 响应器（就是 §3.8 那个）先读一帧，见 `PAIR_HELLO` → 保存该设备 + 回一帧自己的 `PAIR_HELLO{v,deviceId,name}`（**不带 secret**），发起方收到回帧即 `.paired`（3s 超时）。响应器仍与 PROBE、直连投射会话共存（peek 首帧分派：PROBE→ACK / PAIR_HELLO→配对 / HELLO→会话）。**用户两台机共用 Clash 出口 IP=跨网，直连永远不通，这条是局域网特性**。（注：v1.15b 收紧了 secret 来源与武装要求）
 > - 2026-07-23 v1.13 **连通性探测 `PROBE`(0x46)/`PROBE_ACK`(0x47)（§3.8, docs/11 §2）**：UI 显示「当前直连/中转哪条通」，优先直连。**直连判据 = 收到对端 PROBE_ACK，不是 TCP connect 成功**（Clash TUN 会对不可达地址假成功，两端老坑）。两端在 47800 常驻一个轻量探测响应器：收到 PROBE(8 字节随机回显) 立即原样回 PROBE_ACK，无需会话状态，与直连投射会话共存（先读一帧，PROBE 就回 ACK、HELLO 就进会话）。设了对方 IP 才探直连；没设不探不显示。中转探测=自配对随机房收 RELAY_PAIRED。显示优先级：直连通→「直连·通 Xms」，否则中转结果。两端判据必须一字不差。（Mac 端 Claude，用户要求；Windows 待实装）
 > - 2026-07-23 v1.12 **双向配对撮合 `PAIR_ANNOUNCE`(0x44)/`PAIR_CONFIRMED`(0x45)**（docs/11）：让「已配对」名副其实——只有**另一台也用同一个码连上**才算配对成功，不是各自本地存码/只探测中转。两端配对时各发 `PAIR_ANNOUNCE{v,pairHash,deviceId,name,token}`；relay 按 pairHash 暂存(TTL 2min)，见到**同 pairHash、不同 deviceId** 的第二个 announce → 给双方各发 `PAIR_CONFIRMED{peerDeviceId,peerName}` 并在内存记录该对；**同 deviceId 去重、绝不自撮合**；token 校验同 REGISTER/JOIN。谁先发起都行。已部署 15 并双客户端实测通过。（Mac 端 Claude，用户要求）
 > - 2026-07-23 v1.11 **配对码升级为 6 位字母+数字（§3.7）**：旧版 6 位纯数字（1M）太弱 → 6 位大小写不敏感字母+数字（31^6≈887M）。派生前先 `normalize`（转大写+仅留 [A-Z0-9]）再走原 §3.7 哈希；自检向量更新为 code `"K7M2QX"`。生成用无歧义字符集 `ABCDEFGHJKMNPQRSTUVWXYZ23456789`。**随之废弃 §3.7「code_not_found→明文码回退」那条交接兼容**：码格式一变，老 0.3.0 的 6 位纯数字明文房永远对不上，回退已无意义（两端确认都上新版）。（Mac 端 Claude，用户要求）
@@ -239,17 +240,19 @@ token 有效）。
 配对弹窗提供两种方式的切换：**经中转（配对码）**（§3.7 + PAIR_ANNOUNCE 撮合）或
 **直连（对方 IP）**。直连方式**完全不经 relay**，适合两端在同一局域网：
 
-1. 发起方在弹窗填对方局域网 IP（如 `192.168.1.23`），本地 `PairCode.randomSecret()` 生成
-   一个 32 字节随机 base64 `secret`（**这对没有共享码**，故由发起方造一个密钥并带给对端；
-   它同时兼作日后这对回落中转时的房间密钥）。
-2. 发起方拨对方 `IP:47800`，发一帧 `PAIR_HELLO{v:1, deviceId, name, secret}`。
-3. 对端常驻的 47800 响应器（§3.8 那个）peek 首帧，识别 `PAIR_HELLO(0x4A)` →
-   **保存该设备**（deviceId/name/来源 IP/secret），并**回一帧** `PAIR_HELLO{v:1, deviceId, name}`
-   （**responder 端不带 secret**，仅回自己身份）。
-4. 发起方收到对端的回帧 → `.paired(peerDeviceId, peerName)`，把对方存进设备列表（含 IP）。
-   **3s 内无回帧 = 直连失败**（对方 IP 不通或没开程序）。
+1. **双方都在直连页填相同的 6 位配对码**（派生出同一个 `secret = base64(SHA256("netdisplay-pair:"+code))`，
+   和 §3.7 中转一致）**再加对方的局域网 IP**。点「配对」时，本端把自己的响应器**武装**：
+   `armedSecret = 该 secret`（只在弹窗等待期间有效，关窗即清）。
+2. 本端拨对方 `IP:47800`，发一帧 `PAIR_HELLO{v:1, deviceId, name, secret}`。
+3. 对端常驻的 47800 响应器（§3.8 那个）peek 首帧，识别 `PAIR_HELLO(0x4A)`：
+   **仅当自己也已武装、且收到的 secret == armedSecret** 才受理 → **保存该设备**
+   （deviceId/name/来源 IP）并**回一帧** `PAIR_HELLO{v:1, deviceId, name}`（**不带 secret**）；
+   否则**静默忽略**（没在配对 / 码不对 → 不保存，防止别人知道你 IP 就来配）。
+4. 本端收到对端回帧 → `.paired(peerDeviceId, peerName)`，存对方（含 IP）。因两端都「武装 + 拨对方」，
+   任一方的 PAIR_HELLO 先到即完成。**3s 内无成对 = 直连失败**（对方 IP 不通/没在直连页/码不同）。
 
-首帧分派（同一个 47800 响应器）：`PROBE`→回 `PROBE_ACK`；`PAIR_HELLO`→做上面的直连配对；
+安全模型对齐中转（§2 的 PAIR_ANNOUNCE 撮合）：**只有双方都正处在配对界面**时才可能成对。
+首帧分派（同一个 47800 响应器）：`PROBE`→回 `PROBE_ACK`；`PAIR_HELLO`→上面的武装校验直连配对；
 `HELLO`→进入直连投射会话（§3.1）。**两端 `PAIR_HELLO` 的 JSON 字段名/类型必须一致。**
 
 > 注意：**用户那两台机共用 Clash 出口 IP（同一公网 IP）= 跨网**，直连 47800 永远打不通，
