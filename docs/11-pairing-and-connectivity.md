@@ -79,3 +79,24 @@ tags: [netdisplay, pairing, connectivity, spec]
   - 对端 offline → 「对方离线」
 
 分工：Mac 端 Claude 出协议 + relay + Mac；Windows 实装 Windows presence 上报 + 显示。
+
+## 6. 两种配对方式 + 优先直连（用户 2026-07-24）
+
+配对时用户可二选一（或切换）：
+- **配对码（经中转）**：两端输同码 → relay 撮合（§1 PAIR_ANNOUNCE）。跨网络用这个。
+- **对方 IP（直连）**：只填对方局域网 IP、不填码 → **直连握手**：拨 `对方IP:47800`，发
+  `PAIR_HELLO{deviceId,name,secret}`；对端 47800 常驻响应器认这条(除了 PROBE/HELLO)→
+  存设备(deviceId,name,addr,secret)+回自己的 `PAIR_HELLO` → 两端保存。**secret 由发起方生成并交换**，
+  这样 IP 配的设备也有 relay 房间作兜底(IP 变了/不可达时回落中转)。
+
+**统一设备记录**：无论哪种方式配的，设备都存 `{secret(relay房), addr?(直连), peerDeviceId, peerName}`。
+
+**连接时优先直连**（§2 已实现）：设了 addr 且 PROBE 通 → 走直连；否则中转。设备行显示当前是
+「直连 · 通 Xms」还是「中转 · 可用 Xms」，让用户一眼看出这条走哪。
+
+**协议增量**：`PAIR_HELLO(0x4A, 直连点对点, 双向)` = `{v,deviceId,name,secret?}`（配对握手，
+和投射会话的 HELLO 区分：47800 响应器 peek 首帧 PROBE/PAIR_HELLO/HELLO 三分派）。
+
+**注意**：用户当前两台**跨网络**，直连永远不通、恒走中转——所以 IP 配对/直连是**同局域网**场景的功能，
+用户现在测不了直连,但界面上「这条走中转 vs 走直连」的区分对将来 LAN 有用。分工：协议+relay 无关(直连不经 relay)；
+Mac 端我实装 IP 配对握手 + 响应器 peek 分派 + 切换 UI；Windows 同步。
