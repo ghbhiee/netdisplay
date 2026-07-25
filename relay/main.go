@@ -250,7 +250,7 @@ func janitor() {
 			}
 		}
 		cut := time.Now().Add(-time.Minute)
-		for ip, ts := range joinRl {
+		for room, ts := range joinRl {
 			kept := ts[:0]
 			for _, t := range ts {
 				if t.After(cut) {
@@ -258,9 +258,9 @@ func janitor() {
 				}
 			}
 			if len(kept) == 0 {
-				delete(joinRl, ip)
+				delete(joinRl, room)
 			} else {
-				joinRl[ip] = kept
+				joinRl[room] = kept
 			}
 		}
 		mu.Unlock()
@@ -375,20 +375,21 @@ func handle(c net.Conn) {
 			c.SetReadDeadline(time.Now().Add(codeTTL))
 		}
 	case tJoin:
-		ip := c.RemoteAddr().String()
-		if i := strings.LastIndex(ip, ":"); i > 0 {
-			ip = ip[:i]
-		}
+		// v1.16: rate-limit **per room**, not per source IP. Two machines behind one
+		// Clash exit IP share an address, and random-room health self-pairs hammer
+		// JOIN; per-IP throttling starved real joins. Per-room still catches the real
+		// abuse — a receiver looping JOIN on one missing room.
 		mu.Lock()
-		joinRl[ip] = append(joinRl[ip], time.Now())
+		joinRl[key] = append(joinRl[key], time.Now())
 		recent := 0
-		for _, ts := range joinRl[ip] {
+		for _, ts := range joinRl[key] {
 			if time.Since(ts) < time.Minute {
 				recent++
 			}
 		}
 		if recent > joinPerMinute {
 			mu.Unlock()
+			log.Printf("JOIN rate_limited room=%s from=%s (%d/min)", shortKey(key), c.RemoteAddr(), recent)
 			sendErr(c, "rate_limited")
 			c.Close()
 			return

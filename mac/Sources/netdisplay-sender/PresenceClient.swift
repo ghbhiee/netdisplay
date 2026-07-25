@@ -17,9 +17,16 @@ final class PresenceClient {
     private var state: String
     private var stopped = false
     private var backoff: Double = 1
+    private var connectStart = DispatchTime.now()
 
     /// Called (main queue) with the peer's state, or "offline".
     var onPeer: ((String) -> Void)?
+    /// Called (main queue) when the channel is up — proves relay reachable + token
+    /// OK (docs/11 §5). `ms` = TCP connect RTT. Drives the 中转 status live, so we
+    /// no longer need repeated self-pair health probes.
+    var onConnected: ((Int) -> Void)?
+    /// Called (main queue) if the relay rejects our token on this channel.
+    var onUnauthorized: (() -> Void)?
 
     init(server: String, token: String?, pairHash: String, deviceId: String, name: String, state: String) {
         let parts = server.split(separator: ":")
@@ -50,6 +57,7 @@ final class PresenceClient {
     private func connect() {
         if stopped { return }
         parser = FrameParser()
+        connectStart = DispatchTime.now()
         let ep = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port)!)
         let c = Conn(NWConnection(to: ep, using: Conn.tcpParameters()), label: "presence")
         conn = c
@@ -58,17 +66,29 @@ final class PresenceClient {
         c.start { [weak self] st in
             guard let self, case .ready = st else { return }
             self.backoff = 1
+            let ms = Int((DispatchTime.now().uptimeNanoseconds - self.connectStart.uptimeNanoseconds) / 1_000_000)
             self.sendPresence()
+            DispatchQueue.main.async { [weak self] in self?.onConnected?(ms) }
         }
     }
 
     private func onData(_ data: Data) {
         parser.feed(data)
         while let frame = try? parser.next() {
-            if MsgType(rawValue: frame.type) == .peerPresence,
-               let pp = try? JSONDecoder().decode(PeerPresence.self, from: frame.payload) {
-                let s = pp.peerState
-                DispatchQueue.main.async { [weak self] in self?.onPeer?(s) }
+            switch MsgType(rawValue: frame.type) {
+            case .peerPresence:
+                if let pp = try? JSONDecoder().decode(PeerPresence.self, from: frame.payload) {
+                    let s = pp.peerState
+                    DispatchQueue.main.async { [weak self] in self?.onPeer?(s) }
+                }
+            case .relayError:
+                let reason = (try? JSONDecoder().decode(RelayError.self, from: frame.payload))?.reason ?? ""
+                if reason == "unauthorized" {
+                    stopped = true   // token is wrong — stop hammering until settings change
+                    DispatchQueue.main.async { [weak self] in self?.onUnauthorized?() }
+                }
+            default:
+                break
             }
         }
     }

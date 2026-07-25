@@ -74,6 +74,9 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel.show()
         checkRelay()
         probeConnectivityForSelected()
+        restartPresence()               // FIX: presence must start for the already-selected
+                                        // device at launch, not only when the user re-selects —
+                                        // otherwise the peer never sees our state (docs/11 §5).
     }
 
     /// docs/11 §2: show how this device connects — prefer direct (only if a peer
@@ -136,6 +139,14 @@ final class AppController: NSObject, NSApplicationDelegate {
                                token: config.relayToken.isEmpty ? nil : config.relayToken,
                                pairHash: hash, deviceId: deviceId, name: senderName, state: model.presenceState)
         p.onPeer = { [weak self] st in self?.model.peerPresence[secret] = st; self?.model.onChange?() }
+        // The presence channel doubles as the live relay-health signal (docs/11 §5):
+        // it's connected ⇒ relay reachable + token OK, so we skip repeated self-pairs.
+        p.onConnected = { [weak self] ms in
+            self?.panel.relayStatus = .ok(ms: ms)
+            self?.model.connectivity[secret] = "中转 · 可用 \(ms)ms"
+            self?.model.onChange?()
+        }
+        p.onUnauthorized = { [weak self] in self?.panel.relayStatus = .unauthorized }
         presence = p
         p.start()
     }

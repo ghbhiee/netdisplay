@@ -494,6 +494,32 @@ case "pair-test":
     }
     dispatchMain()
 
+case "presence-test":
+    // Two presence clients in one room (different deviceIds) against the live relay
+    // (docs/11 §5). Verifies onConnected fires + each learns the other's state.
+    let code = args.str("code", "TEST99")
+    let hash = PairCode.pairHash(fromCode: code) ?? ""
+    let server = args.str("server", "15.tokencv.com:47700")
+    let token = args.flags["token"]
+    var aConnected = false, bConnected = false, aSawPeer = "", bSawPeer = ""
+    let a = PresenceClient(server: server, token: token, pairHash: hash,
+                           deviceId: "presence-A", name: "Alice", state: "recv-waiting")
+    let b = PresenceClient(server: server, token: token, pairHash: hash,
+                           deviceId: "presence-B", name: "Bob", state: "casting")
+    a.onConnected = { ms in aConnected = true; Log.info("presence-test: A connected \(ms)ms") }
+    b.onConnected = { ms in bConnected = true; Log.info("presence-test: B connected \(ms)ms") }
+    a.onPeer = { st in aSawPeer = st; Log.info("presence-test: A sees peer state=\(st)") }
+    b.onPeer = { st in bSawPeer = st; Log.info("presence-test: B sees peer state=\(st)") }
+    a.start()
+    DispatchQueue.global().asyncAfter(deadline: .now() + 0.4) { b.start() }
+    DispatchQueue.global().asyncAfter(deadline: .now() + 2.0) {
+        // A should see B "casting"; B should see A "recv-waiting".
+        let ok = aConnected && bConnected && aSawPeer == "casting" && bSawPeer == "recv-waiting"
+        Log.info("presence-test \(ok ? "PASS" : "FAIL") — aConn=\(aConnected) bConn=\(bConnected) aSaw=\(aSawPeer) bSaw=\(bSawPeer)")
+        exit(ok ? 0 : 1)
+    }
+    dispatchMain()
+
 case "relay-health":
     // Probe relay reachability + token via the self-pair trick (TUN-proof).
     let server = args.str("server", "15.tokencv.com:47700")
