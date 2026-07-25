@@ -86,7 +86,11 @@ enum WindowPicker {
         guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return [] }
         var names: [String] = []
         for w in content.windows where w.isOnScreen && w.frame.width > 200 && w.frame.height > 150 {
-            if let n = w.owningApplication?.applicationName, !names.contains(n) { names.append(n) }
+            // Skip nameless apps: some background/agent windows expose an empty
+            // applicationName, which sorted first → a blank first row in the picker.
+            if let n = w.owningApplication?.applicationName,
+               !n.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+               !names.contains(n) { names.append(n) }
         }
         return names.sorted()
     }

@@ -91,11 +91,11 @@ final class AppModel {
 
     // MARK: - Casting (投射本机)
 
-    /// Can we begin casting? (design 禁用条件: 未选设备 / 正在接收 / 接收服务开着的互斥 /
-    /// 对方离线。) Offline only blocks when presence actually says so (docs/11 §5) —
-    /// until the peer reports presence, casting is allowed.
+    /// Can we begin casting? Only blocked by: no device selected, not standby, or
+    /// the peer explicitly reporting offline. The receive service is **no longer** a
+    /// blocker (user: 接收服务开着不该灰投射) — starting a cast auto-stops it (below).
     var canCast: Bool {
-        guard role == .standby, let d = selected, recvSvc == .off else { return false }
+        guard role == .standby, let d = selected else { return false }
         return peerPresence[d.secret] != "offline"
     }
 
@@ -104,7 +104,10 @@ final class AppModel {
     @discardableResult
     func startCasting() -> Bool {
         guard role == .standby, selected != nil else { return false }
-        guard recvSvc != .waiting else { return false }   // mutex: receiving service on → can't cast
+        // Half-duplex: one pair = one relay room, so we can't receive *and* cast the
+        // same peer at once — and a local receiver on that room would self-pair with
+        // our own sender and steal it. So starting a cast stops the receive service.
+        if recvSvc == .waiting { stopRecvService() }
         role = .switching
         conn = .connecting
         changed()

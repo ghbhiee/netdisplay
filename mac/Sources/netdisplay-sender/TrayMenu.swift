@@ -47,7 +47,7 @@ final class TrayMenu: NSObject, NSMenuDelegate {
             menu.addItem(item("投射（接收中不可用）", nil, enabled: false))
         default:
             if model.canCast { menu.addItem(item("▶ 投射：开始", #selector(startCast))) }
-            else { menu.addItem(item(model.selected == nil ? "投射（先选设备）" : "投射（接收服务开着）", nil, enabled: false)) }
+            else { menu.addItem(item(model.selected == nil ? "投射（先选设备）" : "投射（对方离线）", nil, enabled: false)) }
         }
         switch (model.role, model.recvSvc) {
         case (.casting, _): menu.addItem(item("接收服务（投射中不可用）", nil, enabled: false))
@@ -58,7 +58,7 @@ final class TrayMenu: NSObject, NSMenuDelegate {
 
         // ── 第二节：投射内容（仅投射模式：接收服务关闭、未在接收、已选设备）──
         // 开启接收服务后隐藏投射内容（屏幕/程序），与投射互斥。
-        if model.recvSvc == .off, model.role != .receiving, model.selected != nil {
+        if model.role != .receiving, model.selected != nil {
             menu.addItem(.separator())
             menu.addItem(header("投射内容 · 最近窗口"))
             menu.addItem(item("整块屏幕", #selector(pickSource), checked: model.source.isScreen, obj: "@screen"))
@@ -91,15 +91,16 @@ final class TrayMenu: NSObject, NSMenuDelegate {
             menu.addItem(item("＋ 添加设备…", #selector(addDevice)))
         }
 
-        // ── 第四节：显示（作为显示器时）──
+        // ── 第四节：投射画质 ──
         menu.addItem(.separator())
-        menu.addItem(header("显示（作为显示器时）"))
-        menu.addItem(item("画质设置（主面板）…", #selector(openPanel)))
+        menu.addItem(header("投射画质（投射时实时生效）"))
+        menu.addItem(item("投射画质（主面板）…", #selector(openPanel)))
 
         // ── 尾部 ──
         menu.addItem(.separator())
-        menu.addItem(item("中转设置…", #selector(relaySettings)))
+        if model.hasRelayDevice { menu.addItem(item("中转设置…", #selector(relaySettings))) }
         menu.addItem(item("打开主面板", #selector(openPanel)))
+        menu.addItem(item("关于 / About…", #selector(about)))
         menu.addItem(item("退出 NetDisplay", #selector(quit)))
     }
 
@@ -128,5 +129,15 @@ final class TrayMenu: NSObject, NSMenuDelegate {
     @objc private func addDevice() { onAddDevice?() }
     @objc private func relaySettings() { onRelaySettings?() }
     @objc private func openPanel() { onOpenPanel?() }
+    @objc private func about() {
+        let a = NSAlert()
+        a.messageText = "NetDisplay"
+        a.informativeText = "把另一台电脑当作扩展显示器 / 单窗口投射。\n\n作者：guohongbo\n邮箱：ghbhiee@gmail.com\nGitHub：github.com/ghbhiee/netdisplay"
+        a.addButton(withTitle: "打开 GitHub")
+        a.addButton(withTitle: "关闭")
+        NSApp.activate(ignoringOtherApps: true)
+        if a.runModal() == .alertFirstButtonReturn,
+           let url = URL(string: "https://github.com/ghbhiee/netdisplay") { NSWorkspace.shared.open(url) }
+    }
     @objc private func quit() { NSApp.terminate(nil) }
 }

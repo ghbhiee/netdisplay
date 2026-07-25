@@ -49,10 +49,15 @@ enum UI {
         b.font = .systemFont(ofSize: size, weight: weight)
         b.attributedTitle = NSAttributedString(string: title, attributes: [
             .foregroundColor: textColor, .font: NSFont.systemFont(ofSize: size, weight: weight)])
-        b.layer?.cornerRadius = radius
-        b.layer?.backgroundColor = fill?.cgColor
-        if let border { b.layer?.borderColor = border.cgColor; b.layer?.borderWidth = 1 }
+        // Store the *dynamic* colors and resolve them inside updateLayer (correct
+        // appearance) — assigning .cgColor here freezes a light-appearance snapshot,
+        // which is why dark mode used to render light buttons.
+        b.corner = radius
+        b.fillColor = fill
+        b.borderColor = border
+        b.borderWidth = border == nil ? 0 : 1
         b.target = target; b.action = action
+        b.needsDisplay = true
         return b
     }
 
@@ -84,11 +89,19 @@ final class GenCodeTarget: NSObject {
     @objc func fire() { action() }
 }
 
-/// NSButton that keeps its layer fill on redraw and runs a target/action.
+/// NSButton that re-resolves its fill/border on every draw cycle (so dynamic
+/// Theme colors track light/dark appearance changes) and runs a target/action.
 final class ClosureButton: NSButton {
-    var fillColor: NSColor? { didSet { layer?.backgroundColor = fillColor?.cgColor } }
+    var fillColor: NSColor? { didSet { needsDisplay = true } }
+    var borderColor: NSColor? { didSet { needsDisplay = true } }
+    var borderWidth: CGFloat = 0
+    var corner: CGFloat = 0
+    override var wantsUpdateLayer: Bool { true }
     override func updateLayer() {
         super.updateLayer()
-        if let f = fillColor { layer?.backgroundColor = f.cgColor }
+        layer?.cornerRadius = corner
+        layer?.backgroundColor = fillColor?.cgColor       // resolves under effectiveAppearance
+        layer?.borderColor = borderColor?.cgColor
+        layer?.borderWidth = borderColor == nil ? 0 : borderWidth
     }
 }

@@ -22,7 +22,9 @@ const (
 	unpairedTTL    = 30 * time.Second
 	codeTTL        = 5 * time.Minute
 	idleTTL        = 5 * time.Minute
-	joinPerMinute  = 10
+	joinPerMinute  = 60   // per-room backstop only; client backoff prevents real death-loops.
+	                      // 10 was too low — an actively reconnecting legit pair (session
+	                      // ends → both re-register/join) blew through it and got rate_limited.
 
 	tRegister = 0x40
 	tJoin     = 0x41

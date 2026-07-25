@@ -68,6 +68,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         body.addArrangedSubview(onCastTab ? castPage() : recvPage())
         body.addArrangedSubview(devicesSection())
         body.addArrangedSubview(bottomRow())   // 中转设置 + 主题, side by side
+        body.addArrangedSubview(footer())      // author / github
 
         root.addSubview(body)
         NSLayoutConstraint.activate([
@@ -119,6 +120,19 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let row = UI.hstack([relayBtn, themeBtn], spacing: 8)
         relayBtn.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return wrapFull(row)
+    }
+
+    /// Author / project footer. Click opens the GitHub repo.
+    private func footer() -> NSView {
+        let line1 = UI.label("NetDisplay · 作者 guohongbo · ghbhiee@gmail.com", size: 10, color: Theme.sub, align: .center)
+        let line2 = UI.label("github.com/ghbhiee/netdisplay", size: 10, color: Theme.accent, align: .center)
+        let col = UI.vstack([line1, line2], spacing: 2)
+        col.alignment = .centerX
+        let click = ClickCatcher {
+            if let url = URL(string: "https://github.com/ghbhiee/netdisplay") { NSWorkspace.shared.open(url) }
+        }
+        col.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false; pin(click, to: col)
+        return fullWidthView2(col)
     }
 
     /// Label + colours for the 中转设置 button, reflecting live relay health.
@@ -192,6 +206,10 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
             fullWidth(btn, height: 34, in: col)
             col.addArrangedSubview(centeredHint("把本机画面投给对方当显示器"))
         }
+        // 投射画质 lives here (the sender owns the virtual display + encoder) — it
+        // applies live while casting. Shown in every cast state so it can be changed
+        // mid-stream. (Moved off the receive tab, where resolution was inert.)
+        col.addArrangedSubview(qualitySection())
         return wrapFull(col)
     }
 
@@ -258,8 +276,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let btn = UI.button(label, fill: bg, textColor: fg, border: border, radius: 8,
                             target: self, action: #selector(tapRecvButton))
         fullWidth(btn, height: 34, in: col)
-        col.addArrangedSubview(centeredHint("本机作为对方的扩展显示器"))
-        col.addArrangedSubview(qualitySection())
+        col.addArrangedSubview(centeredHint("本机作为对方的扩展显示器 — 画质由投射方决定"))
         return wrapFull(col)
     }
 
@@ -305,8 +322,8 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let box = RoundedView(fill: nil, stroke: Theme.line, radius: 8)
         let head = RoundedView(fill: Theme.panel2, radius: 0)
         let chev = UI.label(qualityOpen ? "▾" : "▸", size: 11, color: Theme.sub)
-        let title = UI.label("画质设置", size: 13, weight: .semibold)
-        let note = UI.label("作为显示器时生效", size: 11, color: Theme.sub)
+        let title = UI.label("投射画质", size: 13, weight: .semibold)
+        let note = UI.label("投射时实时生效", size: 11, color: Theme.sub)
         let hrow = UI.hstack([chev, title, note, NSView()], spacing: 8)
         embed(hrow, in: head, padX: 12, padY: 10)
         let click = ClickCatcher { [weak self] in self?.qualityOpen.toggle(); self?.rebuild() }
@@ -562,8 +579,14 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {}
 }
 
-/// Top-down coordinate view for the panel body.
-final class FlippedView: NSView { override var isFlipped: Bool { true } }
+/// Top-down coordinate view for the panel body. Paints the panel background via
+/// updateLayer so it re-resolves on light/dark appearance changes (assigning
+/// Theme.panel.cgColor directly froze a light snapshot → broken dark mode).
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
+    override func updateLayer() { layer?.backgroundColor = Theme.panel.cgColor }
+}
 
 /// A transparent overlay that runs a closure on click (for row selection).
 final class ClickCatcher: NSView {
