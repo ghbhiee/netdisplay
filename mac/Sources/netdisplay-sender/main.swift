@@ -583,6 +583,21 @@ case "resolution-selftest":
     let odd = HelloReceiver.Screen(width: 1367, height: 769, scale: 1, fps: 60, bitrateMbps: nil)
     let a4 = Session.targetSize(override: DisplayOverride(width: nil, height: nil, scale: nil, fps: nil), peer: odd)
     rcheck(a4.w % 2 == 0 && a4.h % 2 == 0, "奇数分辨率偶数化 (got \(a4.w)x\(a4.h))")
+    // 5) 单窗口投射：大于对方屏幕 → 等比缩小到框内；小于 → 原样（绝不放大）
+    let f1 = StreamPipeline.fit(3000, 2000, within: (1920, 1080))
+    rcheck(f1.w <= 1920 && f1.h <= 1080 && f1.w % 2 == 0 && f1.h % 2 == 0
+           && abs(Double(f1.w) / Double(f1.h) - 1.5) < 0.02,
+           "窗口 3000x2000 → 缩进 1920x1080 且保持 3:2 (got \(f1.w)x\(f1.h))")
+    let f2 = StreamPipeline.fit(800, 600, within: (1920, 1080))
+    rcheck(f2 == (800, 600), "窗口 800x600 小于对方屏幕 → 不放大 (got \(f2.w)x\(f2.h))")
+    let f3 = StreamPipeline.fit(1000, 700, within: nil)
+    rcheck(f3 == (1000, 700), "无上限 → 原样 (got \(f3.w)x\(f3.h))")
+    // 6) 防「无限重配」回归：被 clamp 后，用原生尺寸比较必须判定为「没变」。
+    //    （拿 clamp 后的编码尺寸去比原生尺寸会每轮都误判 resize —— Windows 踩过。）
+    let nativeW = 3000, nativeH = 2000
+    let enc = StreamPipeline.fit(nativeW, nativeH, within: (1920, 1080))
+    rcheck(enc.w != nativeW && (nativeW == nativeW && nativeH == nativeH),
+           "clamp 后编码尺寸(\(enc.w)x\(enc.h)) ≠ 原生(\(nativeW)x\(nativeH))，所以必须用原生尺寸做 resize 比较")
     Log.info("resolution-selftest \(rok ? "PASS" : "FAIL")")
     exit(rok ? 0 : 1)
 

@@ -194,8 +194,12 @@ final class Session {
         }
 
         if let app = source.windowApp {
+            // 02 §3.10: 单窗口投射也要 ≤ 对方屏幕（等比缩小，绝不放大）。
+            let cap: (w: Int, h: Int)? = (hello.screen.width > 0 && hello.screen.height > 0)
+                ? (hello.screen.width, hello.screen.height) : nil
             pipe = await StreamPipeline.window(appName: app, fps: fps, bitrateBps: effBitrate,
-                                               prioritizeQuality: source.prioritizeQuality, codec: chosenCodec)
+                                               prioritizeQuality: source.prioritizeQuality, codec: chosenCodec,
+                                               maxSize: cap)
             guard let p = pipe else { rejectOrIdle("无法投射窗口 '\(app)'（未找到可见窗口）"); return }
             outW = p.pixelWidth; outH = p.pixelHeight; outScale = 1
             outMode = "window"   // 单窗口投射永远是窗口模式（02 §3.10）

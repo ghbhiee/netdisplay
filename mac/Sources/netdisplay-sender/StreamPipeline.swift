@@ -28,6 +28,14 @@ final class StreamPipeline {
     private var restarting = false
 
     // Window resize-follow.
+    /// The window's **native** pixel size. The resize poll compares against this,
+    /// never against `pixelWidth/Height` — those may be clamped to the peer's screen
+    /// (02 §3.10), and comparing native-vs-clamped makes every poll look like a
+    /// resize and reconfigures the encoder forever.
+    private var srcW = 0
+    private var srcH = 0
+    /// Optional cap = the peer's screen. nil → no clamping (identical to old behaviour).
+    var maxSize: (w: Int, h: Int)?
     private var resizeTimer: DispatchSourceTimer?
     private var reconfiguring = false
     /// Called after the stream size changes (window resize) so the Session can
@@ -86,26 +94,35 @@ final class StreamPipeline {
         }
         let cap = Capture(window: scWindow, pixelWidth: pixelWidth, pixelHeight: pixelHeight,
                           pixelFormat: codec.captureFormat)
-        return StreamPipeline(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps,
-                              bitrateBps: bitrateBps, prioritizeQuality: prioritizeQuality,
-                              codec: codec, encoder: enc, capture: cap, virtualDisplay: nil)
+        let p = StreamPipeline(pixelWidth: pixelWidth, pixelHeight: pixelHeight, fps: fps,
+                               bitrateBps: bitrateBps, prioritizeQuality: prioritizeQuality,
+                               codec: codec, encoder: enc, capture: cap, virtualDisplay: nil)
+        p.srcW = pixelWidth; p.srcH = pixelHeight
+        return p
     }
 
     /// Window-projection mode: capture a single app window (no virtual display).
     static func window(appName: String, fps: Int, bitrateBps: Int,
-                       prioritizeQuality: Bool = false, codec: VideoCodec = .h264) async -> StreamPipeline? {
+                       prioritizeQuality: Bool = false, codec: VideoCodec = .h264,
+                       maxSize: (w: Int, h: Int)? = nil) async -> StreamPipeline? {
         do {
             let r = try await WindowPicker.find(appName: appName)
-            guard let enc = Encoder(width: r.pixelWidth, height: r.pixelHeight, bitrateBps: bitrateBps,
+            // 02 §3.10: never stream a window larger than the peer's screen.
+            let fit = StreamPipeline.fit(r.pixelWidth, r.pixelHeight, within: maxSize)
+            guard let enc = Encoder(width: fit.w, height: fit.h, bitrateBps: bitrateBps,
                                     fps: fps, prioritizeQuality: prioritizeQuality, codec: codec) else {
                 Log.error("failed to create encoder"); return nil
             }
-            let cap = Capture(window: r.window, pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight,
+            let cap = Capture(window: r.window, pixelWidth: fit.w, pixelHeight: fit.h,
                               pixelFormat: codec.captureFormat)
-            Log.info("window projection: '\(appName)' → \(r.pixelWidth)x\(r.pixelHeight)px")
-            return StreamPipeline(pixelWidth: r.pixelWidth, pixelHeight: r.pixelHeight, fps: fps,
+            Log.info("window projection: '\(appName)' → \(r.pixelWidth)x\(r.pixelHeight)px"
+                     + (fit.w != r.pixelWidth || fit.h != r.pixelHeight ? " → 按对方屏幕缩到 \(fit.w)x\(fit.h)" : ""))
+            let p = StreamPipeline(pixelWidth: fit.w, pixelHeight: fit.h, fps: fps,
                                   bitrateBps: bitrateBps, prioritizeQuality: prioritizeQuality,
                                   codec: codec, encoder: enc, capture: cap, virtualDisplay: nil)
+            p.srcW = r.pixelWidth; p.srcH = r.pixelHeight   // resize-follow compares native size
+            p.maxSize = maxSize
+            return p
         } catch {
             Log.error("window projection failed: \(error.localizedDescription)")
             return nil
@@ -205,17 +222,34 @@ final class StreamPipeline {
                     if self.statsEnabled { Log.info("resize-poll: window \(winID) size not found") }
                     return
                 }
-                if w == self.pixelWidth && h == self.pixelHeight { pendingSize = nil; stableCount = 0; return }
+                // Compare against the NATIVE source size, not the (possibly clamped)
+                // encode size — see `srcW/srcH`.
+                if w == self.srcW && h == self.srcH { pendingSize = nil; stableCount = 0; return }
                 // Debounce: require the new size to hold for ~2 polls before reconfiguring.
                 if let p = pendingSize, p == (w, h) { stableCount += 1 } else { pendingSize = (w, h); stableCount = 1 }
                 if stableCount >= 2 {
                     pendingSize = nil; stableCount = 0
-                    await self.reconfigure(width: w, height: h)
+                    self.srcW = w; self.srcH = h
+                    let fit = StreamPipeline.fit(w, h, within: self.maxSize)
+                    await self.reconfigure(width: fit.w, height: fit.h)
                 }
             }
         }
         resizeTimer = t
         t.resume()
+    }
+
+    /// Fit `w×h` inside `box` preserving aspect ratio (02 §3.10: 单窗口投射的编码尺寸
+    /// 不超过对方屏幕). **Never upscales** — a smaller window stays its own size — and
+    /// returns even dimensions (encoder requirement). nil box → unchanged (even-ized).
+    static func fit(_ w: Int, _ h: Int, within box: (w: Int, h: Int)?) -> (w: Int, h: Int) {
+        var ow = w, oh = h
+        if let b = box, b.w > 0, b.h > 0, w > b.w || h > b.h {
+            let s = min(Double(b.w) / Double(w), Double(b.h) / Double(h))   // ≤1: shrink only
+            ow = Int((Double(w) * s).rounded(.down))
+            oh = Int((Double(h) * s).rounded(.down))
+        }
+        return (max(2, ow) & ~1, max(2, oh) & ~1)
     }
 
     private func reconfigure(width: Int, height: Int) async {
