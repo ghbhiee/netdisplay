@@ -310,7 +310,15 @@ async function startSession(sock, receiverHello, relayMode) {
   const bitrate = (receiverHello?.screen?.bitrateMbps || 40) * 1e6; // v1.2：采纳 Receiver 期望码率
   // v1.3/v1.6：按 Receiver 的 codecs 偏好序挑本机能编的（含 WS-5 的 ffmpeg HQ 路径）
   await detectEncodable(sessionOpts.hq !== false, sessionOpts.ffmpegPath);
-  const codecName = negotiateCodec(receiverHello?.codecs);
+  // 投单个窗口时，HQ 路径靠 ffmpeg gdigrab **按窗口标题** 抓——标题带特殊字符、重名、
+  // 会变（浏览器换标签）都会让它抓不到，这就是「选窗口投射没用」。WebCodecs 路径按
+  // 窗口 **id**（稳定句柄）抓，可靠得多。所以窗口源只在 WebCodecs 能编的 codec 里协商、
+  // 强制走基线路径；整块屏幕不受影响，仍可走 HQ 4:2:2。
+  const isWindow = !!(source && source.kind === "window");
+  const codecName = isWindow
+    ? negotiateCodec((receiverHello?.codecs || ["h264"]).filter((c) => webCodecsCaps.includes(c) || c === "h264"))
+    : negotiateCodec(receiverHello?.codecs);
+  if (isWindow) dbg(`窗口投射：走 WebCodecs 基线（gdigrab 按标题不可靠），codec=${codecName}`);
   if (!codecName) {
     sock.write(buildFrame(T.HELLO_ACK, {
       version: 1, accepted: false,
