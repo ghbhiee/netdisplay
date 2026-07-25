@@ -9,7 +9,7 @@
   [data-theme="dark"]{--bg:#141619;--panel:#1F2226;--panel2:#282C31;--text:#E9EBEE;--sub:#98A0A9;--line:#34383E;--accent:#5C88E8;--accent-weak:rgba(92,136,232,.16);--recv:#31BFAD;--recv-weak:rgba(49,191,173,.16);--ok:#3DBE74;--err:#E4655C;--shadow:0 12px 40px rgba(0,0,0,.45)}
   @keyframes nd-pulse{0%,100%{opacity:1}50%{opacity:.35}}
 
-  html,body{margin:0;padding:0;height:100%}
+  html,body{margin:0;padding:0} /* 不撑满窗口：内容多高窗口就多高，别在底部留空 */
   body{
     font-family:"PingFang SC","Microsoft YaHei",system-ui,sans-serif;-webkit-font-smoothing:antialiased;
     background:var(--panel);color:var(--text);font-size:13px;

@@ -272,6 +272,15 @@ ipcMain.on("nd-tray-size", (_e, s) => {
 });
 ipcMain.on("nd-tray-close", () => hideTrayWin());
 
+// 主面板高度跟着内容走：去掉内嵌高级设置后底部空了一块，让窗口贴合内容。
+ipcMain.on("nd-panel-size", (_e, s) => {
+  if (!panelWin || panelWin.isDestroyed() || !s) return;
+  const area = screen.getPrimaryDisplay().workArea;
+  const h = Math.max(360, Math.min(Math.round(s.height), area.height - 40));
+  const [, curH] = panelWin.getContentSize();
+  if (Math.abs(curH - h) > 1) panelWin.setContentSize(430, h);
+});
+
 // 接收窗口的显示/隐藏由引擎的 role 决定：设计要求「对方开始投射自动打开、
 // 断开即关闭」，用户不用管这个窗口。
 ipcMain.on("nd-receive-window", (_e, s) => {

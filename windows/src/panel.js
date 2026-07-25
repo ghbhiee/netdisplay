@@ -140,7 +140,17 @@ function render() {
   renderLocalName();
   renderAdvanced();
   renderModals();
+  reportPanelSize();
 }
+
+// 窗口高度跟着内容走，别在底部留空（去掉高级设置折叠后那块空白）。
+let lastReportedH = 0;
+function reportPanelSize() {
+  const h = Math.ceil(document.body.getBoundingClientRect().height);
+  if (h > 0 && h !== lastReportedH) { lastReportedH = h; ipcRenderer.send("nd-panel-size", { height: h }); }
+}
+// 字体/图片就位后高度会再变一次，ResizeObserver 兜住所有非渲染触发的尺寸变化
+if (window.ResizeObserver) new ResizeObserver(() => reportPanelSize()).observe(document.body);
 
 function renderTabs() {
   const c = $("tabCast"), r = $("tabRecv");
