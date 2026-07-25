@@ -1133,6 +1133,7 @@ function onFrame(type, payload) {
       console.log("[recv] VIDEO_CONFIG: " + payload.toString());
       const c = JSON.parse(payload.toString());
       if (c.codec && CODEC_MAP[c.codec]) sessionCodec = c.codec;
+      if (c.mode && display) display.mode = c.mode === "window" ? "window" : "extend"; // §3.10
       if (c.width && c.height && display) {
         display.width = c.width;
         display.height = c.height;
@@ -1300,7 +1301,11 @@ function layoutCanvas() {
 window.addEventListener("resize", layoutCanvas);
 
 function startStreaming(d) {
-  display = { scale: 1, ...d };
+  // §3.10 呈现模式：extend=对方把本机当扩展屏（原生分辨率铺满/等比黑边）；window=普通窗口。
+  // 缺省/未知一律 extend（老 Sender 不带 mode）。画面一律等比适配，绝不拉伸（见 #stage/layoutCanvas）。
+  display = { scale: 1, mode: "extend", ...d };
+  if (display.mode !== "window" && display.mode !== "extend") display.mode = "extend";
+  console.log(`[recv] 呈现模式 mode=${display.mode} ${display.width}x${display.height}`);
   streaming = true;
   projActive = true; // 老 Sender 默认视为投射中；v1.4 Sender 会立刻发 PROJECTION_STATE 校正
   setIdleUI(false);

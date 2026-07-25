@@ -213,7 +213,8 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
         announced = true;
         const ack = {
           version: 1, accepted: true,
-          display: { width: size.width, height: size.height, fps },
+          // HQ 路径只用于默认整块主屏 → 一律 extend、原生分辨率（§3.10）。
+          display: { width: size.width, height: size.height, fps, mode: "extend" },
           codec: codecName,
         };
         // 不再下发 pairSecret：新模型 secret=配对码房间钥匙，下发会让对端接收侧误覆盖
@@ -305,6 +306,22 @@ async function startHQSession(sock, { fps, bitrate, codecName, relayMode }) {
   };
 }
 
+// docs/02 §3.10 呈现模式：整屏（含指定某块屏/虚拟扩展屏）= extend，单窗口 = window。
+// 未知/缺省一律按 extend（老端兼容）。
+function presentMode(srcKind) { return srcKind === "window" ? "window" : "extend"; }
+// window 模式把编码尺寸 clamp 到不超过对方屏幕：等比缩小、绝不放大、取偶。
+// 只能抓物理屏的 Windows，extend 一律发原生分辨率、不进这里（§3.10：绝不为凑对方分辨率而缩放/放大）。
+function clampWindow(w, h, peer) {
+  const pw = (peer && peer.width) | 0, ph = (peer && peer.height) | 0;
+  let ow = w & ~1, oh = h & ~1;
+  if (pw && ph && (ow > pw || oh > ph)) {
+    const k = Math.min(pw / ow, ph / oh); // k<1：等比缩到两轴都不超；绝不放大
+    ow = Math.max(2, Math.round(ow * k) & ~1);
+    oh = Math.max(2, Math.round(oh * k) & ~1);
+  }
+  return { width: ow, height: oh };
+}
+
 // ---------- 会话 ----------
 async function startSession(sock, receiverHello, relayMode) {
   const fps = Math.min(60, Math.max(30, receiverHello?.screen?.fps || 60));
@@ -344,14 +361,21 @@ async function startSession(sock, receiverHello, relayMode) {
   const reader = processor.readable.getReader();
   const first = await reader.read();
   if (first.done || !first.value) throw new Error("capture produced no frames");
-  let width = first.value.codedWidth & ~1;
-  let height = first.value.codedHeight & ~1;
+  // srcW/srcH = 采集器给的原生尺寸，只用于「源尺寸变了吗」判断；width/height = 实际编码尺寸
+  // （window 模式可能被 clamp 得比源小）。两者分开，否则 clamp 后 fw!==width 永远成立→无限重配。
+  let srcW = first.value.codedWidth & ~1;
+  let srcH = first.value.codedHeight & ~1;
+  let width = srcW;
+  let height = srcH;
 
-  // MVP：display = 实际抓取尺寸（忽略 screen 请求的宽高，已在 91 与 Mac 确认）
+  // §3.10：单窗口 = window（尺寸 clamp≤对方屏幕）；整屏/某块屏 = extend（原生尺寸，不缩放）。
+  const mode = presentMode(src.kind);
+  if (mode === "window") ({ width, height } = clampWindow(width, height, receiverHello?.screen));
+
   const ack = {
     version: 1,
     accepted: true,
-    display: { width, height, fps },
+    display: { width, height, fps, mode },
     codec: codecName, // v1.3/v1.6 协商结果
   };
   // 不再下发 pairSecret（同上：会让对端接收侧覆盖自己的房间 secret）。
@@ -439,15 +463,20 @@ async function startSession(sock, receiverHello, relayMode) {
 
   // WS-3：投射窗口 resize → 重配编码器 + 发 VIDEO_CONFIG + 强制关键帧（02 §5、§10.1-4）
   let reconfiguring = false;
-  async function onSizeChanged(w, h) {
+  async function onSizeChanged(rawW, rawH) {
     if (reconfiguring || stopped) return;
     reconfiguring = true;
     try {
+      // 窗口模式尺寸随之 clamp≤对方屏幕；extend 用原生。mode 不随 resize 变。
+      const { width: w, height: h } = mode === "window"
+        ? clampWindow(rawW, rawH, receiverHello?.screen)
+        : { width: rawW & ~1, height: rawH & ~1 };
       const next = await encoderCfg(w, h);
       if (!next || stopped) return;
       try { await encoder.flush(); } catch {}
       encoder.configure(next);
       spsCache = null; // 新尺寸的参数集会随下一个关键帧重新给出
+      srcW = rawW & ~1; srcH = rawH & ~1; // 记住新的源尺寸，避免同尺寸帧反复触发重配
       width = w; height = h;
       st.width = w; st.height = h; st.resizes = (st.resizes || 0) + 1;
       // 带上 bitrateMbps：协议 §5 的示例含此字段，对端若按示例声明为必需字段，
@@ -455,7 +484,7 @@ async function startSession(sock, receiverHello, relayMode) {
       // 发全字段对双方都更安全。
       sock.write(buildFrame(T.VIDEO_CONFIG, {
         codec: ack.codec, width: w, height: h, fps,
-        bitrateMbps: Math.round(bitrate / 1e6),
+        bitrateMbps: Math.round(bitrate / 1e6), mode,
       }));
       forceKey = true; // Receiver 收到 VIDEO_CONFIG 会重置解码器，必须给关键帧
       dbg("resize ->", w, "x", h);
@@ -480,8 +509,8 @@ async function startSession(sock, receiverHello, relayMode) {
       st.captured++;
       const fw = frame.codedWidth & ~1;
       const fh = frame.codedHeight & ~1;
-      if ((fw !== width || fh !== height) && fw > 0 && fh > 0) {
-        // 窗口被 resize：本帧丢弃，重配后从下一帧的关键帧开始
+      if ((fw !== srcW || fh !== srcH) && fw > 0 && fh > 0) {
+        // 源尺寸变了（窗口 resize）：本帧丢弃，重配后从下一帧的关键帧开始
         st.dropped++;
         frame.close();
         onSizeChanged(fw, fh);
