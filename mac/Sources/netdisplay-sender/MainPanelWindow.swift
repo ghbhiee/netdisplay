@@ -68,7 +68,6 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         body.addArrangedSubview(onCastTab ? castPage() : recvPage())
         body.addArrangedSubview(devicesSection())
         body.addArrangedSubview(bottomRow())   // 中转设置 + 主题, side by side
-        body.addArrangedSubview(footer())      // author / github
 
         root.addSubview(body)
         NSLayoutConstraint.activate([
@@ -120,19 +119,6 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let row = UI.hstack([relayBtn, themeBtn], spacing: 8)
         relayBtn.setContentHuggingPriority(.defaultLow, for: .horizontal)
         return wrapFull(row)
-    }
-
-    /// Author / project footer. Click opens the GitHub repo.
-    private func footer() -> NSView {
-        let line1 = UI.label("NetDisplay · 作者 guohongbo · ghbhiee@gmail.com", size: 10, color: Theme.sub, align: .center)
-        let line2 = UI.label("github.com/ghbhiee/netdisplay", size: 10, color: Theme.accent, align: .center)
-        let col = UI.vstack([line1, line2], spacing: 2)
-        col.alignment = .centerX
-        let click = ClickCatcher {
-            if let url = URL(string: "https://github.com/ghbhiee/netdisplay") { NSWorkspace.shared.open(url) }
-        }
-        col.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false; pin(click, to: col)
-        return fullWidthView2(col)
     }
 
     /// Label + colours for the 中转设置 button, reflecting live relay health.

@@ -38,7 +38,13 @@ final class AppController: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         installEditMenu()
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
-        statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "NetDisplay")
+        if let icon = AppAssets.icon, let small = icon.copy() as? NSImage {
+            small.size = NSSize(width: 18, height: 18)   // the NetDisplay (Windows) logo, colored
+            small.isTemplate = false
+            statusItem.button?.image = small
+        } else {
+            statusItem.button?.image = NSImage(systemSymbolName: "display", accessibilityDescription: "NetDisplay")
+        }
 
         panel = MainPanelWindow(model: model)
         panel.config = config

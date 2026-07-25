@@ -129,15 +129,6 @@ final class TrayMenu: NSObject, NSMenuDelegate {
     @objc private func addDevice() { onAddDevice?() }
     @objc private func relaySettings() { onRelaySettings?() }
     @objc private func openPanel() { onOpenPanel?() }
-    @objc private func about() {
-        let a = NSAlert()
-        a.messageText = "NetDisplay"
-        a.informativeText = "把另一台电脑当作扩展显示器 / 单窗口投射。\n\n作者：guohongbo\n邮箱：ghbhiee@gmail.com\nGitHub：github.com/ghbhiee/netdisplay"
-        a.addButton(withTitle: "打开 GitHub")
-        a.addButton(withTitle: "关闭")
-        NSApp.activate(ignoringOtherApps: true)
-        if a.runModal() == .alertFirstButtonReturn,
-           let url = URL(string: "https://github.com/ghbhiee/netdisplay") { NSWorkspace.shared.open(url) }
-    }
+    @objc private func about() { AboutWindow.show() }
     @objc private func quit() { NSApp.terminate(nil) }
 }

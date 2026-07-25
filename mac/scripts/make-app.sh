@@ -21,6 +21,7 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 [ -f "$BIN" ] || { echo "Binary not found at $BIN"; exit 1; }
 cp "$BIN" "$APP_DIR/Contents/MacOS/netdisplay-sender"
 cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"
+[ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 SIGN_ID="NetDisplay Dev"
 if security find-identity -p codesigning -v 2>/dev/null | grep -q "$SIGN_ID"; then
