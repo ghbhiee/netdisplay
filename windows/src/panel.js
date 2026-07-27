@@ -398,10 +398,13 @@ function renderModals() {
   show($("pairErr"), ui.pairErr || waiting);
   $("pairErr").classList.toggle("err", ui.pairErr && !waiting);
   $("pairErr").textContent = waiting
-    ? "等待对方输入相同的配对码…（关闭可取消）"
+    ? (relayTab ? "等待对方输入相同的配对码…（关闭可取消）"
+                : "正在直连对方…请对方也在「直连」页填你的 IP + 同一个码并点配对（关闭可取消）")
     : (ui.pairMsg || "配对码错误，请核对后重试（6 位字母或数字）");
   $("pairCode").disabled = waiting;
   $("btnGenCode").disabled = waiting;
+  $("pairDirectIp").disabled = waiting;
+  $("pairDirectCode").disabled = waiting;
 
   // 经中转：点配对前先看中转可用性（docs/11 §6 ①）
   let relayReady = true;
@@ -471,11 +474,13 @@ function normCode(s) { return String(s || "").toUpperCase().replace(/[^A-Z0-9]/g
 function submitPair() {
   if (ui.pairing) return; // 已经在等对方了，别重复发
   if (ui.pairTab === "direct") {
-    // 直连配对（PAIR_HELLO）在批二做——同局域网功能，跨网络的用户用不上。
+    // 直连配对（PAIR_HELLO，02 §3.9）：填对方局域网 IP + 双方相同的配对码。
+    // 两端都要在这个页点「配对」（各自武装+互拨），任一方握手先到即成对；3s 超时。
     const ip = ($("pairDirectIp").value || "").trim();
     const code = normCode($("pairDirectCode").value);
     if (!ip || !/^[A-Z0-9]{6}$/.test(code)) { ui.pairErr = true; ui.pairMsg = "直连需要填对方 IP + 6 位配对码"; render(); return; }
-    ui.pairErr = true; ui.pairMsg = "直连配对即将支持（下一版）；跨网络请用「经中转」";
+    cmd("pair-direct", { addr: ip, code });
+    ui.pairing = true; ui.pairErr = false; ui.pairMsg = "";
     render();
     return;
   }

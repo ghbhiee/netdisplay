@@ -29,6 +29,10 @@ const T = {
   // relay 转给对端。用户要的「对方在不在线、接收服务开没开、能不能投」靠它。
   PRESENCE: 0x48, // client→relay {v, pairHash, deviceId, name, state, token}
   PEER_PRESENCE: 0x49, // relay→client {peerDeviceId, peerName, peerState}
+  // 02 §3.9 / docs/11 §6：直连（点对点，不经 relay）配对握手。发起方拨对方 :47800 发
+  // PAIR_HELLO{v,deviceId,name,secret}；对端 47800 响应器「已武装 + secret 匹配」才受理，
+  // 回一帧自己的 PAIR_HELLO{v,deviceId,name}（不带 secret）。secret = 配对码派生（同 §3.7）。
+  PAIR_HELLO: 0x4a, // 双方→对端:47800 {v, deviceId, name, secret?}
 };
 
 const MAX_PAYLOAD = 16 * 1024 * 1024;

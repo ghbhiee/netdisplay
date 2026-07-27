@@ -565,7 +565,9 @@ async function startSession(sock, receiverHello, relayMode) {
 }
 
 // ---------- Receiver 连接处理（直连/中转共用） ----------
-function attachReceiverHandler(sock, relayMode) {
+// initialBuf：dispatch47800 peek 首帧时已从 socket 读走的原始字节，这里原样回灌 parser，
+// 保证被 peek 掉的那帧（及其后续字节）不丢。中转/升级路径不传，行为不变。
+function attachReceiverHandler(sock, relayMode, initialBuf) {
     sock.setNoDelay(true);
     onStatus("Receiver 已连入，握手中…");
     // lanAddrs 直接向主进程要，不依赖调用方传参——有 5 处入口调用 startSender*，
@@ -647,18 +649,71 @@ function attachReceiverHandler(sock, relayMode) {
       onStatus(relayMode ? "Receiver 已断开" : "Receiver 已断开，继续监听…");
     });
     sock.on("error", () => {});
+    // 回灌 peek 掉的首帧字节（含那条 HELLO 本身）。放最后、同步执行——此刻还没回到事件循环，
+    // live "data" 不会插到前面，顺序保持：先处理 initialBuf，再处理后续到达的帧。
+    if (initialBuf && initialBuf.length) {
+      try { parser.feed(initialBuf); } catch (e) { sock.destroy(); }
+    }
+}
+
+// ---------- 直连配对 / 探测：47800 常驻响应器（02 §3.8/§3.9, docs/11 §6）----------
+// 纯网络逻辑（不依赖 electron）抽到 ./direct-pair，便于回环自检。这里只持有武装态 +
+// 注入依赖：HELLO 首帧回落到成熟的 attachReceiverHandler，PAIR_HELLO 成对抛给 renderer。
+let armedSecret = null;    // 武装态：非空且 PAIR_HELLO.secret 与之相等才受理，否则静默拒绝
+let onDirectPaired = null; // 直连成对回调，抛给 renderer 存设备
+const { secretFromCode, makeDispatcher, directPair: dpDirectPair } = require("./direct-pair");
+
+function armDirect(secret) { armedSecret = secret || null; dbg("直连响应器已武装", armedSecret ? "(secret 就绪)" : ""); }
+function disarmDirect() { if (armedSecret) dbg("直连响应器解除武装"); armedSecret = null; }
+
+const dispatch47800 = makeDispatcher({
+  getArmed: () => armedSecret,
+  deviceId: () => deviceId(),
+  name: () => os.hostname(),
+  onHelloSession: (sock, relayMode, initialBuf) => {
+    // 安全门：只有本机确实在投射(allowSessions)或中转会话中(relayActive，供直连升级)时，
+    // 47800 上的 HELLO 才可起会话。idle 常驻响应器一律拒——否则局域网任何人发个 HELLO
+    // 就能把你的屏幕拉去投。
+    if (!allowSessions && !relayActive) { dbg("HELLO@47800 但当前未投射/未升级，拒绝"); try { sock.destroy(); } catch {} return; }
+    attachReceiverHandler(sock, relayMode, initialBuf);
+  },
+  onDirectPaired: (info) => { if (onDirectPaired) { try { onDirectPaired(info); } catch (e) { dbg("onDirectPaired 抛错: " + e.message); } } },
+  dbg,
+});
+
+// 发起方：武装本机 + 拨对方 IP:47800。cb(err|null, {peerDeviceId,peerName,addr,secret})。
+function directPair({ ip, code }, cb) {
+  const secret = secretFromCode(code);
+  armDirect(secret); // 本机也武装：对端拨过来时我方能受理
+  dpDirectPair({ ip, code, deviceId: deviceId(), name: os.hostname() }, cb);
 }
 
 // ---------- 对外：直连模式（监听 47800） ----------
-async function startSender(statusCb) {
+// allowSessions：47800 上的 HELLO 是否可以起投射会话。**只有本机确实在投射/升级时才为 true**——
+// 否则常驻响应器会让任何知道你 IP 的局域网机器发个 HELLO 就把你屏幕拉走投出去（安全回归）。
+// idle 时 allowSessions=false：PROBE 照回、PAIR_HELLO 走武装校验，但 HELLO 一律拒。
+let allowSessions = false;
+
+// 仅确保 47800 监听存在（幂等）。不改 allowSessions。
+function openListener(statusCb) {
+  if (statusCb) onStatus = statusCb;
   if (server) return;
-  onStatus = statusCb || (() => {});
   // 顶替旧会话的时机放在收到 HELLO 之后（见 attachReceiverHandler），不能放在这里：
-  // 连接升级时对端只是**探测**，一连上就杀掉中转会话的话，对端还没切过来就先断了，
-  // 表现为「升级成功但 recv=0」。
-  server = net.createServer((sock) => attachReceiverHandler(sock, false));
+  // 连接升级时对端只是**探测**，一连上就杀掉中转会话的话，对端还没切过来就先断了。
+  server = net.createServer((sock) => dispatch47800(sock, false));
   server.listen(47800, () => onStatus("发送端就绪：监听 :47800，等待 Receiver 连入"));
   server.on("error", (e) => { onStatus("监听失败: " + e.message); server = null; });
+}
+
+async function startSender(statusCb) { // 直连投射意图：开监听 + 允许会话
+  allowSessions = true;
+  openListener(statusCb || (() => {}));
+}
+
+// 常驻 47800 响应器：app 一起来就开，供直连「配对握手 / 探测」（idle 也能被拨），但**不允许起会话**。
+// 端口被占（多开）→ server.on("error") 置 null，不影响其余功能。幂等：已开就复用。
+async function startDirectResponder() {
+  try { openListener(() => {}); } catch (e) { dbg("常驻 47800 未能开启:", e && e.message); }
 }
 
 // ---------- 中转模式（WS-2）：REGISTER → PAIRED → 同一会话逻辑 ----------
@@ -685,7 +740,7 @@ let relayCurSock = null;
 let relayTimer = null;
 
 async function startSenderRelay(statusCb, opts = {}) {
-  if (relayActive || server) return;
+  if (relayActive) return; // 注意：不能再判 server——常驻响应器让 server 恒非空
   onStatus = statusCb || (() => {});
   sessionOpts = { ...sessionOpts, ...opts };
   relayActive = true;
@@ -766,10 +821,11 @@ async function startSenderRelay(statusCb, opts = {}) {
 
 function stopSender() {
   relayActive = false;
+  allowSessions = false; // 停投射：47800 回到 idle 响应器（PROBE/PAIR_HELLO），不再起会话
   clearTimeout(relayTimer);
   if (relayCurSock) { try { relayCurSock.destroy(); } catch {} relayCurSock = null; }
   if (active) { active.stop(); active = null; }
-  if (server) { try { server.close(); } catch {} server = null; }
+  // 不关 server：常驻响应器保留，供直连配对/探测在 idle 时仍可用（§3.9/§6）。
   onStatus("发送端已停止");
 }
 
@@ -791,6 +847,12 @@ module.exports = {
   listSources, // WS-3：可投射的屏幕/窗口列表
   setSource, // WS-3：选择投射源（null = 主屏），下次会话生效
   requireWindow, // WS-3：声明必须投某窗口，找不到就报错而非退回整屏
-  isSending: () => !!server || relayActive,
+  isSending: () => allowSessions || relayActive, // 常驻响应器让 server 恒非空，不能再拿它判在不在投
   setPeerHelloHandler: (fn) => { onPeerHello = fn; }, // A 位时对端 HELLO 的出口
+  // 直连配对（02 §3.9, docs/11 §6）
+  startDirectResponder,                                  // 常驻 47800（idle 也能被拨）
+  armDirect, disarmDirect,                               // 武装/解除（点配对/关弹窗）
+  directPair,                                            // 发起方：武装+拨对方
+  secretFromCode,                                        // 配对码→secret（自检/renderer 共用）
+  setDirectPairedHandler: (fn) => { onDirectPaired = fn; }, // 受理方成对出口
 };

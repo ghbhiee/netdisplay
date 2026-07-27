@@ -371,13 +371,17 @@ async function handleCmd(m) {
     }
     case "pair":
       return doPair(m.code, m.addr);
-    case "pair-cancel": // 关窗/取消：停 announce、什么都不存
-      return cancelPendingPair();
+    case "pair-direct": // 直连配对：对方 IP + 配对码（02 §3.9, docs/11 §6）
+      return doPairDirect(m.addr, m.code);
+    case "pair-cancel": // 关窗/取消：停 announce、解除武装、什么都不存
+      cancelPendingPair();
+      cancelDirectPair();
+      return;
     case "refresh-device": { // ⟳ 手动刷新（docs/11 §6 ④）
       const d = deviceById(m.id || selectedId);
       if (!d) return;
       if (deviceTransport(d) === "relay") { startPresence(); toast("正在刷新中转状态…"); }
-      else toast("直连设备刷新（DirectProbe）待批二实现");
+      else directProbe(d); // 直连设备：实时 PROBE 探对方 :47800 是否可达
       return;
     }
     case "pick-source":
@@ -509,6 +513,86 @@ function confirmPending(info) {
   startPresence(); // 配对成功即开始互报状态
   ipcRenderer.send("nd-pair-done", { ok: true });
   toast(`已与「${deviceLabel(dev)}」配对成功`);
+}
+
+// ===== 直连配对（对方 IP + 配对码，不经 relay；02 §3.9, docs/11 §6）=====
+// 两端各自「武装本机 47800 + 拨对方 IP」，任一方 PAIR_HELLO 先到即成对（武装校验保证只有
+// 输了同一个码的两台才成得了）。发起方在回调里存设备；被对方拨中则走 onDirectPaired。
+let directPairing = null; // { cancelled, id }
+
+function deviceIdFromSecret(secret) {
+  return "pair-" + nodeCrypto.createHash("sha256").update(secret).digest("hex").slice(0, 12);
+}
+
+function cancelDirectPair() {
+  if (directPairing) directPairing.cancelled = true;
+  directPairing = null;
+  sender.disarmDirect(); // 关弹窗立即解除武装（别人知道 IP 也配不上）
+}
+
+function doPairDirect(addr, code) {
+  const clean = normalizeCode(code);
+  const ip = (addr || "").trim();
+  if (!ip) return ipcRenderer.send("nd-pair-done", { ok: false, message: "请填对方局域网 IP" });
+  if (!codeValid(clean)) return ipcRenderer.send("nd-pair-done", { ok: false, message: "配对码格式不对（6 位字母或数字）" });
+  const secret = sender.secretFromCode(clean);
+  const id = deviceIdFromSecret(secret);
+  directPairing = { cancelled: false, id };
+  // sender.directPair 会先武装本机（对端拨过来也能受理），再拨对方；3s 超时。
+  sender.directPair({ ip, code: clean }, (err, res) => {
+    if (!directPairing || directPairing.cancelled) return;
+    if (err) return ipcRenderer.send("nd-pair-done", { ok: false, message: "直连配对失败：" + err.message });
+    storeDirectDevice({ peerDeviceId: res.peerDeviceId, peerName: res.peerName, addr: ip, secret });
+  });
+}
+
+// 统一存直连设备（发起方回调 / 被拨受理 都走这里，按 id 幂等）。
+function storeDirectDevice({ peerDeviceId, peerName, addr, secret }) {
+  const id = deviceIdFromSecret(secret);
+  let dev = deviceById(id);
+  if (!dev) {
+    dev = { id, secret, name: "", alias: null, online: true, addr: addr || null,
+      pairStatus: "paired", peerDeviceId: peerDeviceId || null, transport: "direct" };
+    devices.push(dev);
+  } else {
+    // 已存在（曾中转配过 / 另一方向刚成对）：补直连信息，不建重复记录。
+    dev.transport = "direct";
+    if (addr) dev.addr = addr;
+    if (peerDeviceId) dev.peerDeviceId = peerDeviceId;
+  }
+  if (peerName && !dev.alias) dev.name = String(peerName).slice(0, 40);
+  saveDevices(devices);
+  selectedId = dev.id;
+  localStorage.setItem("selectedId", dev.id);
+  role.clearPairing();
+  if (peerDeviceId) role.rememberPeer(peerDeviceId);
+  cancelDirectPair(); // 成对即解除武装、清进行态
+  pushState();
+  ipcRenderer.send("nd-pair-done", { ok: true });
+  toast(`已与「${deviceLabel(dev)}」直连配对成功`);
+}
+
+// 被对方拨中并通过武装校验 → sender 抛这里存设备（受理方分支）。
+sender.setDirectPairedHandler((info) => {
+  try { storeDirectDevice(info); } catch (e) { console.log("[recv] storeDirectDevice 抛错: " + e.message); }
+});
+
+// 直连设备刷新：向对方 addr:47800 发 PROBE，收到回显即「可达」（判据是回显，不是 connect，TUN 会骗）。
+function directProbe(d) {
+  if (!d || !d.addr) return toast("这台直连设备还没记录对方 IP");
+  toast("正在探测直连…");
+  const echo = nodeCrypto.randomBytes(8);
+  const t0 = performance.now();
+  let done = false;
+  const sock = net.createConnection(47800, d.addr, () => { sock.setNoDelay(true); sock.write(buildFrame(T.PROBE, echo)); });
+  const finish = (ok) => {
+    if (done) return; done = true; clearTimeout(timer); try { sock.destroy(); } catch {}
+    toast(ok ? `直连可达 · ${Math.round(performance.now() - t0)}ms` : "直连不可达（对方不在同一局域网或未开）");
+  };
+  const parser = new FrameParser((t, pl) => { if (t === T.PROBE_ACK && Buffer.from(pl).equals(echo)) finish(true); });
+  sock.on("data", (b) => { try { parser.feed(b); } catch {} });
+  sock.on("error", () => finish(false));
+  const timer = setTimeout(() => finish(false), 2000);
 }
 
 // A 位（监听/注册）时，对端 HELLO 只到 sender.js，renderer 的 onFrame 看不到。
@@ -1549,6 +1633,9 @@ window.addEventListener("keyup", (e) => {
   // 所以列表里的设备都是已确认的，没有「半途未确认」要续。方向由用户显式选。
   // 但 presence 要开：用户要能一眼看到对方在不在线、接收服务开没开。
   if (!isCliRun(a) && selectedDevice()) startPresence();
+  // 常驻 47800 直连响应器：app 一起来就监听，这样 idle 时也能被对方拨来配对/探测/投射
+  // （§3.9/§6）。端口被占（多开）自动放弃、不影响其余功能。
+  if (!isCliRun(a)) sender.startDirectResponder();
   if (a.exitAfter) {
     setTimeout(() => {
       const t = stats.total;
