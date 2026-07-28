@@ -56,6 +56,18 @@ function setIdleUI(idle, label) {
   else sl.style.display = "none";
 }
 
+// 投射方停止/离开 → **关掉接收画面窗口 + 清掉最后一帧**。绝不留冻结旧帧——那比空窗更误导，
+// 画面还在会让人以为还连着（用户当初就是把「投射方停止、对方窗口不关」当 bug 报的，
+// docs/11「投射停→对方窗口关」；Mac 接收端 onStreamEnded 也是 closeWindow+回待命）。
+// 接收服务保持等待：对方再投时 VIDEO_FRAME/PROJECTION_STATE 会 win-show 自动把窗口重开。
+function receiveStandby() {
+  projActive = false;
+  canvas.width = 300; canvas.height = 150; // 重设尺寸即清空画布，丢掉旧帧
+  setIdleUI(false); // 窗口要隐藏了，不必再显示「等待投射」覆盖层
+  if (uiRole === "receiving") setRole("standby");
+  ipcRenderer.send("nd-receive-window", { show: false }); // 隐藏（关闭）接收窗口
+}
+
 function sendControl(action) {
   if (sock && !sock.destroyed) sock.write(buildFrame(T.CONTROL, { action }));
 }
@@ -1203,12 +1215,10 @@ function onFrame(type, payload) {
         setRole("receiving"); // 有画面了 → 接收窗口自动出来
         ipcRenderer.send("win-show"); // 投射来了自动显示到前台
       } else {
-        setIdleUI(true);
         waitingKey = true; // 下次恢复必从关键帧开始
-        // 对方点了停止 → **接收窗口要关掉**，不能留一个空窗杵在那（用户提的）。
-        // 但接收服务继续退避等着：对方再开投，PROJECTION_STATE/首帧会把窗口重开。
-        // 用户主动关那个窗口 = 停接收服务（见 winClose → drop-stream）。
-        if (uiRole === "receiving") setRole("standby");
+        // 对方点了停止 → 关掉接收窗口、清掉画面（不能留冻结帧）。接收服务继续等着：
+        // 对方再开投，PROJECTION_STATE/首帧会把窗口重开。用户主动关窗 = 停服务（winClose→drop-stream）。
+        receiveStandby();
       }
       break;
     }
@@ -1252,6 +1262,7 @@ function onFrame(type, payload) {
       // 对端也 join 不进来。用户现场 netdisplay.log 就是这个死循环。
       if (r === "code_not_found" && recvSvc === "waiting" && !manualDisconnect) {
         teardown(null, true);
+        receiveStandby(); // 对方离开房间(停投) → 关接收窗口+清冻结帧，别留死图
         setStatus("等待对方开始投射…");
         scheduleReconnect("等待对方开始投射", 2000);
         return;
@@ -1259,6 +1270,7 @@ function onFrame(type, payload) {
       // 已经被限流：退避到 60s 起，别火上浇油。
       if (r === "rate_limited" && recvSvc === "waiting" && !manualDisconnect) {
         teardown(null, true);
+        receiveStandby(); // 同上：别在 60s 退避里留一张冻结帧
         setStatus("中转繁忙，稍后自动重试…");
         scheduleReconnect("中转繁忙", 60000);
         return;
@@ -1460,7 +1472,9 @@ function teardown(reason, silent) {
     hint.style.display = "none";
     $("toolbar").style.display = "none";
     setIdleUI(false);
+    canvas.width = 300; canvas.height = 150; // 清掉旧帧，断开也别留冻结画面
     ipcRenderer.send("set-fullscreen", false);
+    ipcRenderer.send("nd-receive-window", { show: false }); // 断开 → 关接收窗口
     if (reason) setStatus(reason, true);
     // 画面没了就不再是 receiving。casting 不受影响——那是发送侧的事。
     if (uiRole === "receiving") setRole("standby");
