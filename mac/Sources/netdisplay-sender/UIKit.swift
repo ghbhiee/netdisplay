@@ -25,6 +25,18 @@ final class RoundedView: NSView {
     override var wantsUpdateLayer: Bool { true }
 }
 
+extension NSView {
+    /// Tag a control with a stable accessibility identifier so external drivers can
+    /// find it by name instead of by screen coordinates (docs/30-ax-conventions.md).
+    /// Returns self so it chains: `UI.button(...).ax("cast.start")`.
+    @discardableResult
+    func ax(_ id: String, label: String? = nil) -> Self {
+        setAccessibilityIdentifier(id)
+        if let label { setAccessibilityLabel(label) }
+        return self
+    }
+}
+
 enum UI {
     static func label(_ text: String, size: CGFloat, weight: NSFont.Weight = .regular,
                       color: NSColor = Theme.text, align: NSTextAlignment = .left) -> NSTextField {

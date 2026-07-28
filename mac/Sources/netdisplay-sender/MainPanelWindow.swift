@@ -105,7 +105,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
 
     private func bottomRow() -> NSView {
         let themeBtn = UI.button("◐ 主题", fill: Theme.panel2, textColor: Theme.sub, border: Theme.line,
-                                 radius: 6, size: 12, weight: .regular, target: self, action: #selector(toggleTheme))
+                                 radius: 6, size: 12, weight: .regular, target: self, action: #selector(toggleTheme)).ax("theme.toggle")
         themeBtn.translatesAutoresizingMaskIntoConstraints = false
         themeBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
@@ -120,7 +120,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
 
         let (label, fg, border) = relayButtonStyle()
         let relayBtn = UI.button(label, fill: .clear, textColor: fg, border: border, radius: 6,
-                                 size: 12, weight: .regular, target: self, action: #selector(tapRelaySettings))
+                                 size: 12, weight: .regular, target: self, action: #selector(tapRelaySettings)).ax("relay.settings")
         relayBtn.translatesAutoresizingMaskIntoConstraints = false
         relayBtn.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
@@ -145,9 +145,9 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     private func modeSwitch() -> NSView {
         let holder = RoundedView(fill: Theme.panel2, radius: 8)
         let cast = segButton("投射本机", active: onCastTab, activeBg: Theme.accentWeak, activeFg: Theme.accent,
-                             dot: model.role == .casting, action: #selector(tapCastTab))
+                             dot: model.role == .casting, action: #selector(tapCastTab)).ax("tab.cast")
         let recv = segButton("接收显示", active: !onCastTab, activeBg: Theme.recvWeak, activeFg: Theme.recv,
-                             dot: model.role == .receiving || model.recvSvc == .waiting, action: #selector(tapRecvTab))
+                             dot: model.role == .receiving || model.recvSvc == .waiting, action: #selector(tapRecvTab)).ax("tab.recv")
         let row = UI.hstack([cast, recv], spacing: 0)
         row.distribution = .fillEqually
         row.translatesAutoresizingMaskIntoConstraints = false
@@ -197,6 +197,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
             btn.attributedTitle = NSAttributedString(string: "开始投射", attributes: [
                 .foregroundColor: enabled ? NSColor.white : Theme.sub,
                 .font: NSFont.systemFont(ofSize: 13, weight: .semibold)])
+            btn.ax("cast.start")
             fullWidth(btn, height: 34, in: col)
             col.addArrangedSubview(centeredHint("把本机画面投给对方当显示器"))
         }
@@ -214,7 +215,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let s = UI.label("来源：\(sourceName())", size: 11, color: Theme.sub)
         let textCol = UI.vstack([t, s], spacing: 2)
         let stop = UI.button("停止", fill: .clear, textColor: Theme.err, border: Theme.err, radius: 6,
-                             size: 12, target: self, action: #selector(tapStopCast))
+                             size: 12, target: self, action: #selector(tapStopCast)).ax("cast.stop")
         stop.translatesAutoresizingMaskIntoConstraints = false
         stop.heightAnchor.constraint(equalToConstant: 26).isActive = true
         stop.widthAnchor.constraint(greaterThanOrEqualToConstant: 54).isActive = true
@@ -275,7 +276,8 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let ck = UI.label(selected ? "✓" : "", size: 12, color: Theme.accent)
         let inner = UI.hstack([ic, nm, NSView(), ds, ck], spacing: 9)
         embed(inner, in: row, padX: 10, padY: 7)
-        let click = ClickCatcher { [weak self] in self?.model.setSource(tag == "@screen" ? .screen : .window(tag)) }
+        let click = ClickCatcher({ [weak self] in self?.model.setSource(tag == "@screen" ? .screen : .window(tag)) },
+                                 label: "投射源 \(name)", id: "source.row.\(tag)")
         row.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false
         pin(click, to: row)
         return fullWidthView(row)
@@ -298,7 +300,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         // service button (four states)
         let (label, fg, bg, border) = recvButtonStyle()
         let btn = UI.button(label, fill: bg, textColor: fg, border: border, radius: 8,
-                            target: self, action: #selector(tapRecvButton))
+                            target: self, action: #selector(tapRecvButton)).ax("recv.toggle")
         fullWidth(btn, height: 34, in: col)
         col.addArrangedSubview(centeredHint("本机作为对方的扩展显示器 — 画质由投射方决定"))
         return wrapFull(col)
@@ -424,7 +426,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
             UI.label("已配对设备", size: 12, weight: .semibold, color: Theme.sub),
             NSView(),
             UI.button("＋ 添加设备", fill: .clear, textColor: Theme.accent, radius: 6, size: 12,
-                      weight: .regular, target: self, action: #selector(tapAddDevice)),
+                      weight: .regular, target: self, action: #selector(tapAddDevice)).ax("device.add"),
         ], spacing: 6)
         let col = UI.vstack([header], spacing: 8)
         if model.devices.isEmpty {
@@ -464,6 +466,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
             refreshTargets.append(t)
             let refresh = UI.button("⟳", fill: .clear, textColor: Theme.sub, border: Theme.line, radius: 5,
                                     size: 12, weight: .regular, target: t, action: #selector(GenCodeTarget.fire))
+                .ax("device.refresh", label: "刷新 \(d.displayName) 的状态")
             refresh.translatesAutoresizingMaskIntoConstraints = false
             refresh.widthAnchor.constraint(equalToConstant: 26).isActive = true
             refresh.heightAnchor.constraint(equalToConstant: 22).isActive = true
@@ -474,7 +477,8 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         // Row-click selects — but only overlay the catcher on *unselected* rows, so it
         // doesn't sit on top of the selected row's ⟳ button and swallow its taps.
         if !selected {
-            let click = ClickCatcher { [weak self] in self?.model.select(secret: d.secret) }
+            let click = ClickCatcher({ [weak self] in self?.model.select(secret: d.secret) },
+                                     label: "选择设备 \(d.displayName)", id: "device.row.\(d.axKey)")
             row.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false; pin(click, to: row)
         }
         return fullWidthView(row)
@@ -613,11 +617,25 @@ final class FlippedView: NSView {
 }
 
 /// A transparent overlay that runs a closure on click (for row selection).
+///
+/// **AX-first**: a bare NSView with `mouseDown` is invisible to the Accessibility
+/// API — an external driver can see the row's text but has no way to *activate* it,
+/// so the only option left is clicking raw screen coordinates. Declaring ourselves a
+/// button with a stable identifier and implementing `accessibilityPerformPress`
+/// makes the row semantically pressable (see docs/30-ax-conventions.md).
 final class ClickCatcher: NSView {
     private let onClick: () -> Void
-    init(_ onClick: @escaping () -> Void) { self.onClick = onClick; super.init(frame: .zero) }
+    init(_ onClick: @escaping () -> Void, label: String = "", id: String = "") {
+        self.onClick = onClick
+        super.init(frame: .zero)
+        setAccessibilityElement(true)
+        setAccessibilityRole(.button)
+        if !label.isEmpty { setAccessibilityLabel(label) }
+        if !id.isEmpty { setAccessibilityIdentifier(id) }
+    }
     required init?(coder: NSCoder) { fatalError() }
     override func mouseDown(with event: NSEvent) { onClick() }
+    override func accessibilityPerformPress() -> Bool { onClick(); return true }
 }
 
 private extension NSWindow {

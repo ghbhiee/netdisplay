@@ -38,6 +38,14 @@ struct PairedDevice: Codable, Equatable {
     /// Relay room key derived from the secret.
     var pairHash: String? { PairStore.pairHash(fromSecret: secret) }
 
+    /// Stable, non-secret key for accessibility identifiers (`device.row.<axKey>`).
+    /// Uses the pairing code when known, else a short device-id prefix — **never the
+    /// secret**, since AX identifiers are readable by any process.
+    var axKey: String {
+        if !code.isEmpty { return code }
+        return String(deviceId.replacingOccurrences(of: "pending:", with: "").prefix(8))
+    }
+
     /// True until the first projection's HELLO tells us the peer's real id/name.
     var nameKnown: Bool { !name.isEmpty }
 }
