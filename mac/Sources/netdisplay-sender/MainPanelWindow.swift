@@ -234,7 +234,11 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         } else if appList.isEmpty {
             col.addArrangedSubview(UI.label("没有可投的程序窗口（最小化的窗口不会列出）", size: 11, color: Theme.sub))
         }
-        for app in appList.prefix(8) {
+        // Show every projectable window. This used to be capped at prefix(8), which
+        // silently made the 9th-onward app unselectable — the list is alphabetical,
+        // so whether you could project an app depended on its name. The panel lives
+        // in a scroll view, so a long list is fine.
+        for app in appList {
             col.addArrangedSubview(sourceRow(icon: "🪟", name: app, desc: "程序窗口",
                                              selected: model.source == .window(app), tag: app))
         }
