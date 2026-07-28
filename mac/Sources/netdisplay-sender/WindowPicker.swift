@@ -82,8 +82,20 @@ enum WindowPicker {
     }
 
     /// Distinct app names that currently have an on-screen window (for menus).
+    /// True when the last `projectableApps()` call failed because macOS denied
+    /// Screen Recording. Without this the UI can't tell "no windows are open" from
+    /// "we're not allowed to look" — both used to render as an empty list, which
+    /// sent us chasing the wrong bug after a code-signing change invalidated the
+    /// TCC grant.
+    private(set) static var screenRecordingDenied = false
+
     static func projectableApps() async -> [String] {
-        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else { return [] }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true) else {
+            screenRecordingDenied = true
+            Log.error("projectableApps: SCShareableContent 失败 —— 多半是没有「屏幕录制」权限（换过签名身份后旧授权会失效）")
+            return []
+        }
+        screenRecordingDenied = false
         var names: [String] = []
         for w in content.windows where w.isOnScreen && w.frame.width > 200 && w.frame.height > 150 {
             // Skip nameless apps: some background/agent windows expose an empty

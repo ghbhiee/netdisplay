@@ -47,6 +47,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel.onAddDevice = { [weak self] in self?.addDevice() }
         panel.onRelaySettings = { [weak self] in self?.editRelaySettings() }
         panel.onRefreshDevice = { [weak self] d in self?.refreshDevice(d) }
+        panel.onNeedAppList = { [weak self] in self?.refreshAppList() }
         panel.onConfigChange = { [weak self] cfg in
             self?.config = cfg
             self?.sender.update(cfg)   // persists + applies live if streaming

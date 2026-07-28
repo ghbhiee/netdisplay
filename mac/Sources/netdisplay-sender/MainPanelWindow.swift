@@ -22,6 +22,13 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
     /// Called when the user taps ⟳ on a device row — re-probe its status now
     /// (relay presence reconnect / direct realtime probe).
     var onRefreshDevice: ((PairedDevice) -> Void)?
+    /// Called whenever the projectable-window list needs to be current: opening the
+    /// panel, or switching to the cast tab. The list used to be captured **once** at
+    /// launch, so windows opened later never showed up — and worse, if Screen
+    /// Recording wasn't granted yet at launch, the list stayed empty forever even
+    /// after the user granted it (it looked like "there are no windows", not
+    /// "permission missing").
+    var onNeedAppList: (() -> Void)?
     private var refreshTargets: [GenCodeTarget] = []   // retain per-row refresh closures
 
     private let W: CGFloat = 430
@@ -45,6 +52,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
             w.backgroundColor = Theme.panel
             window = w
         }
+        onNeedAppList?()          // re-enumerate windows every time the panel opens
         rebuild()
         window?.center()
         window?.makeKeyAndOrderFront(nil)
@@ -219,11 +227,41 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let col = UI.vstack([], spacing: 5)
         col.addArrangedSubview(sourceRow(icon: "🖥", name: "整块屏幕", desc: "作为对方的第二显示器",
                                          selected: model.source.isScreen, tag: "@screen"))
+        // Never render "no windows" when the truth is "not allowed to look".
+        if WindowPicker.screenRecordingDenied {
+            col.addArrangedSubview(permissionNotice())
+        } else if appList.isEmpty {
+            col.addArrangedSubview(UI.label("没有可投的程序窗口（最小化的窗口不会列出）", size: 11, color: Theme.sub))
+        }
         for app in appList.prefix(8) {
             col.addArrangedSubview(sourceRow(icon: "🪟", name: app, desc: "程序窗口",
                                              selected: model.source == .window(app), tag: app))
         }
         return wrapFull(col)
+    }
+
+    /// Shown in place of the window list when Screen Recording is denied, with a
+    /// one-click jump to the exact settings pane.
+    private func permissionNotice() -> NSView {
+        let box = RoundedView(fill: nil, stroke: Theme.err, radius: 7)
+        let t = UI.label("需要「屏幕录制」权限才能列出窗口", size: 12, color: Theme.err)
+        let s = UI.label("换过签名的新版本要重新授权；授权后回到本面板会自动重新检测", size: 11, color: Theme.sub)
+        s.lineBreakMode = .byWordWrapping; s.maximumNumberOfLines = 2
+        let openBtn = UI.button("去设置", fill: Theme.accent, textColor: .white, radius: 6, size: 12,
+                                weight: .regular, target: self, action: #selector(openScreenRecordingSettings))
+        openBtn.translatesAutoresizingMaskIntoConstraints = false
+        openBtn.widthAnchor.constraint(equalToConstant: 68).isActive = true
+        openBtn.heightAnchor.constraint(equalToConstant: 26).isActive = true
+        let col = UI.vstack([t, s], spacing: 2)
+        let row = UI.hstack([col, NSView(), openBtn], spacing: 10)
+        embed(row, in: box, padX: 10, padY: 8)
+        return fullWidthView(box)
+    }
+
+    @objc private func openScreenRecordingSettings() {
+        if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture") {
+            NSWorkspace.shared.open(u)
+        }
     }
 
     private func sourceRow(icon: String, name: String, desc: String, selected: Bool, tag: String) -> NSView {
@@ -542,7 +580,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
 
     // MARK: - Actions
 
-    @objc private func tapCastTab() { onCastTab = true; rebuild() }
+    @objc private func tapCastTab() { onCastTab = true; onNeedAppList?(); rebuild() }
     @objc private func tapRecvTab() { onCastTab = false; rebuild() }
     @objc private func tapStartCast() { model.beginCast() }
     @objc private func tapStopCast() { model.stopCasting() }
