@@ -519,8 +519,14 @@ func pair(key string, sender, receiver net.Conn) {
 			}
 		}
 	}
-	go pipe(sender, receiver, "S→R", &bytesSR)
-	go pipe(receiver, sender, "R→S", &bytesRS)
+	// pipe(dst, src, ...) — so the goroutine that carries sender→receiver must have
+	// dst=receiver, src=sender. These two were swapped, which made the log report
+	// the video stream under "R→S" (i.e. it looked like the *receiver* was sending
+	// 8 MB). Same for firstClose. Purely a logging-direction bug — bytes were always
+	// forwarded correctly — but it sent us down the wrong path more than once while
+	// diagnosing the "second cast fails" issue.
+	go pipe(receiver, sender, "S→R", &bytesSR)
+	go pipe(sender, receiver, "R→S", &bytesRS)
 	first := <-done
 	sender.Close()
 	receiver.Close()
