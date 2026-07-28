@@ -1,13 +1,17 @@
 #!/usr/bin/env bash
-# One-time: create a STABLE self-signed code-signing identity "NetDisplay Dev"
-# in the login keychain. A stable identity gives the signature a stable
-# Designated Requirement, so macOS keeps the Screen-Recording TCC grant across
-# rebuilds (otherwise you'd re-authorize every build).
+# One-time: create the STABLE self-signed code-signing identity "Hongbo Dev" in
+# the login keychain. A stable identity gives the signature a stable Designated
+# Requirement, so macOS keeps the Screen-Recording TCC grant across rebuilds
+# (otherwise you'd re-authorize every build).
+#
+# "Hongbo Dev" is SHARED across this author's local apps — one identity for all
+# of them — which is why the name isn't project-specific. It replaced the older
+# per-project "NetDisplay Dev".
 #
 # Run once:  bash scripts/setup-signing.sh
 set -euo pipefail
 
-NAME="NetDisplay Dev"
+NAME="Hongbo Dev"
 KEYCHAIN="$HOME/Library/Keychains/login.keychain-db"
 
 if security find-identity -p codesigning -v 2>/dev/null | grep -q "$NAME"; then
@@ -25,7 +29,7 @@ distinguished_name = dn
 x509_extensions = v3
 prompt = no
 [dn]
-CN = NetDisplay Dev
+CN = Hongbo Dev
 [v3]
 basicConstraints = critical,CA:false
 keyUsage = critical,digitalSignature

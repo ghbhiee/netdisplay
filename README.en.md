@@ -192,7 +192,7 @@ changes go into `docs/02-protocol.md` with a changelog entry before any code cha
 
 ## Author
 
-guohongbo · <ghbhiee@gmail.com> · <https://github.com/ghbhiee/netdisplay>
+guohongbo · <guohongbo@outlook.com> · <https://github.com/ghbhiee/netdisplay>
 
 ## License
 

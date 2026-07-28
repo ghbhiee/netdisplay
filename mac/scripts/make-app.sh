@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Build NetDisplay.app (menu-bar app) from the SwiftPM binary and sign it with
-# the stable "NetDisplay Dev" identity so the Screen-Recording grant persists.
+# the stable "Hongbo Dev" identity so the Screen-Recording grant persists.
+# "Hongbo Dev" is the shared self-signed identity used across this author's local
+# apps (see scripts/setup-signing.sh); it replaced the per-project "NetDisplay Dev".
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,7 +25,7 @@ cp "$BIN" "$APP_DIR/Contents/MacOS/netdisplay-sender"
 cp Resources/Info.plist "$APP_DIR/Contents/Info.plist"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 
-SIGN_ID="NetDisplay Dev"
+SIGN_ID="Hongbo Dev"
 if security find-identity -p codesigning -v 2>/dev/null | grep -q "$SIGN_ID"; then
   codesign --force --deep --sign "$SIGN_ID" --identifier com.hongbo.netdisplay "$APP_DIR"
   echo "Signed with stable identity: $SIGN_ID"

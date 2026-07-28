@@ -37,7 +37,7 @@ enum AboutWindow {
 
         let name = UI.label("NetDisplay", size: 16, weight: .bold, align: .center)
         let desc = UI.label("把另一台电脑当作扩展显示器 / 单窗口投射", size: 11, color: Theme.sub, align: .center)
-        let author = UI.label("作者：guohongbo · ghbhiee@gmail.com", size: 11, color: Theme.sub, align: .center)
+        let author = UI.label("作者：guohongbo · guohongbo@outlook.com", size: 11, color: Theme.sub, align: .center)
 
         // A plain clickable "GitHub" link — accent + underline, opens the repo.
         let link = UI.label("GitHub", size: 12, weight: .semibold, color: Theme.accent, align: .center)

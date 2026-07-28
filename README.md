@@ -164,7 +164,7 @@ Windows 本身没有系统级的虚拟显示器 API（Mac 有 `CGVirtualDisplay`
 
 ## 作者
 
-guohongbo · <ghbhiee@gmail.com> · <https://github.com/ghbhiee/netdisplay>
+guohongbo · <guohongbo@outlook.com> · <https://github.com/ghbhiee/netdisplay>
 
 ## License
 
