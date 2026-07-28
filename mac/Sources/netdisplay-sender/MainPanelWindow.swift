@@ -280,6 +280,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         let ck = UI.label(selected ? "✓" : "", size: 12, color: Theme.accent)
         let inner = UI.hstack([ic, nm, NSView(), ds, ck], spacing: 9)
         embed(inner, in: row, padX: 10, padY: 7)
+        row.axSelectable(id: "source.state.\(tag)", label: "投射源 \(name)", selected: selected)
         let click = ClickCatcher({ [weak self] in self?.model.setSource(tag == "@screen" ? .screen : .window(tag)) },
                                  label: "投射源 \(name)", id: "source.row.\(tag)")
         row.addSubview(click); click.translatesAutoresizingMaskIntoConstraints = false
@@ -478,6 +479,7 @@ final class MainPanelWindow: NSObject, NSWindowDelegate {
         }
         let inner = UI.hstack(items, spacing: 8)
         embed(inner, in: row, padX: 10, padY: 8)
+        row.axSelectable(id: "device.state.\(d.axKey)", label: "设备 \(d.displayName)", selected: selected)
         // Row-click selects — but only overlay the catcher on *unselected* rows, so it
         // doesn't sit on top of the selected row's ⟳ button and swallow its taps.
         if !selected {

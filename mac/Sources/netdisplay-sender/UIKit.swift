@@ -9,6 +9,19 @@ final class RoundedView: NSView {
     var strokeWidth: CGFloat = 1
     var radius: CGFloat = 8 { didSet { needsDisplay = true } }
 
+    /// Expose "is this row the selected one" to the Accessibility API.
+    /// Selection used to be conveyed **only** by a ✓ glyph and a tint — both
+    /// invisible to a driver, so `axdrive get` could not tell which row was active
+    /// (violating rule 3 in docs/30-ax-conventions.md: state must be *readable*,
+    /// not just drawn). Setting it marks the row as an AX element with a value.
+    func axSelectable(id: String, label: String, selected: Bool) {
+        setAccessibilityElement(true)
+        setAccessibilityRole(.radioButton)
+        setAccessibilityIdentifier(id)
+        setAccessibilityLabel(label)
+        setAccessibilityValue(selected ? 1 : 0)
+    }
+
     init(fill: NSColor? = nil, stroke: NSColor? = nil, radius: CGFloat = 8) {
         self.fill = fill; self.stroke = stroke; self.radius = radius
         super.init(frame: .zero)
